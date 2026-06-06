@@ -44,7 +44,7 @@ import { AI_JSON_REFERENCE, askGeminiAssistant, FREE_GEMINI_MODELS } from "./ai.
 
 const STORE_KEY = "lifepilot.state.v1";
 const PIN_SESSION_KEY = "lifepilot.pin.validUntil";
-const APP_PIN = "2611";
+const APP_PIN_HASH = "cc41d80b1697c04d19330fba23a82cfc68fb086e3445691578bfae3a3d6f3e57";
 const rupee = new Intl.NumberFormat("en-IN", {
   style: "currency",
   currency: "INR",
@@ -132,6 +132,11 @@ function nowTime() {
 
 function id(prefix) {
   return `${prefix}-${crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36)}`;
+}
+
+async function sha256Hex(value) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function localDateISO(date) {
@@ -612,15 +617,19 @@ function LoadingScreen({ message = "Preparing your offline workspace" }) {
 function PinLock({ onUnlock }) {
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
+  const [checking, setChecking] = useState(false);
 
-  const submit = (event) => {
+  const submit = async (event) => {
     event.preventDefault();
-    if (pin === APP_PIN) {
+    setChecking(true);
+    const hash = await sha256Hex(pin);
+    if (hash === APP_PIN_HASH) {
       onUnlock();
       return;
     }
     setError("Wrong PIN. Please try again.");
     setPin("");
+    setChecking(false);
   };
 
   return (
@@ -638,11 +647,15 @@ function PinLock({ onUnlock }) {
           }}
           inputMode="numeric"
           type="password"
-          placeholder="2611"
+          placeholder="Enter PIN"
+          autoComplete="off"
+          autoCorrect="off"
+          spellCheck="false"
+          aria-label="PIN"
           autoFocus
         />
         {error && <p className="validation">{error}</p>}
-        <button className="primary tactile" type="submit">Unlock</button>
+        <button className="primary tactile" type="submit" disabled={checking}>{checking ? "Checking..." : "Unlock"}</button>
       </form>
     </main>
   );
