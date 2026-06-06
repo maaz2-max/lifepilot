@@ -1555,6 +1555,20 @@ function AiAssistant({ state, setState, upsert, setToast, close }) {
     if (!text || loading) return;
     setInput("");
     addMessage({ role: "user", text });
+
+    const batchIntent = getBatchIntent(text);
+    if (batchIntent) {
+      const pending = getPendingAiActions(state.aiMessages || []);
+      if (!pending.length) {
+        addMessage({ role: "ai", text: "No pending AI actions are waiting for confirmation.", actions: [] });
+        return;
+      }
+      setState((current) => resolveAllPendingAiActions(current, batchIntent));
+      addMessage({ role: "ai", text: batchIntent === "confirm" ? "Confirmed all pending AI actions." : "Cancelled all pending AI actions.", actions: [] });
+      setToast(batchIntent === "confirm" ? "All AI actions confirmed" : "All AI actions cancelled");
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -1691,6 +1705,18 @@ function AiAssistant({ state, setState, upsert, setToast, close }) {
 }
 
 function AiMessage({ state, setState, message, copyMessage, upsert, setToast }) {
+  const pendingCount = (message.actions || []).filter((action) => !action.status).length;
+
+  const confirmAll = () => {
+    setState((current) => resolveMessageAiActions(current, message.id, "confirm"));
+    setToast(`${pendingCount} AI action${pendingCount === 1 ? "" : "s"} confirmed`);
+  };
+
+  const cancelAll = () => {
+    setState((current) => resolveMessageAiActions(current, message.id, "cancel"));
+    setToast(`${pendingCount} AI action${pendingCount === 1 ? "" : "s"} cancelled`);
+  };
+
   return (
     <article className={`ai-message ${message.role}`}>
       <div className="ai-message-top">
@@ -1700,6 +1726,12 @@ function AiMessage({ state, setState, message, copyMessage, upsert, setToast }) 
       <MessageBody text={message.text} />
       {message.actions?.length ? (
         <div className="ai-actions">
+          {pendingCount > 1 && (
+            <div className="ai-batch-actions">
+              <button className="primary tactile" type="button" onClick={confirmAll}>Confirm all</button>
+              <button className="secondary tactile" type="button" onClick={cancelAll}>Cancel all</button>
+            </div>
+          )}
           {message.actions.map((action, index) => <AiActionCard key={`${message.id}-${index}`} messageId={message.id} actionIndex={index} state={state} setState={setState} action={action} upsert={upsert} setToast={setToast} />)}
         </div>
       ) : null}
@@ -1711,6 +1743,10 @@ function AiActionCard({ messageId, actionIndex, state, setState, action, upsert,
   const operation = action.operation || "create";
   const [draft, setDraft] = useState(JSON.stringify(action.data || {}, null, 2));
   const [done, setDone] = useState(Boolean(action.status));
+
+  useEffect(() => {
+    setDone(Boolean(action.status));
+  }, [action.status]);
 
   const persistActionStatus = (status) => {
     setState((current) => ({
@@ -1729,36 +1765,10 @@ function AiActionCard({ messageId, actionIndex, state, setState, action, upsert,
 
   const apply = () => {
     try {
-      const collection = collectionForKind(action.type);
-      if (!collection) {
-        setToast("Unsupported AI action");
-        return;
-      }
-      if (operation === "delete") {
-        setState((current) => applyAiDelete(current, collection, action));
-        setToast("Deleted");
-        setDone(true);
-        persistActionStatus("deleted");
-        return;
-      }
       const data = JSON.parse(draft);
-      if (operation === "edit") {
-        setState((current) => ({
-          ...current,
-          [collection]: current[collection].map((item) =>
-            item.id === action.id
-              ? { ...item, ...normalizeForm(action.type, data), id: item.id, updatedAt: new Date().toISOString() }
-              : item
-          )
-        }));
-        setToast("Changes saved");
-        setDone(true);
-        persistActionStatus("updated");
-        return;
-      }
-      upsert(collection, normalizeForm(action.type, withAiDefaults(action.type, data)), action.type);
+      setState((current) => resolveSingleAiAction(current, messageId, actionIndex, action, data));
+      setToast(operation === "delete" ? "Deleted" : operation === "edit" ? "Changes saved" : "Added");
       setDone(true);
-      persistActionStatus("created");
     } catch {
       setToast("Fix the action JSON before confirming");
     }
@@ -1824,6 +1834,99 @@ function normalizeAiActions(parsed) {
       const hasPayload = action.operation === "delete" ? Boolean(action.id) : Boolean(action.data);
       return validOperation && validType && hasPayload;
     });
+}
+
+function getBatchIntent(text) {
+  const normalized = text.trim().toLowerCase();
+  if (/^(confirm|apply|add|create|save)\s+(all|everything)$/i.test(normalized)) return "confirm";
+  if (/^(cancel|discard|skip)\s+(all|everything)$/i.test(normalized)) return "cancel";
+  if (/^(delete|remove)\s+(all|everything)\s+(pending|ai actions)$/i.test(normalized)) return "cancel";
+  return "";
+}
+
+function getPendingAiActions(messages) {
+  return messages.flatMap((message) =>
+    (message.actions || [])
+      .map((action, index) => ({ messageId: message.id, actionIndex: index, action }))
+      .filter((entry) => !entry.action.status)
+  );
+}
+
+function resolveAllPendingAiActions(current, mode) {
+  return getPendingAiActions(current.aiMessages || []).reduce((next, entry) => {
+    if (mode === "cancel") return markAiAction(next, entry.messageId, entry.actionIndex, "cancelled");
+    return resolveSingleAiAction(next, entry.messageId, entry.actionIndex, entry.action, entry.action.data || {});
+  }, current);
+}
+
+function resolveMessageAiActions(current, messageId, mode) {
+  const message = (current.aiMessages || []).find((entry) => entry.id === messageId);
+  if (!message) return current;
+  return (message.actions || []).reduce((next, action, index) => {
+    if (action.status) return next;
+    if (mode === "cancel") return markAiAction(next, messageId, index, "cancelled");
+    return resolveSingleAiAction(next, messageId, index, action, action.data || {});
+  }, current);
+}
+
+function resolveSingleAiAction(current, messageId, actionIndex, action, dataOverride) {
+  const next = applyAiActionData(current, action, dataOverride);
+  const status = action.operation === "delete" ? "deleted" : action.operation === "edit" ? "updated" : "created";
+  return markAiAction(next, messageId, actionIndex, status);
+}
+
+function markAiAction(current, messageId, actionIndex, status) {
+  return {
+    ...current,
+    aiMessages: (current.aiMessages || []).map((message) => {
+      if (message.id !== messageId) return message;
+      return {
+        ...message,
+        actions: (message.actions || []).map((entry, index) =>
+          index === actionIndex ? { ...entry, status, resolvedAt: new Date().toISOString() } : entry
+        )
+      };
+    })
+  };
+}
+
+function applyAiActionData(current, action, dataOverride = {}) {
+  const collection = collectionForKind(action.type);
+  if (!collection) return current;
+  const operation = action.operation || "create";
+  const data = resolveLinkedAiData(current, action.type, dataOverride);
+
+  if (operation === "delete") return applyAiDelete(current, collection, action);
+
+  if (operation === "edit") {
+    return {
+      ...current,
+      [collection]: current[collection].map((item) =>
+        item.id === action.id
+          ? { ...item, ...normalizeForm(action.type, data), id: item.id, updatedAt: new Date().toISOString() }
+          : item
+      )
+    };
+  }
+
+  const record = {
+    ...normalizeForm(action.type, withAiDefaults(action.type, data)),
+    id: id(action.type),
+    updatedAt: new Date().toISOString()
+  };
+  return { ...current, [collection]: [record, ...current[collection]] };
+}
+
+function resolveLinkedAiData(current, type, data) {
+  if (type === "projectTransaction" && !data.projectId && data.projectName) {
+    const project = current.projects.find((entry) => entry.name?.toLowerCase() === String(data.projectName).toLowerCase());
+    if (project) return { ...data, projectId: project.id };
+  }
+  if (type === "salaryExpense" && !data.salaryId && data.salaryTitle) {
+    const salary = current.salaries.find((entry) => entry.title?.toLowerCase() === String(data.salaryTitle).toLowerCase());
+    if (salary) return { ...data, salaryId: salary.id };
+  }
+  return data;
 }
 
 function applyAiDelete(current, collection, action) {

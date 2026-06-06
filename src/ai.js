@@ -200,6 +200,8 @@ function compactState(state) {
     fields.reduce((acc, field) => ({ ...acc, [field]: item[field] }), {})
   );
 
+  const insights = buildInsights(state);
+
   return {
     profile: state.profile ? { name: state.profile.name, dob: state.profile.dob } : null,
     today: state.__today || new Date().toLocaleDateString("en-CA"),
@@ -221,7 +223,99 @@ function compactState(state) {
       participants: project.participants
     })),
     salaryExpenses: take(state.salaryExpenses, ["id", "salaryId", "title", "amount", "type", "category", "date", "paymentMethod"]),
-    projectTransactions: take(state.projectTransactions, ["id", "projectId", "title", "amount", "type", "category", "date", "time", "paidBy", "paymentMethod"])
+    projectTransactions: take(state.projectTransactions, ["id", "projectId", "title", "amount", "type", "category", "date", "time", "paidBy", "paymentMethod"]),
+    pendingAiActions: (state.aiMessages || []).flatMap((message) =>
+      (message.actions || [])
+        .map((action, index) => ({
+          messageId: message.id,
+          actionIndex: index,
+          operation: action.operation || "create",
+          type: action.type,
+          id: action.id,
+          summary: action.summary,
+          data: action.data,
+          status: action.status || ""
+        }))
+        .filter((action) => !action.status)
+    ),
+    insights
+  };
+}
+
+function moneyAmount(value) {
+  return Number(value || 0);
+}
+
+function monthOf(date) {
+  return String(date || "").slice(0, 7);
+}
+
+function addGroup(acc, key, value) {
+  const label = key || "Uncategorized";
+  acc[label] = (acc[label] || 0) + moneyAmount(value);
+  return acc;
+}
+
+function highestEntry(group) {
+  const entries = Object.entries(group);
+  if (!entries.length) return null;
+  const [label, amount] = entries.sort((a, b) => b[1] - a[1])[0];
+  return { label, amount };
+}
+
+function buildInsights(state) {
+  const today = state.__today || new Date().toLocaleDateString("en-CA");
+  const month = today.slice(0, 7);
+  const projectById = Object.fromEntries(state.projects.map((project) => [project.id, project]));
+  const monthlyDaily = state.expenses.filter((expense) => monthOf(expense.date) === month);
+  const monthlySalaryExpenses = state.salaryExpenses.filter((expense) => monthOf(expense.date) === month);
+  const monthlyProjects = state.projectTransactions.filter((expense) => monthOf(expense.date) === month);
+  const dailyDebitByCategory = monthlyDaily
+    .filter((expense) => expense.type === "Debit")
+    .reduce((acc, expense) => addGroup(acc, expense.category, expense.amount), {});
+  const projectDebitByCategory = monthlyProjects
+    .filter((expense) => expense.type === "Debit")
+    .reduce((acc, expense) => addGroup(acc, expense.category, expense.amount), {});
+  const totalDailyCredit = monthlyDaily.filter((expense) => expense.type === "Credit").reduce((total, expense) => total + moneyAmount(expense.amount), 0);
+  const totalDailyDebit = monthlyDaily.filter((expense) => expense.type === "Debit").reduce((total, expense) => total + moneyAmount(expense.amount), 0);
+  const totalSalaryReceived = state.salaries.filter((salary) => monthOf(salary.receivedDate) === month).reduce((total, salary) => total + moneyAmount(salary.amount), 0);
+  const totalSalarySpent = monthlySalaryExpenses.filter((expense) => expense.type !== "Credit").reduce((total, expense) => total + moneyAmount(expense.amount), 0);
+  const totalProjectDebit = monthlyProjects.filter((expense) => expense.type === "Debit").reduce((total, expense) => total + moneyAmount(expense.amount), 0);
+
+  return {
+    month,
+    currentMonth: {
+      dailyCredit: totalDailyCredit,
+      dailyDebit: totalDailyDebit,
+      salaryReceived: totalSalaryReceived,
+      salarySpent: totalSalarySpent,
+      projectDebit: totalProjectDebit,
+      totalDebit: totalDailyDebit + totalSalarySpent + totalProjectDebit,
+      totalCredit: totalDailyCredit + totalSalaryReceived,
+      balance: totalDailyCredit + totalSalaryReceived - totalDailyDebit - totalSalarySpent - totalProjectDebit,
+      dailyDebitByCategory,
+      projectDebitByCategory,
+      highestDailyCategory: highestEntry(dailyDebitByCategory),
+      highestProjectCategory: highestEntry(projectDebitByCategory)
+    },
+    projects: state.projects.map((project) => {
+      const transactions = state.projectTransactions.filter((item) => item.projectId === project.id);
+      const debit = transactions.filter((item) => item.type === "Debit").reduce((total, item) => total + moneyAmount(item.amount), 0);
+      const credit = transactions.filter((item) => item.type === "Credit").reduce((total, item) => total + moneyAmount(item.amount), 0);
+      const categoryDebit = transactions.filter((item) => item.type === "Debit").reduce((acc, item) => addGroup(acc, item.category, item.amount), {});
+      return {
+        id: project.id,
+        name: project.name,
+        budget: moneyAmount(project.budget),
+        debit,
+        credit,
+        remaining: Math.max(0, moneyAmount(project.budget) + credit - debit),
+        overspent: Math.max(0, debit - moneyAmount(project.budget) - credit),
+        categoryDebit,
+        highestCategory: highestEntry(categoryDebit),
+        transactions: transactions.map((item) => ({ ...item, projectName: projectById[item.projectId]?.name || "" }))
+      };
+    })
   };
 }
 
@@ -242,11 +336,25 @@ Rules:
 - If the user asks whether any task/reminder/note/event/expense exists, list all matching records. If they ask "any task available", list every task with ID, title, date, time, status, priority.
 - If the user asks for a specific day transaction list, reply with a markdown table only in the reply field. Include Source, Title, Type, Amount, Category, Time, Payment Method, ID when available.
 - For listing tasks/reminders/events/notes, use a markdown table when useful.
+- For insight questions, use the provided insights object first. Answer with exact totals from insights and tables when useful.
+- If user asks "highest usage/spending this month", compare currentMonth daily, salary, and project debit plus category breakdowns.
+- If user asks for a specific project summary, use insights.projects and include budget, debit, credit, remaining, overspent, highest category, and recent transactions.
+- If user asks for daily expense summary, use only expenses, not salary/project transactions, unless they explicitly ask combined money.
 - Use Indian Rupees only for money.
 - Convert natural dates like today/tomorrow into YYYY-MM-DD using the current app date.
 - Convert times like 6pm into HH:mm.
+- For daily expenses, output type "expense".
+- For expenses inside a named project, find the exact project id by name and output type "projectTransaction".
+- If the user asks to create an expense project but does not include transaction details, output only a project create action and ask in reply if they want to add expenses inside it after confirmation.
+- If the user asks to create a new project and also gives project expenses in the same prompt, output the project create action first, then projectTransaction actions with data.projectName equal to the project name. The app can resolve it after creation.
+- If a project expense references a project name that does not exist, output a project create action first if enough project details are known; otherwise ask for the missing project budget/date before creating.
+- If user says "delete this expense project full", output a delete action for the matching project id. Project delete removes its transactions too.
+- If user asks to delete multiple matching records, output multiple delete actions and make reply ask for one confirmation for all.
+- If user asks to confirm/apply/add all pending actions, reply that the app can do it with the Confirm all control; do not create duplicate actions.
+- If user asks to cancel/delete pending AI draft actions, reply that the app can do it with Cancel all; do not delete real app records unless the user names real records.
+- If user asks to change a pending draft, return a fresh corrected action and mention they should cancel the older pending draft.
 - For expenses default type is Debit unless user says credit/income.
-- For salary-linked expense or project transaction, include salaryId/projectId only when clear from existing data.
+- For salary-linked expense or project transaction, include salaryId/projectId when clear from existing data.
 - If information is missing, make a reasonable draft and mention what can be edited before confirming.
 
 Allowed action types:

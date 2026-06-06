@@ -1218,6 +1218,23 @@ button:disabled {
   gap: 0.65rem;
 }
 
+.ai-batch-actions {
+  display: flex;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+  padding: 0.65rem;
+  border: 2px solid #111111;
+  border-radius: 18px;
+  background: #d8ff8f;
+  box-shadow: 4px 5px 0 #111111;
+}
+
+.ai-batch-actions .primary,
+.ai-batch-actions .secondary {
+  min-height: 38px;
+  padding: 0.55rem 0.75rem;
+}
+
 .ai-action-card {
   display: grid;
   gap: 0.55rem;
