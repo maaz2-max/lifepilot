@@ -297,6 +297,25 @@ function settlementRows(stats) {
   return rows;
 }
 
+function expenseSplitRows(transactions) {
+  return transactions
+    .filter((item) => item.type === "Debit" && item.paidBy && item.participants?.length)
+    .map((item) => {
+      const share = moneyAmount(item.amount) / item.participants.length;
+      return {
+        id: item.id,
+        title: item.title,
+        paidBy: item.paidBy,
+        amount: moneyAmount(item.amount),
+        splitBetween: item.participants,
+        rows: item.participants
+          .filter((name) => name !== item.paidBy)
+          .map((name) => ({ from: name, to: item.paidBy, amount: Math.round(share) }))
+      };
+    })
+    .filter((item) => item.rows.length);
+}
+
 function buildInsights(state) {
   const today = state.__today || new Date().toLocaleDateString("en-CA");
   const month = today.slice(0, 7);
@@ -341,7 +360,7 @@ function buildInsights(state) {
       const participantSpend = participantNames.reduce((acc, name) => {
         const paid = transactions.filter((item) => item.type === "Debit" && item.paidBy === name).reduce((total, item) => total + moneyAmount(item.amount), 0);
         const share = transactions.filter((item) => item.type === "Debit").reduce((total, item) => {
-          const splitMembers = (item.participants?.length ? item.participants : project.participants || []).filter(Boolean);
+          const splitMembers = (item.participants || []).filter(Boolean);
           return splitMembers.includes(name) ? total + moneyAmount(item.amount) / Math.max(splitMembers.length, 1) : total;
         }, 0);
         const credit = transactions.filter((item) => item.type === "Credit" && item.paidBy === name).reduce((total, item) => total + moneyAmount(item.amount), 0);
@@ -360,6 +379,7 @@ function buildInsights(state) {
         highestCategory: highestEntry(categoryDebit),
         participantSpend,
         splitSettlements: settlementRows(participantSpend),
+        expenseSplits: expenseSplitRows(transactions),
         transactions: transactions.map((item) => ({ ...item, projectName: projectById[item.projectId]?.name || "" }))
       };
     })
@@ -387,6 +407,7 @@ Rules:
 - If user asks "highest usage/spending this month", compare currentMonth daily, salary, and project debit plus category breakdowns.
 - If user asks for a specific project summary, use insights.projects and include budget, debit, credit, remaining, overspent, highest category, and recent transactions.
 - If user asks about project splits, who owes whom, or participant balances, use insights.projects[].participantSpend and splitSettlements. Reply with a clear table showing payer, receiver, and amount.
+- For expense-specific split questions, use insights.projects[].expenseSplits. Each expense split is isolated to that transaction's selected participants only.
 - If user asks for daily expense summary, use only expenses, not salary/project transactions, unless they explicitly ask combined money.
 - Use Indian Rupees only for money.
 - Convert natural dates like today/tomorrow into YYYY-MM-DD using the current app date.
@@ -395,6 +416,7 @@ Rules:
 - For expenses inside a named project, find the exact project id by name and output type "projectTransaction".
 - For project transactions, always set paidBy to one participant from that project when clear and set participants to the involved participant names. If unclear, ask which project participants were involved.
 - For project split expenses, participants means the people sharing/splitting that payment, not only people present in the project.
+- Do not assume all project participants are splitting an expense. Only names in projectTransaction.participants split that specific expense.
 - If the user asks to create an expense project but does not include transaction details, output only a project create action and ask in reply if they want to add expenses inside it after confirmation.
 - If the user asks to create a new project and also gives project expenses in the same prompt, output the project create action first, then projectTransaction actions with data.projectName equal to the project name. The app can resolve it after creation.
 - If a project expense references a project name that does not exist, output a project create action first if enough project details are known; otherwise ask for the missing project budget/date before creating.

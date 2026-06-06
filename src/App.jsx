@@ -900,35 +900,22 @@ function QuickActionSheet({ openAdd }) {
 }
 
 async function fetchWeatherSnapshot({ location, latitude, longitude }) {
-  let lat = latitude;
-  let lon = longitude;
-  const label = location?.trim();
-  if ((!lat || !lon) && label) {
-    const geo = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(label)}&count=1&language=en&format=json`).then((res) => res.json());
-    const match = geo.results?.[0];
-    if (!match) throw new Error("Location not found");
-    lat = match.latitude;
-    lon = match.longitude;
-  }
-  if (!lat || !lon) throw new Error("Weather location missing");
-
-  const [serverTime, weather] = await Promise.all([
-    fetch("/api/time", { cache: "no-store" })
-      .then((res) => (res.ok ? res.json() : null))
-      .catch(() => null),
-    fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,is_day,wind_speed_10m&timezone=auto`).then((res) => res.json())
-  ]);
-
-  if (!weather.current) throw new Error("Weather unavailable");
+  const params = new URLSearchParams();
+  if (location?.trim()) params.set("location", location.trim());
+  if (latitude) params.set("latitude", latitude);
+  if (longitude) params.set("longitude", longitude);
+  const response = await fetch(`/api/weather?${params.toString()}`, { cache: "no-store" });
+  const weather = await response.json().catch(() => ({}));
+  if (!response.ok || !weather.current) throw new Error(weather.error || "Weather update failed");
   return {
-    location: label || "Current location",
-    latitude: lat,
-    longitude: lon,
+    location: weather.location || location || "Current location",
+    latitude: weather.latitude,
+    longitude: weather.longitude,
     current: weather.current,
-    serverTime: serverTime?.iso || "",
+    serverTime: weather.serverTime || "",
     error: "",
     loading: false,
-    updatedAt: new Date().toISOString()
+    updatedAt: weather.updatedAt || new Date().toISOString()
   };
 }
 
@@ -2739,7 +2726,7 @@ function ProjectParticipantBreakdown({ project, transactions }) {
 }
 
 function ProjectSplitView({ project, transactions }) {
-  const { stats, settlements, splitTransactions } = projectSplitSummary(project, transactions);
+  const { stats, settlements, splitTransactions, expenseSplits } = projectSplitSummary(project, transactions);
   return (
     <section className="split-ledger">
       <SectionHeader title="Split Settlement" />
@@ -2764,6 +2751,24 @@ function ProjectSplitView({ project, transactions }) {
         )) : <EmptyState text="No one owes anything yet." small />}
       </section>
       <section className="date-money-group">
+        <SectionHeader title="Expense-wise Split" />
+        {expenseSplits.length ? expenseSplits.map((expense) => (
+          <div className="expense-split-card" key={expense.id}>
+            <div className="date-money-header">
+              <strong>{expense.title}</strong>
+              <span>{rupee.format(expense.amount)} - {formatDate(expense.date)}</span>
+            </div>
+            {expense.rows.map((row) => (
+              <div className="settlement-row" key={`${expense.id}-${row.from}-${row.to}`}>
+                <span>{row.from}</span>
+                <strong>owes {rupee.format(row.amount)}</strong>
+                <span>{row.to}</span>
+              </div>
+            ))}
+          </div>
+        )) : <EmptyState text="Select split participants on each project expense to see isolated expense splits." small />}
+      </section>
+      <section className="date-money-group">
         <SectionHeader title="Split Transactions" />
         {splitTransactions.length ? splitTransactions.map((item) => (
           <div className="transaction-row" key={item.id}>
@@ -2786,7 +2791,7 @@ function projectSplitSummary(project, transactions) {
   const stats = names.map((name) => {
     const paid = sum(debitTransactions, (item) => item.paidBy === name);
     const share = debitTransactions.reduce((total, item) => {
-      const splitMembers = (item.participants?.length ? item.participants : project.participants || []).filter(Boolean);
+      const splitMembers = (item.participants || []).filter(Boolean);
       return splitMembers.includes(name) ? total + amount(item.amount) / Math.max(splitMembers.length, 1) : total;
     }, 0);
     const credit = sum(transactions, (item) => item.type === "Credit" && item.paidBy === name);
@@ -2795,8 +2800,23 @@ function projectSplitSummary(project, transactions) {
   return {
     stats,
     settlements: buildSettlements(stats),
-    splitTransactions: debitTransactions
+    splitTransactions: debitTransactions,
+    expenseSplits: buildExpenseSplits(debitTransactions)
   };
+}
+
+function buildExpenseSplits(transactions) {
+  return transactions
+    .map((item) => {
+      const splitMembers = (item.participants || []).filter(Boolean);
+      if (!item.paidBy || !splitMembers.length) return null;
+      const share = amount(item.amount) / splitMembers.length;
+      const rows = splitMembers
+        .filter((name) => name !== item.paidBy)
+        .map((name) => ({ from: name, to: item.paidBy, amount: Math.round(share) }));
+      return { ...item, rows };
+    })
+    .filter((item) => item && item.rows.length);
 }
 
 function buildSettlements(stats) {
