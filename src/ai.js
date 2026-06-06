@@ -223,7 +223,14 @@ function compactState(state) {
       participants: project.participants
     })),
     salaryExpenses: take(state.salaryExpenses, ["id", "salaryId", "title", "amount", "type", "category", "date", "paymentMethod"]),
-    projectTransactions: take(state.projectTransactions, ["id", "projectId", "title", "amount", "type", "category", "date", "time", "paidBy", "paymentMethod"]),
+    projectTransactions: take(state.projectTransactions, ["id", "projectId", "title", "amount", "type", "category", "date", "time", "paidBy", "participants", "paymentMethod"]),
+    credentials: (state.credentials || []).map((credential) => ({
+      id: credential.id,
+      title: credential.title,
+      type: credential.type,
+      url: credential.url,
+      fieldNames: credential.fieldNames || []
+    })),
     pendingAiActions: (state.aiMessages || []).flatMap((message) =>
       (message.actions || [])
         .map((action, index) => ({
@@ -303,6 +310,14 @@ function buildInsights(state) {
       const debit = transactions.filter((item) => item.type === "Debit").reduce((total, item) => total + moneyAmount(item.amount), 0);
       const credit = transactions.filter((item) => item.type === "Credit").reduce((total, item) => total + moneyAmount(item.amount), 0);
       const categoryDebit = transactions.filter((item) => item.type === "Debit").reduce((acc, item) => addGroup(acc, item.category, item.amount), {});
+      const participantSpend = (project.participants || []).reduce((acc, name) => {
+        const paid = transactions.filter((item) => item.type === "Debit" && item.paidBy === name).reduce((total, item) => total + moneyAmount(item.amount), 0);
+        const share = transactions
+          .filter((item) => item.type === "Debit" && (item.participants || []).includes(name))
+          .reduce((total, item) => total + moneyAmount(item.amount) / Math.max((item.participants || []).length, 1), 0);
+        acc[name] = { paid, share, balance: paid - share };
+        return acc;
+      }, {});
       return {
         id: project.id,
         name: project.name,
@@ -313,6 +328,7 @@ function buildInsights(state) {
         overspent: Math.max(0, debit - moneyAmount(project.budget) - credit),
         categoryDebit,
         highestCategory: highestEntry(categoryDebit),
+        participantSpend,
         transactions: transactions.map((item) => ({ ...item, projectName: projectById[item.projectId]?.name || "" }))
       };
     })
@@ -345,6 +361,7 @@ Rules:
 - Convert times like 6pm into HH:mm.
 - For daily expenses, output type "expense".
 - For expenses inside a named project, find the exact project id by name and output type "projectTransaction".
+- For project transactions, always set paidBy to one participant from that project when clear and set participants to the involved participant names. If unclear, ask which project participants were involved.
 - If the user asks to create an expense project but does not include transaction details, output only a project create action and ask in reply if they want to add expenses inside it after confirmation.
 - If the user asks to create a new project and also gives project expenses in the same prompt, output the project create action first, then projectTransaction actions with data.projectName equal to the project name. The app can resolve it after creation.
 - If a project expense references a project name that does not exist, output a project create action first if enough project details are known; otherwise ask for the missing project budget/date before creating.
@@ -353,6 +370,8 @@ Rules:
 - If user asks to confirm/apply/add all pending actions, reply that the app can do it with the Confirm all control; do not create duplicate actions.
 - If user asks to cancel/delete pending AI draft actions, reply that the app can do it with Cancel all; do not delete real app records unless the user names real records.
 - If user asks to change a pending draft, return a fresh corrected action and mention they should cancel the older pending draft.
+- For recurring reminders, set repeat to Daily, Weekly, Monthly, or Yearly when the user says every day/week/month/year.
+- Credential records are local encrypted vault metadata only. Never ask the user to paste card numbers, CVV, PIN, passwords, or bank secrets into AI chat. If asked for credential details, say the local Secure Vault will ask PIN before showing them.
 - For expenses default type is Debit unless user says credit/income.
 - For salary-linked expense or project transaction, include salaryId/projectId when clear from existing data.
 - If information is missing, make a reasonable draft and mention what can be edited before confirming.

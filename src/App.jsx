@@ -9,9 +9,11 @@ import {
   CircleDollarSign,
   ClipboardCheck,
   Braces,
+  CloudSun,
   Copy,
   Download,
   Edit3,
+  Eye,
   FileUp,
   Filter,
   Home,
@@ -24,11 +26,13 @@ import {
   Search,
   SendHorizontal,
   Settings,
+  ShieldCheck,
   Sparkles,
   Tag,
   Trash2,
   Upload,
   UserRound,
+  Users,
   WalletCards,
   X
 } from "lucide-react";
@@ -72,7 +76,15 @@ const emptyState = {
   salaryExpenses: [],
   projects: [],
   projectTransactions: [],
+  credentials: [],
   aiMessages: [],
+  weather: {
+    location: "",
+    latitude: "",
+    longitude: "",
+    current: null,
+    updatedAt: ""
+  },
   categories: DEFAULT_CATEGORIES,
   settings: {
     notificationsEnabled: false,
@@ -97,7 +109,9 @@ const emptyState = {
     aiExpenseCategory: true,
     aiMonthlySummary: true,
     aiReminderSuggestions: true,
-    aiTaskBreakdown: true
+    aiTaskBreakdown: true,
+    weatherEnabled: false,
+    weatherLocation: ""
   }
 };
 
@@ -119,7 +133,8 @@ const quickActions = [
   { kind: "event", label: "Add Event", icon: Sparkles },
   { kind: "expense", label: "Add Daily Expense", icon: IndianRupee },
   { kind: "salary", label: "Add Salary", icon: CircleDollarSign },
-  { kind: "project", label: "Add Expense Project", icon: BriefcaseBusiness }
+  { kind: "project", label: "Add Expense Project", icon: BriefcaseBusiness },
+  { kind: "credential", label: "Add Secure Credential", icon: KeyRound }
 ];
 
 function todayISO() {
@@ -139,6 +154,51 @@ async function sha256Hex(value) {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+function bytesToBase64(bytes) {
+  return btoa(String.fromCharCode(...new Uint8Array(bytes)));
+}
+
+function base64ToBytes(value) {
+  return Uint8Array.from(atob(value), (char) => char.charCodeAt(0));
+}
+
+async function isValidPin(pin) {
+  return sha256Hex(pin) === APP_PIN_HASH;
+}
+
+async function deriveVaultKey(pin, salt) {
+  const baseKey = await crypto.subtle.importKey("raw", new TextEncoder().encode(pin), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt, iterations: 160000, hash: "SHA-256" },
+    baseKey,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"]
+  );
+}
+
+async function encryptVaultPayload(payload, pin) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await deriveVaultKey(pin, salt);
+  const encoded = new TextEncoder().encode(JSON.stringify(payload));
+  const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, encoded);
+  return {
+    salt: bytesToBase64(salt),
+    iv: bytesToBase64(iv),
+    ciphertext: bytesToBase64(ciphertext)
+  };
+}
+
+async function decryptVaultPayload(record, pin) {
+  const salt = base64ToBytes(record.encrypted?.salt || "");
+  const iv = base64ToBytes(record.encrypted?.iv || "");
+  const ciphertext = base64ToBytes(record.encrypted?.ciphertext || "");
+  const key = await deriveVaultKey(pin, salt);
+  const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext);
+  return JSON.parse(new TextDecoder().decode(plain));
+}
+
 function localDateISO(date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -155,7 +215,9 @@ function mergeState(parsed) {
     ...emptyState,
     ...(parsed || {}),
     settings: { ...emptyState.settings, ...(parsed?.settings || {}) },
-    categories: parsed?.categories?.length ? parsed.categories : DEFAULT_CATEGORIES
+    weather: { ...emptyState.weather, ...(parsed?.weather || {}) },
+    categories: parsed?.categories?.length ? parsed.categories : DEFAULT_CATEGORIES,
+    credentials: parsed?.credentials || []
   };
 }
 
@@ -217,6 +279,22 @@ function inRange(date, range) {
   }
   if (range === "year") return d.getFullYear() === now.getFullYear();
   return true;
+}
+
+function nextRepeatDate(date, repeat) {
+  const next = new Date(`${date || todayISO()}T12:00:00`);
+  if (repeat === "Daily") next.setDate(next.getDate() + 1);
+  else if (repeat === "Weekly") next.setDate(next.getDate() + 7);
+  else if (repeat === "Monthly") next.setMonth(next.getMonth() + 1);
+  else if (repeat === "Yearly") next.setFullYear(next.getFullYear() + 1);
+  else next.setDate(next.getDate() + 1);
+  while (localDateISO(next) <= todayISO()) {
+    if (repeat === "Weekly") next.setDate(next.getDate() + 7);
+    else if (repeat === "Monthly") next.setMonth(next.getMonth() + 1);
+    else if (repeat === "Yearly") next.setFullYear(next.getFullYear() + 1);
+    else next.setDate(next.getDate() + 1);
+  }
+  return localDateISO(next);
 }
 
 function isBirthday(profile, iso) {
@@ -356,13 +434,28 @@ export default function App() {
       const hhmm = now.toTimeString().slice(0, 5);
       const today = todayISO();
       const dueTasks = state.tasks.filter((task) => task.dueDate === today && task.dueTime <= hhmm && !["Completed", "Cancelled"].includes(task.status));
-      const dueReminders = state.reminders.filter((reminder) => reminder.date === today && reminder.time <= hhmm && reminder.status === "Active" && reminder.notificationEnabled);
+      const dueReminders = state.reminders.filter((reminder) =>
+        reminder.date <= today &&
+        reminder.time <= hhmm &&
+        reminder.status === "Active" &&
+        reminder.notificationEnabled
+      );
       [...dueTasks, ...dueReminders].forEach((item) => {
         const key = `${item.id}-${today}-${hhmm.slice(0, 2)}`;
         if (notified.current.has(key)) return;
         notified.current.add(key);
         new Notification(item.title, { body: "LifePilot reminder for today.", icon: "/icons/icon.svg" });
       });
+      const recurringDue = dueReminders.filter((reminder) => reminder.repeat && reminder.repeat !== "No repeat");
+      if (recurringDue.length) {
+        setState((current) => ({
+          ...current,
+          reminders: current.reminders.map((reminder) => {
+            const due = recurringDue.find((item) => item.id === reminder.id);
+            return due ? { ...reminder, date: nextRepeatDate(reminder.date, reminder.repeat), updatedAt: new Date().toISOString() } : reminder;
+          })
+        }));
+      }
       if (state.profile && isBirthday(state.profile, today)) {
         const key = `birthday-${today}`;
         if (!notified.current.has(key) && state.settings.birthdayNotification) {
@@ -387,7 +480,7 @@ export default function App() {
           : task
       ),
       reminders: current.reminders.map((reminder) =>
-        reminder.status === "Active" && reminder.date < today ? { ...reminder, status: "Expired" } : reminder
+        reminder.status === "Active" && reminder.date < today && (!reminder.repeat || reminder.repeat === "No repeat") ? { ...reminder, status: "Expired" } : reminder
       )
     }));
   }, [setState, storageReady]);
@@ -498,7 +591,7 @@ export default function App() {
           setAiOpen={setAiOpen}
         />
 
-        {active === "home" && <HomeView state={state} openAdd={openAdd} setActive={showView} />}
+        {active === "home" && <HomeView state={state} setState={setState} openAdd={openAdd} setActive={showView} />}
         {active === "calendar" && (
           <CalendarView
             state={state}
@@ -622,8 +715,7 @@ function PinLock({ onUnlock }) {
   const submit = async (event) => {
     event.preventDefault();
     setChecking(true);
-    const hash = await sha256Hex(pin);
-    if (hash === APP_PIN_HASH) {
+    if (await isValidPin(pin)) {
       onUnlock();
       return;
     }
@@ -795,8 +887,78 @@ function QuickActionSheet({ openAdd }) {
   );
 }
 
-function HomeView({ state, openAdd, setActive }) {
+function useWeather(state, setState) {
+  useEffect(() => {
+    const location = state.settings.weatherLocation?.trim();
+    if (!state.settings.weatherEnabled || !location) return;
+    const last = state.weather?.updatedAt ? new Date(state.weather.updatedAt).getTime() : 0;
+    if (Date.now() - last < 30 * 60 * 1000 && state.weather?.current) return;
+
+    let alive = true;
+    const load = async () => {
+      try {
+        let latitude = state.weather?.latitude;
+        let longitude = state.weather?.longitude;
+        if (!latitude || !longitude || state.weather?.location?.toLowerCase() !== location.toLowerCase()) {
+          const geo = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(location)}&count=1&language=en&format=json`).then((res) => res.json());
+          const match = geo.results?.[0];
+          if (!match) return;
+          latitude = match.latitude;
+          longitude = match.longitude;
+        }
+        const serverTime = await fetch("/api/time", { cache: "no-store" })
+          .then((res) => (res.ok ? res.json() : null))
+          .catch(() => null);
+        const weather = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code,is_day,wind_speed_10m&timezone=auto`).then((res) => res.json());
+        if (!alive) return;
+        setState((current) => ({
+          ...current,
+          weather: {
+            location,
+            latitude,
+            longitude,
+            current: weather.current,
+            serverTime: serverTime?.iso || "",
+            updatedAt: new Date().toISOString()
+          }
+        }));
+      } catch {
+        // Weather is decorative; the app stays fully usable offline.
+      }
+    };
+    load();
+    return () => {
+      alive = false;
+    };
+  }, [state.settings.weatherEnabled, state.settings.weatherLocation, state.weather?.updatedAt, state.weather?.current, state.weather?.latitude, state.weather?.longitude, state.weather?.location, setState]);
+}
+
+function WeatherScene({ weather, enabled }) {
+  if (!enabled || !weather?.current) return null;
+  const meta = weatherCodeMeta(weather.current.weather_code);
+  const dayMode = weather.current.is_day ? "day" : "night";
+  return (
+    <div className={`weather-scene ${meta.theme} ${dayMode}`} aria-hidden="true">
+      <span className="weather-orb" />
+      <span className="weather-cloud one" />
+      <span className="weather-cloud two" />
+      {meta.theme === "rain" && <span className="weather-rain" />}
+      {meta.theme === "storm" && <span className="weather-bolt" />}
+    </div>
+  );
+}
+
+function weatherCodeMeta(code = 0) {
+  if ([95, 96, 99].includes(code)) return { label: "Thunderstorm", theme: "storm" };
+  if ([51, 53, 55, 61, 63, 65, 80, 81, 82].includes(code)) return { label: "Rainy", theme: "rain" };
+  if ([45, 48].includes(code)) return { label: "Foggy", theme: "cloud" };
+  if ([1, 2, 3].includes(code)) return { label: "Cloudy", theme: "cloud" };
+  return { label: "Clear", theme: "clear" };
+}
+
+function HomeView({ state, setState, openAdd, setActive }) {
   const [range, setRange] = useState("today");
+  useWeather(state, setState);
   const today = todayISO();
   const todayTasks = state.tasks.filter((task) => task.dueDate === today && (state.settings.showCompletedOnDashboard || task.status !== "Completed"));
   const todayReminders = state.reminders.filter((reminder) => reminder.date === today);
@@ -809,6 +971,7 @@ function HomeView({ state, openAdd, setActive }) {
   return (
     <section className="page-grid">
       <div className="hero-panel raised">
+        <WeatherScene weather={state.weather} enabled={state.settings.weatherEnabled} />
         <div>
           <p className="eyebrow">Good {new Date().getHours() < 12 ? "morning" : new Date().getHours() < 17 ? "afternoon" : "evening"}</p>
           <h2>{state.profile?.name}, your day is ready.</h2>
@@ -816,6 +979,21 @@ function HomeView({ state, openAdd, setActive }) {
         </div>
         {isBirthday(state.profile, today) && <div className="birthday-card">Happy Birthday, {state.profile.name}!</div>}
       </div>
+
+      {state.settings.weatherEnabled && (
+        <section className="panel weather-card span-2">
+          <SectionHeader title="Live Weather" action={<button className="secondary tactile" onClick={() => setActive("settings")}>Weather Settings</button>} />
+          {state.weather?.current ? (
+            <div className="weather-details">
+              <CloudSun size={34} />
+              <div>
+                <strong>{state.weather.location}</strong>
+                <span>{weatherCodeMeta(state.weather.current.weather_code).label} - {Math.round(state.weather.current.temperature_2m)} C - Wind {Math.round(state.weather.current.wind_speed_10m)} km/h</span>
+              </div>
+            </div>
+          ) : <EmptyState text="Add a weather location in Settings to show live conditions here." small />}
+        </section>
+      )}
 
       <section className="panel">
         <SectionHeader title="Quick Add" action={<Select value={range} onChange={setRange} options={rangeOptions()} />} />
@@ -1236,7 +1414,7 @@ function SalaryView({ state, selectedSalary, setSelectedSalary, openAdd, setModa
 
 function ProjectsView({ state, selectedProject, setSelectedProject, openAdd, setModal, remove, upsert }) {
   const active = state.projects.find((project) => project.id === selectedProject) || state.projects[0];
-  const transactions = active ? state.projectTransactions.filter((item) => item.projectId === active.id) : [];
+  const transactions = active ? state.projectTransactions.filter((item) => item.projectId === active.id).sort(sortByDateDesc) : [];
   return (
     <div className="split-view">
       <div>
@@ -1256,7 +1434,8 @@ function ProjectsView({ state, selectedProject, setSelectedProject, openAdd, set
               {active.status === "Paused" ? <button className="secondary tactile" onClick={() => upsert("projects", { ...active, status: "Active" }, "project")}>Continue</button> : <button className="secondary tactile" onClick={() => upsert("projects", { ...active, status: "Paused" }, "project")}>Pause</button>}
               <button className="secondary tactile" onClick={() => upsert("projects", { ...active, status: "Completed" }, "project")}>End</button>
             </div>
-            <RecordTable list={transactions} type="projectTransaction" setModal={setModal} remove={(id) => remove("projectTransactions", id, "project transaction")} />
+            <ProjectParticipantBreakdown project={active} transactions={transactions} />
+            <DateGroupedRecordTable list={transactions} type="projectTransaction" setModal={setModal} remove={(id) => remove("projectTransactions", id, "project transaction")} />
             <button
               className="secondary danger tactile spaced"
               onClick={() => remove("projects", active.id, "project", {
@@ -1280,13 +1459,30 @@ function ProjectsView({ state, selectedProject, setSelectedProject, openAdd, set
 }
 
 function Analytics({ state }) {
-  const transactions = allTransactions(state);
+  const [range, setRange] = useState("month");
+  const [source, setSource] = useState("All");
+  const [projectId, setProjectId] = useState("All");
+  const sourceOptions = ["All", "Daily Expense", "Salary", "Salary-Linked Expense", "Project Expense"];
+  const projectOptions = [["All", "All projects"], ...state.projects.map((project) => [project.id, project.name])];
+  const transactions = allTransactions(state)
+    .filter((item) => range === "all" || inRange(item.date, range))
+    .filter((item) => source === "All" || (source === "Project Expense" ? item.projectId : item.source === source))
+    .filter((item) => projectId === "All" || item.projectId === projectId);
   const byCategory = groupAmounts(transactions.filter((item) => item.type === "Debit"), "category");
   const byMonth = groupByMonth(transactions.filter((item) => item.type === "Debit"));
-  const money = useMoneyStats(state);
+  const totalCredit = sum(transactions, (item) => item.type === "Credit");
+  const totalDebit = sum(transactions, (item) => item.type === "Debit");
   return (
     <div className="analytics-grid">
-      <MetricGrid metrics={[["Total credit", money.totalCredit], ["Total debit", money.totalDebit], ["Balance", money.balance], ["Highest category", highestLabel(byCategory)]]} />
+      <section className="sub-panel span-2">
+        <SectionHeader title="Analytics Filters" />
+        <div className="filter-grid">
+          <label>Range<Select value={range} onChange={setRange} options={rangeOptions()} /></label>
+          <label>Source<Select value={source} onChange={setSource} options={sourceOptions} /></label>
+          <label>Project<Select value={projectId} onChange={setProjectId} options={projectOptions} /></label>
+        </div>
+      </section>
+      <MetricGrid metrics={[["Filtered credit", totalCredit], ["Filtered debit", totalDebit], ["Filtered balance", totalCredit - totalDebit], ["Highest category", highestLabel(byCategory)]]} />
       <Chart title="Category-wise Spending" data={byCategory} />
       <Chart title="Monthly Spending Trend" data={byMonth} />
       <section className="sub-panel">
@@ -1299,6 +1495,7 @@ function Analytics({ state }) {
 
 function SettingsView({ state, setState, setToast, requestNotifications, setModal, remove, upsert, requestConfirm }) {
   const [storageInfo, setStorageInfo] = useState(null);
+  const [vaultReveal, setVaultReveal] = useState(null);
 
   useEffect(() => {
     let alive = true;
@@ -1372,6 +1569,20 @@ function SettingsView({ state, setState, setToast, requestNotifications, setModa
       </div>
 
       <div className="panel">
+        <SectionHeader title="Weather" />
+        <Toggle label="Show live weather on Home" checked={state.settings.weatherEnabled} onChange={(value) => setSetting("weatherEnabled", value)} />
+        <label>Weather location<input value={state.settings.weatherLocation || ""} onChange={(e) => {
+          const value = e.target.value;
+          setState((current) => ({
+            ...current,
+            settings: { ...current.settings, weatherLocation: value },
+            weather: { ...current.weather, location: value, current: value === current.weather.location ? current.weather.current : null, updatedAt: "" }
+          }));
+        }} placeholder="Mumbai, Delhi, Bangalore..." /></label>
+        <p className="helper-text">Weather uses Open-Meteo when online and keeps the last result saved for offline viewing.</p>
+      </div>
+
+      <div className="panel">
         <SectionHeader title="AI Settings" />
         <Toggle label="Enable AI assistant" checked={state.settings.aiEnabled} onChange={(value) => setSetting("aiEnabled", value)} />
         <label>
@@ -1409,6 +1620,34 @@ function SettingsView({ state, setState, setToast, requestNotifications, setModa
         </div>
       </div>
 
+      <div className="panel span-2">
+        <SectionHeader
+          title="Secure Vault"
+          action={<button className="primary tactile" onClick={() => setModal({ kind: "credential" })}><KeyRound size={17} />Add Credential</button>}
+        />
+        <div className="vault-warning">
+          <ShieldCheck size={20} />
+          <span>Secrets are encrypted locally and are not included in AI API requests. PIN is required every time details are revealed.</span>
+        </div>
+        <div className="credential-grid">
+          {state.credentials.length ? state.credentials.map((credential) => (
+            <article className="credential-card" key={credential.id}>
+              <div>
+                <p className="eyebrow">{credential.type}</p>
+                <h3>{credential.title}</h3>
+                <p>{credential.url || credential.username || "No public metadata added."}</p>
+              </div>
+              <div className="record-actions">
+                <button className="icon-button tactile" title="View" onClick={() => setVaultReveal({ credentials: [credential] })}><Eye size={16} /></button>
+                <button className="icon-button tactile" title="Edit" onClick={() => setModal({ kind: "credential", item: credential })}><Edit3 size={16} /></button>
+                <button className="icon-button tactile danger" title="Delete" onClick={() => remove("credentials", credential.id, "credential")}><Trash2 size={16} /></button>
+              </div>
+            </article>
+          )) : <EmptyState text="No credentials saved. Add cards, banks, social accounts, or custom secure notes." />}
+        </div>
+        {state.credentials.length > 1 && <button className="secondary tactile spaced" onClick={() => setVaultReveal({ credentials: state.credentials })}>View all saved credentials</button>}
+      </div>
+
       <div className="panel">
         <SectionHeader title="Data Management" />
         <div className="storage-status">
@@ -1441,6 +1680,7 @@ function SettingsView({ state, setState, setToast, requestNotifications, setModa
           </button>
         </div>
       </div>
+      {vaultReveal && <CredentialRevealModal records={vaultReveal.credentials} close={() => setVaultReveal(null)} setToast={setToast} />}
     </section>
   );
 }
@@ -1450,7 +1690,7 @@ function EntityModal({ state, modal, close, upsert, setState, setToast }) {
   const [form, setForm] = useState(initial);
   const [error, setError] = useState("");
   const set = (key, value) => setForm((current) => ({ ...current, [key]: value }));
-  const submit = (event) => {
+  const submit = async (event) => {
     event.preventDefault();
     const validation = validateForm(modal.kind, form);
     if (validation) {
@@ -1465,6 +1705,32 @@ function EntityModal({ state, modal, close, upsert, setState, setToast }) {
     }
     if (modal.kind === "participants") {
       upsert("projects", { ...modal.item, participants: splitParticipants(form.participants) }, "project");
+      close();
+      return;
+    }
+    if (modal.kind === "credential") {
+      if (!(await isValidPin(form.vaultPin || ""))) {
+        setError("Wrong PIN. Credential was not saved.");
+        return;
+      }
+      const secret = pickCredentialSecret(form);
+      const hasNewSecret = Object.values(secret).some((value) => String(value || "").trim());
+      if (!modal.item && !hasNewSecret) {
+        setError("Add at least one private credential field.");
+        return;
+      }
+      const encrypted = hasNewSecret ? await encryptVaultPayload(secret, form.vaultPin) : modal.item.encrypted;
+      upsert("credentials", {
+        id: modal.item?.id,
+        title: form.title.trim(),
+        type: form.type,
+        url: form.url.trim(),
+        username: form.username.trim(),
+        notes: form.notes.trim(),
+        encrypted,
+        fieldNames: Object.keys(secret).filter((key) => String(secret[key] || "").trim()),
+        updatedAt: new Date().toISOString()
+      }, "credential");
       close();
       return;
     }
@@ -1523,6 +1789,115 @@ function ConfirmModal({ dialog, close }) {
   );
 }
 
+function pickCredentialSecret(form) {
+  return {
+    accountNumber: form.accountNumber || "",
+    cardNumber: form.cardNumber || "",
+    expiry: form.expiry || "",
+    cvv: form.cvv || "",
+    cardPin: form.cardPin || "",
+    password: form.password || "",
+    recovery: form.recovery || "",
+    extraSecret: form.extraSecret || ""
+  };
+}
+
+function CredentialRevealModal({ records, close, setToast }) {
+  const [pin, setPin] = useState("");
+  const [error, setError] = useState("");
+  const [revealed, setRevealed] = useState([]);
+  const [working, setWorking] = useState(false);
+
+  const reveal = async (event) => {
+    event.preventDefault();
+    setWorking(true);
+    setError("");
+    try {
+      if (!(await isValidPin(pin))) {
+        setError("Wrong PIN. Details stay locked.");
+        setPin("");
+        return;
+      }
+      const unlocked = await Promise.all(records.map(async (record) => ({
+        ...record,
+        secret: await decryptVaultPayload(record, pin)
+      })));
+      setRevealed(unlocked);
+      setPin("");
+    } catch {
+      setError("Could not unlock this credential. Re-enter PIN or save the record again.");
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const copy = async (value) => {
+    try {
+      await navigator.clipboard.writeText(String(value || ""));
+      setToast("Copied");
+    } catch {
+      setToast("Copy failed");
+    }
+  };
+
+  return (
+    <div className="modal-backdrop">
+      <section className="modal vault-modal">
+        <SectionHeader title="Unlock Credentials" action={<button className="icon-button tactile" onClick={close}><X size={18} /></button>} />
+        {!revealed.length ? (
+          <form className="form-grid" onSubmit={reveal}>
+            <p className="vault-warning wide"><ShieldCheck size={20} />PIN is checked locally. Credential values are not sent to AI or any public API.</p>
+            <label className="wide">PIN<input value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 4))} type="password" inputMode="numeric" autoComplete="off" placeholder="Enter PIN" autoFocus /></label>
+            {error && <p className="validation wide">{error}</p>}
+            <div className="modal-actions wide">
+              <button className="secondary tactile" type="button" onClick={close}>Cancel</button>
+              <button className="primary tactile" type="submit" disabled={working}>{working ? "Unlocking..." : "Unlock"}</button>
+            </div>
+          </form>
+        ) : (
+          <div className="credential-grid reveal-grid">
+            {revealed.map((record) => (
+              <article className="credential-card revealed" key={record.id}>
+                <p className="eyebrow">{record.type}</p>
+                <h3>{record.title}</h3>
+                {record.url && <CredentialField label="URL" value={record.url} copy={copy} />}
+                {record.username && <CredentialField label="Username" value={record.username} copy={copy} />}
+                {Object.entries(record.secret || {}).filter(([, value]) => String(value || "").trim()).map(([key, value]) => (
+                  <CredentialField key={key} label={credentialFieldLabel(key)} value={value} copy={copy} />
+                ))}
+                {record.notes && <p>{record.notes}</p>}
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function CredentialField({ label, value, copy }) {
+  return (
+    <div className="credential-field">
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <button className="icon-button tactile" onClick={() => copy(value)}><Copy size={15} /></button>
+    </div>
+  );
+}
+
+function credentialFieldLabel(key) {
+  return {
+    accountNumber: "Account Number",
+    cardNumber: "Card Number",
+    expiry: "Expiry",
+    cvv: "CVV",
+    cardPin: "Card PIN",
+    password: "Password",
+    recovery: "Recovery",
+    extraSecret: "Extra Secret"
+  }[key] || key;
+}
+
 function AiAssistant({ state, setState, upsert, setToast, close }) {
   const [input, setInput] = useState("");
   const [manualJson, setManualJson] = useState("");
@@ -1566,6 +1941,19 @@ function AiAssistant({ state, setState, upsert, setToast, close }) {
       setState((current) => resolveAllPendingAiActions(current, batchIntent));
       addMessage({ role: "ai", text: batchIntent === "confirm" ? "Confirmed all pending AI actions." : "Cancelled all pending AI actions.", actions: [] });
       setToast(batchIntent === "confirm" ? "All AI actions confirmed" : "All AI actions cancelled");
+      return;
+    }
+
+    const credentialIntent = getCredentialIntent(text, state.credentials || []);
+    if (credentialIntent) {
+      addMessage({
+        role: "ai",
+        text: credentialIntent.mode === "view"
+          ? "Credential details are locked locally. Enter PIN below to reveal matching cards in this chat. I will not send these details to any AI API."
+          : "For security, add or edit credential secrets from Secure Vault in Settings. I can show saved credential details here only after PIN unlock.",
+        credentialQuery: credentialIntent,
+        actions: []
+      });
       return;
     }
 
@@ -1735,6 +2123,7 @@ function AiMessage({ state, setState, message, copyMessage, upsert, setToast }) 
           {message.actions.map((action, index) => <AiActionCard key={`${message.id}-${index}`} messageId={message.id} actionIndex={index} state={state} setState={setState} action={action} upsert={upsert} setToast={setToast} />)}
         </div>
       ) : null}
+      {message.credentialQuery && <CredentialChatCard state={state} query={message.credentialQuery} setToast={setToast} />}
     </article>
   );
 }
@@ -1783,6 +2172,67 @@ function AiActionCard({ messageId, actionIndex, state, setState, action, upsert,
         <button className="primary tactile" type="button" onClick={apply} disabled={done}>{done ? "Done" : `Confirm & ${operationLabel(operation)}`}</button>
         <button className="secondary tactile" type="button" onClick={() => { setDone(true); persistActionStatus("cancelled"); }} disabled={done}>Cancel</button>
       </div>
+    </div>
+  );
+}
+
+function CredentialChatCard({ state, query, setToast }) {
+  const [pin, setPin] = useState("");
+  const [error, setError] = useState("");
+  const [revealed, setRevealed] = useState([]);
+  const matches = matchingCredentials(state.credentials || [], query.text);
+
+  const unlock = async () => {
+    setError("");
+    try {
+      if (!(await isValidPin(pin))) {
+        setError("Wrong PIN. Details stay locked.");
+        setPin("");
+        return;
+      }
+      const unlocked = await Promise.all(matches.map(async (record) => ({ ...record, secret: await decryptVaultPayload(record, pin) })));
+      setRevealed(unlocked);
+      setPin("");
+    } catch {
+      setError("Unable to unlock matching credentials.");
+    }
+  };
+
+  const copy = async (value) => {
+    try {
+      await navigator.clipboard.writeText(String(value || ""));
+      setToast("Copied");
+    } catch {
+      setToast("Copy failed");
+    }
+  };
+
+  if (!matches.length) return <div className="ai-action-card done"><strong>No matching credential found.</strong><small>Add it from Settings &gt; Secure Vault.</small></div>;
+
+  return (
+    <div className="ai-action-card vault-chat-card">
+      {!revealed.length ? (
+        <>
+          <strong>{matches.length} matching credential{matches.length === 1 ? "" : "s"} locked</strong>
+          <input value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 4))} type="password" inputMode="numeric" autoComplete="off" placeholder="Enter PIN" />
+          {error && <p className="validation">{error}</p>}
+          <button className="primary tactile" type="button" onClick={unlock}>Reveal in chat</button>
+        </>
+      ) : (
+        <div className="credential-grid reveal-grid">
+          {revealed.map((record) => (
+            <article className="credential-card revealed" key={record.id}>
+              <p className="eyebrow">{record.type}</p>
+              <h3>{record.title}</h3>
+              {record.url && <CredentialField label="URL" value={record.url} copy={copy} />}
+              {record.username && <CredentialField label="Username" value={record.username} copy={copy} />}
+              {Object.entries(record.secret || {}).filter(([, value]) => String(value || "").trim()).map(([key, value]) => (
+                <CredentialField key={key} label={credentialFieldLabel(key)} value={value} copy={copy} />
+              ))}
+            </article>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -1842,6 +2292,34 @@ function getBatchIntent(text) {
   if (/^(cancel|discard|skip)\s+(all|everything)$/i.test(normalized)) return "cancel";
   if (/^(delete|remove)\s+(all|everything)\s+(pending|ai actions)$/i.test(normalized)) return "cancel";
   return "";
+}
+
+function getCredentialIntent(text, credentials) {
+  const normalized = text.trim().toLowerCase();
+  const credentialWords = /(credential|card|debit card|credit card|bank account|account detail|social media|password|cvv|pin)/i;
+  if (!credentialWords.test(normalized)) return null;
+  if (/\b(show|view|give|list|display|details|detail|all)\b/i.test(normalized)) {
+    return { mode: "view", text };
+  }
+  if (/\b(add|create|edit|update|save|delete|remove)\b/i.test(normalized)) {
+    return { mode: "manage", text, count: credentials.length };
+  }
+  return null;
+}
+
+function matchingCredentials(credentials, queryText) {
+  const text = String(queryText || "").toLowerCase();
+  const wantsAll = /\b(all|everything)\b/.test(text);
+  return credentials.filter((credential) => {
+    if (wantsAll) return true;
+    const haystack = [credential.title, credential.type, credential.url, credential.username, credential.notes].join(" ").toLowerCase();
+    if (text.includes("debit card")) return credential.type === "Debit Card";
+    if (text.includes("credit card")) return credential.type === "Credit Card";
+    if (text.includes("bank")) return credential.type === "Bank Account";
+    if (text.includes("social")) return credential.type === "Social Media";
+    if (text.includes("card")) return ["Debit Card", "Credit Card"].includes(credential.type);
+    return text.split(/\s+/).filter((word) => word.length > 2).some((word) => haystack.includes(word));
+  });
 }
 
 function getPendingAiActions(messages) {
@@ -1951,6 +2429,24 @@ function actionDoneLabel(operation) {
 function Field({ field, value, set }) {
   if (field.type === "textarea") return <label className={field.wide ? "wide" : ""}>{field.label}<textarea value={value || ""} onChange={(e) => set(field.name, e.target.value)} required={field.required} /></label>;
   if (field.type === "select") return <label className={field.wide ? "wide" : ""}>{field.label}<Select value={value || ""} onChange={(next) => set(field.name, next)} options={field.options} /></label>;
+  if (field.type === "participantMulti") {
+    const selected = splitParticipants(Array.isArray(value) ? value.join(",") : value);
+    const toggle = (name) => {
+      const next = selected.includes(name) ? selected.filter((item) => item !== name) : [...selected, name];
+      set(field.name, next.join(", "));
+    };
+    return (
+      <label className="wide">{field.label}
+        <div className="participant-picker">
+          {field.options.length ? field.options.map(([key, label]) => (
+            <button type="button" className={`participant-chip tactile ${selected.includes(key) ? "active" : ""}`} key={key} onClick={() => toggle(key)}>
+              <Users size={15} />{label}
+            </button>
+          )) : <input value={value || ""} onChange={(e) => set(field.name, e.target.value)} />}
+        </div>
+      </label>
+    );
+  }
   if (field.type === "checkbox") return <label className="toggle-row"><input type="checkbox" checked={Boolean(value)} onChange={(e) => set(field.name, e.target.checked)} />{field.label}</label>;
   if (field.type === "file") return <label className={field.wide ? "wide" : ""}>{field.label}<input type="file" accept="image/*" onChange={(e) => readImage(e.target.files?.[0], (image) => set(field.name, image))} /></label>;
   const normalizedType = field.type === "date" || field.type === "month" ? "text" : field.type || "text";
@@ -2031,7 +2527,7 @@ function AlertRow({ alert }) {
 function TransactionRow({ item }) {
   return (
     <div className="transaction-row">
-      <div><strong>{item.title}</strong><small>{item.source} · {formatDate(item.date)}</small></div>
+      <div><strong>{item.title}</strong><small>{item.source} - {formatDate(item.date)}</small></div>
       <span className={item.type === "Credit" ? "credit" : "debit"}>{item.type === "Credit" ? "+" : "-"}{rupee.format(amount(item.amount))}</span>
     </div>
   );
@@ -2044,7 +2540,7 @@ function RecordTable({ list, type, setModal, remove }) {
         <div className="transaction-row" key={item.id}>
           <div>
             <strong>{item.title}</strong>
-            <small>{item.category || item.source} · {formatDate(item.date || item.receivedDate)}</small>
+            <small>{item.category || item.source} - {formatDate(item.date || item.receivedDate)}</small>
           </div>
           <span className={item.type === "Credit" ? "credit" : "debit"}>{item.amount ? rupee.format(amount(item.amount)) : item.status}</span>
           <button className="icon-button tactile" onClick={() => setModal({ kind: type, item })}><Edit3 size={16} /></button>
@@ -2055,12 +2551,60 @@ function RecordTable({ list, type, setModal, remove }) {
   );
 }
 
+function DateGroupedRecordTable({ list, type, setModal, remove }) {
+  const groups = list.reduce((acc, item) => {
+    const date = item.date || item.receivedDate || "No date";
+    acc[date] = acc[date] || [];
+    acc[date].push(item);
+    return acc;
+  }, {});
+  const dates = Object.keys(groups).sort((a, b) => String(b).localeCompare(String(a)));
+  if (!dates.length) return <EmptyState text="No records match this view." />;
+  return (
+    <div className="date-grouped-table">
+      {dates.map((date) => (
+        <section className="date-money-group" key={date}>
+          <div className="date-money-header">
+            <strong>{date === todayISO() ? "Today" : formatDate(date)}</strong>
+            <span>{rupee.format(sum(groups[date], (item) => item.type === "Debit"))} debit - {rupee.format(sum(groups[date], (item) => item.type === "Credit"))} credit</span>
+          </div>
+          <RecordTable list={groups[date].sort(sortByTimeDesc)} type={type} setModal={setModal} remove={remove} />
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function ProjectParticipantBreakdown({ project, transactions }) {
+  const names = project.participants?.length ? project.participants : [...new Set(transactions.flatMap((item) => item.participants || []).filter(Boolean))];
+  const stats = names.map((name) => {
+    const paid = sum(transactions, (item) => item.type === "Debit" && item.paidBy === name);
+    const involved = transactions.filter((item) => item.type === "Debit" && (item.participants || []).includes(name));
+    const share = involved.reduce((total, item) => total + amount(item.amount) / Math.max((item.participants || []).length, 1), 0);
+    const credit = sum(transactions, (item) => item.type === "Credit" && item.paidBy === name);
+    return { name, paid, share, credit, balance: paid + credit - share };
+  });
+  return (
+    <section className="participant-panel">
+      <SectionHeader title="Participant Spending" />
+      {stats.length ? stats.map((item) => (
+        <div className="participant-row" key={item.name}>
+          <strong>{item.name}</strong>
+          <span>Paid {rupee.format(item.paid)}</span>
+          <span>Share {rupee.format(item.share)}</span>
+          <span className={item.balance >= 0 ? "credit" : "debit"}>{item.balance >= 0 ? "Gets" : "Owes"} {rupee.format(Math.abs(item.balance))}</span>
+        </div>
+      )) : <EmptyState text="Add project participants to see person-wise spending." small />}
+    </section>
+  );
+}
+
 function ProjectCard({ state, project, active, onClick }) {
   const stats = projectStats(state, project);
   return (
     <button className={`record-card tactile ${active ? "selected" : ""}`} onClick={onClick}>
       <h3>{project.name}</h3>
-      <p>{project.type} · {project.status}</p>
+      <p>{project.type} - {project.status}</p>
       <Progress value={stats.usage} />
       <small>{rupee.format(stats.debit)} spent of {rupee.format(amount(project.budget))}</small>
     </button>
@@ -2073,7 +2617,7 @@ function ProjectRow({ state, project }) {
     <div className="project-row">
       <div>
         <strong>{project.name}</strong>
-        <small>{project.status} · {stats.daysRemaining} days remaining</small>
+        <small>{project.status} - {stats.daysRemaining} days remaining</small>
       </div>
       <Progress value={stats.usage} />
       <span>{Math.round(stats.usage)}%</span>
@@ -2135,6 +2679,7 @@ function getInitialForm(kind, item, context = {}, state) {
     project: { name: "", type: "Trip", description: "", startDate: baseDate, endDate: baseDate, budget: "", participants: "", status: "Active", notes: "" },
     projectTransaction: { projectId: context.projectId || "", title: "", amount: "", type: "Debit", category: "", date: baseDate, time: nowTime(), paidBy: "", participants: "", paymentMethod: "UPI", notes: "" },
     category: { name: "", type: "Debit", color: "#f2b8a2", icon: "" },
+    credential: { title: "", type: "Debit Card", url: "", username: "", accountNumber: "", cardNumber: "", expiry: "", cvv: "", cardPin: "", password: "", recovery: "", extraSecret: "", notes: "", vaultPin: "" },
     profile: { ...state.profile },
     participants: { participants: (item?.participants || []).join(", ") }
   };
@@ -2144,10 +2689,14 @@ function getInitialForm(kind, item, context = {}, state) {
   return merged;
 }
 
-function fieldsForKind(kind, state) {
+function fieldsForKind(kind, state, form = {}) {
   const categoryOptions = [["", "Select category"], ...state.categories.map((category) => [category.name, category.name])];
   const projectOptions = [["", "Select project"], ...state.projects.map((project) => [project.id, project.name])];
   const salaryOptions = [["", "Select salary"], ...state.salaries.map((salary) => [salary.id, salary.title])];
+  const selectedProject = state.projects.find((project) => project.id === form.projectId);
+  const participantOptions = selectedProject?.participants?.length
+    ? selectedProject.participants.map((name) => [name, name])
+    : [...new Set(state.projects.flatMap((project) => project.participants || []))].map((name) => [name, name]);
   const commonMoney = [
     { name: "title", label: "Title", required: true },
     { name: "amount", label: "Amount", type: "number", min: 0, required: true },
@@ -2222,12 +2771,28 @@ function fieldsForKind(kind, state) {
       { name: "status", label: "Project status", type: "select", options: ["Active", "Paused", "Completed", "Cancelled", "Archived"] },
       { name: "notes", label: "Notes", type: "textarea", wide: true }
     ],
-    projectTransaction: [{ name: "projectId", label: "Project", type: "select", options: projectOptions, required: true }, ...commonMoney.slice(0, 4), { name: "date", label: "Date", type: "date", required: true }, { name: "time", label: "Time", type: "time" }, { name: "paidBy", label: "Paid by" }, { name: "participants", label: "Participants involved" }, ...commonMoney.slice(4)],
+    projectTransaction: [{ name: "projectId", label: "Project", type: "select", options: projectOptions, required: true }, ...commonMoney.slice(0, 4), { name: "date", label: "Date", type: "date", required: true }, { name: "time", label: "Time", type: "time" }, { name: "paidBy", label: "Paid by", type: participantOptions.length ? "select" : "text", options: [["", "Select payer"], ...participantOptions] }, { name: "participants", label: "Participants involved", type: participantOptions.length ? "participantMulti" : "text", options: participantOptions }, ...commonMoney.slice(4)],
     category: [
       { name: "name", label: "Category name", required: true },
       { name: "type", label: "Category type", type: "select", options: ["Credit", "Debit", "Both"] },
       { name: "icon", label: "Icon name" },
       { name: "color", label: "Color", type: "color" }
+    ],
+    credential: [
+      { name: "title", label: "Credential name", required: true },
+      { name: "type", label: "Credential type", type: "select", options: ["Debit Card", "Credit Card", "Bank Account", "Social Media", "Email", "UPI", "Website", "Custom"] },
+      { name: "url", label: "URL / bank website" },
+      { name: "username", label: "Username / customer ID" },
+      { name: "accountNumber", label: "Account number", type: "password" },
+      { name: "cardNumber", label: "Card number", type: "password" },
+      { name: "expiry", label: "Expiry" },
+      { name: "cvv", label: "CVV", type: "password" },
+      { name: "cardPin", label: "Card PIN", type: "password" },
+      { name: "password", label: "Password", type: "password" },
+      { name: "recovery", label: "Recovery code / backup", type: "password", wide: true },
+      { name: "extraSecret", label: "Other private details", type: "textarea", wide: true },
+      { name: "notes", label: "Public notes", type: "textarea", wide: true },
+      { name: "vaultPin", label: "LifePilot PIN to save", type: "password", required: true }
     ],
     profile: [
       { name: "image", label: "Profile image", type: "file", wide: true },
@@ -2248,6 +2813,7 @@ function validateForm(kind, form) {
   if (["task", "reminder", "note", "event", "expense", "salary", "salaryExpense", "projectTransaction"].includes(kind) && !form.title?.trim()) return "Title is required.";
   if (kind === "project" && !form.name?.trim()) return "Project name is required.";
   if (kind === "category" && !form.name?.trim()) return "Category name is required.";
+  if (kind === "credential" && !form.title?.trim()) return "Credential name is required.";
   if (kind === "profile" && (!form.name?.trim() || !form.dob)) return "Name and date of birth are required.";
   if (["expense", "salary", "salaryExpense", "projectTransaction"].includes(kind) && amount(form.amount) <= 0) return "Amount must be greater than zero.";
   if (kind === "project" && amount(form.budget) < 0) return "Budget cannot be negative.";
@@ -2293,7 +2859,8 @@ function collectionForKind(kind) {
     salaryExpense: "salaryExpenses",
     project: "projects",
     projectTransaction: "projectTransactions",
-    category: "categories"
+    category: "categories",
+    credential: "credentials"
   }[kind];
 }
 
@@ -2309,6 +2876,7 @@ function kindLabel(kind) {
     project: "Expense Project",
     projectTransaction: "Project Transaction",
     category: "Category",
+    credential: "Credential",
     profile: "Profile",
     participants: "Participants"
   }[kind] || "Item";
@@ -2398,7 +2966,9 @@ function useMoneyStats(state) {
     const salaryCreditExpense = sum(state.salaryExpenses, (item) => item.type === "Credit");
     const projectCredit = sum(state.projectTransactions, (item) => item.type === "Credit");
     const projectDebit = sum(state.projectTransactions, (item) => item.type === "Debit");
-    const activeBudget = sum(state.projects, (project) => project.status === "Active" || project.status === "Paused") || 0;
+    const activeBudget = state.projects
+      .filter((project) => project.status === "Active" || project.status === "Paused")
+      .reduce((total, project) => total + amount(project.budget), 0);
     const remainingBudget = state.projects.reduce((total, project) => total + projectStats(state, project).remaining, 0);
     const overspent = state.projects.reduce((total, project) => total + projectStats(state, project).overspent, 0);
     const monthDebit = sum(state.expenses, (item) => item.type === "Debit" && inRange(item.date, "month")) + sum(state.salaryExpenses, (item) => item.type === "Debit" && inRange(item.date, "month")) + sum(state.projectTransactions, (item) => item.type === "Debit" && inRange(item.date, "month"));
@@ -2467,4 +3037,12 @@ function highestLabel(group) {
   const entries = Object.entries(group);
   if (!entries.length) return "No data";
   return entries.sort((a, b) => b[1] - a[1])[0][0];
+}
+
+function sortByDateDesc(a, b) {
+  return `${b.date || b.receivedDate || ""} ${b.time || ""}`.localeCompare(`${a.date || a.receivedDate || ""} ${a.time || ""}`);
+}
+
+function sortByTimeDesc(a, b) {
+  return String(b.time || "").localeCompare(String(a.time || ""));
 }
