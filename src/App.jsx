@@ -190,6 +190,10 @@ async function encryptVaultPayload(payload, pin) {
   };
 }
 
+async function encryptWithAppPin(payload) {
+  return encryptVaultPayload(payload, APP_PIN_HASH);
+}
+
 async function decryptVaultPayload(record, pin) {
   const salt = base64ToBytes(record.encrypted?.salt || "");
   const iv = base64ToBytes(record.encrypted?.iv || "");
@@ -197,6 +201,14 @@ async function decryptVaultPayload(record, pin) {
   const key = await deriveVaultKey(pin, salt);
   const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext);
   return JSON.parse(new TextDecoder().decode(plain));
+}
+
+async function decryptCredentialPayload(record, pin) {
+  try {
+    return await decryptVaultPayload(record, pin);
+  } catch {
+    return decryptVaultPayload(record, APP_PIN_HASH);
+  }
 }
 
 function localDateISO(date) {
@@ -1415,6 +1427,7 @@ function SalaryView({ state, selectedSalary, setSelectedSalary, openAdd, setModa
 function ProjectsView({ state, selectedProject, setSelectedProject, openAdd, setModal, remove, upsert }) {
   const active = state.projects.find((project) => project.id === selectedProject) || state.projects[0];
   const transactions = active ? state.projectTransactions.filter((item) => item.projectId === active.id).sort(sortByDateDesc) : [];
+  const [projectTab, setProjectTab] = useState("transactions");
   return (
     <div className="split-view">
       <div>
@@ -1435,7 +1448,12 @@ function ProjectsView({ state, selectedProject, setSelectedProject, openAdd, set
               <button className="secondary tactile" onClick={() => upsert("projects", { ...active, status: "Completed" }, "project")}>End</button>
             </div>
             <ProjectParticipantBreakdown project={active} transactions={transactions} />
-            <DateGroupedRecordTable list={transactions} type="projectTransaction" setModal={setModal} remove={(id) => remove("projectTransactions", id, "project transaction")} />
+            <Segmented value={projectTab} onChange={setProjectTab} options={[["transactions", "Transactions"], ["split", "Split"]]} />
+            {projectTab === "transactions" ? (
+              <DateGroupedRecordTable list={transactions} type="projectTransaction" setModal={setModal} remove={(id) => remove("projectTransactions", id, "project transaction")} />
+            ) : (
+              <ProjectSplitView project={active} transactions={transactions} />
+            )}
             <button
               className="secondary danger tactile spaced"
               onClick={() => remove("projects", active.id, "project", {
@@ -1531,6 +1549,32 @@ function SettingsView({ state, setState, setToast, requestNotifications, setModa
     reader.readAsText(file);
   };
   const setSetting = (key, value) => setState((current) => ({ ...current, settings: { ...current.settings, [key]: value } }));
+  const useCurrentWeatherLocation = () => {
+    if (!navigator.geolocation) {
+      setToast("Location permission is not supported");
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const label = "Current location";
+        setState((current) => ({
+          ...current,
+          settings: { ...current.settings, weatherEnabled: true, weatherLocation: label },
+          weather: {
+            ...current.weather,
+            location: label,
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+            current: null,
+            updatedAt: ""
+          }
+        }));
+        setToast("Weather location updated");
+      },
+      () => setToast("Location permission denied"),
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 15 * 60 * 1000 }
+    );
+  };
 
   return (
     <section className="settings-grid">
@@ -1569,7 +1613,7 @@ function SettingsView({ state, setState, setToast, requestNotifications, setModa
       </div>
 
       <div className="panel">
-        <SectionHeader title="Weather" />
+        <SectionHeader title="Weather" action={<button className="secondary tactile" type="button" onClick={useCurrentWeatherLocation}><CloudSun size={17} />Use current</button>} />
         <Toggle label="Show live weather on Home" checked={state.settings.weatherEnabled} onChange={(value) => setSetting("weatherEnabled", value)} />
         <label>Weather location<input value={state.settings.weatherLocation || ""} onChange={(e) => {
           const value = e.target.value;
@@ -1579,6 +1623,7 @@ function SettingsView({ state, setState, setToast, requestNotifications, setModa
             weather: { ...current.weather, location: value, current: value === current.weather.location ? current.weather.current : null, updatedAt: "" }
           }));
         }} placeholder="Mumbai, Delhi, Bangalore..." /></label>
+        <button className="secondary tactile" type="button" onClick={useCurrentWeatherLocation}>Update current location</button>
         <p className="helper-text">Weather uses Open-Meteo when online and keeps the last result saved for offline viewing.</p>
       </div>
 
@@ -1631,7 +1676,7 @@ function SettingsView({ state, setState, setToast, requestNotifications, setModa
         </div>
         <div className="credential-grid">
           {state.credentials.length ? state.credentials.map((credential) => (
-            <article className="credential-card" key={credential.id}>
+            <article className={`credential-card ${credentialTypeClass(credential.type)}`} key={credential.id}>
               <div>
                 <p className="eyebrow">{credential.type}</p>
                 <h3>{credential.title}</h3>
@@ -1709,17 +1754,13 @@ function EntityModal({ state, modal, close, upsert, setState, setToast }) {
       return;
     }
     if (modal.kind === "credential") {
-      if (!(await isValidPin(form.vaultPin || ""))) {
-        setError("Wrong PIN. Credential was not saved.");
-        return;
-      }
       const secret = pickCredentialSecret(form);
       const hasNewSecret = Object.values(secret).some((value) => String(value || "").trim());
       if (!modal.item && !hasNewSecret) {
         setError("Add at least one private credential field.");
         return;
       }
-      const encrypted = hasNewSecret ? await encryptVaultPayload(secret, form.vaultPin) : modal.item.encrypted;
+      const encrypted = hasNewSecret ? await encryptWithAppPin(secret) : modal.item.encrypted;
       upsert("credentials", {
         id: modal.item?.id,
         title: form.title.trim(),
@@ -1820,7 +1861,7 @@ function CredentialRevealModal({ records, close, setToast }) {
       }
       const unlocked = await Promise.all(records.map(async (record) => ({
         ...record,
-        secret: await decryptVaultPayload(record, pin)
+        secret: await decryptCredentialPayload(record, pin)
       })));
       setRevealed(unlocked);
       setPin("");
@@ -1857,7 +1898,7 @@ function CredentialRevealModal({ records, close, setToast }) {
         ) : (
           <div className="credential-grid reveal-grid">
             {revealed.map((record) => (
-              <article className="credential-card revealed" key={record.id}>
+              <article className={`credential-card revealed ${credentialTypeClass(record.type)}`} key={record.id}>
                 <p className="eyebrow">{record.type}</p>
                 <h3>{record.title}</h3>
                 {record.url && <CredentialField label="URL" value={record.url} copy={copy} />}
@@ -1896,6 +1937,10 @@ function credentialFieldLabel(key) {
     recovery: "Recovery",
     extraSecret: "Extra Secret"
   }[key] || key;
+}
+
+function credentialTypeClass(type) {
+  return `credential-${String(type || "custom").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
 }
 
 function AiAssistant({ state, setState, upsert, setToast, close }) {
@@ -2190,7 +2235,7 @@ function CredentialChatCard({ state, query, setToast }) {
         setPin("");
         return;
       }
-      const unlocked = await Promise.all(matches.map(async (record) => ({ ...record, secret: await decryptVaultPayload(record, pin) })));
+      const unlocked = await Promise.all(matches.map(async (record) => ({ ...record, secret: await decryptCredentialPayload(record, pin) })));
       setRevealed(unlocked);
       setPin("");
     } catch {
@@ -2221,7 +2266,7 @@ function CredentialChatCard({ state, query, setToast }) {
       ) : (
         <div className="credential-grid reveal-grid">
           {revealed.map((record) => (
-            <article className="credential-card revealed" key={record.id}>
+            <article className={`credential-card revealed ${credentialTypeClass(record.type)}`} key={record.id}>
               <p className="eyebrow">{record.type}</p>
               <h3>{record.title}</h3>
               {record.url && <CredentialField label="URL" value={record.url} copy={copy} />}
@@ -2447,12 +2492,50 @@ function Field({ field, value, set }) {
       </label>
     );
   }
+  if (field.type === "participantMultiCustom") {
+    return <ParticipantMultiCustom field={field} value={value} set={set} />;
+  }
   if (field.type === "checkbox") return <label className="toggle-row"><input type="checkbox" checked={Boolean(value)} onChange={(e) => set(field.name, e.target.checked)} />{field.label}</label>;
   if (field.type === "file") return <label className={field.wide ? "wide" : ""}>{field.label}<input type="file" accept="image/*" onChange={(e) => readImage(e.target.files?.[0], (image) => set(field.name, image))} /></label>;
   const normalizedType = field.type === "date" || field.type === "month" ? "text" : field.type || "text";
   const placeholder = field.type === "date" ? "YYYY-MM-DD" : field.type === "month" ? "YYYY-MM" : "";
   const pattern = field.type === "date" ? "\\d{4}-\\d{2}-\\d{2}" : field.type === "month" ? "\\d{4}-\\d{2}" : undefined;
   return <label className={field.wide ? "wide" : ""}>{field.label}<input type={normalizedType} inputMode={field.type === "date" || field.type === "month" ? "numeric" : undefined} placeholder={placeholder} pattern={pattern} min={field.min} value={value || ""} onChange={(e) => set(field.name, e.target.value)} required={field.required} /></label>;
+}
+
+function ParticipantMultiCustom({ field, value, set }) {
+  const selected = splitParticipants(Array.isArray(value) ? value.join(",") : value);
+  const [customName, setCustomName] = useState("");
+  const toggle = (name) => {
+    const next = selected.includes(name) ? selected.filter((item) => item !== name) : [...selected, name];
+    set(field.name, next.join(", "));
+  };
+  const addCustom = () => {
+    const name = customName.trim();
+    if (!name) return;
+    set(field.name, uniqueList([...selected, name]).join(", "));
+    setCustomName("");
+  };
+  return (
+    <label className="wide">{field.label}
+      <div className="participant-picker">
+        {field.options.map(([key, label]) => (
+          <button type="button" className={`participant-chip tactile ${selected.includes(key) ? "active" : ""}`} key={key} onClick={() => toggle(key)}>
+            <Users size={15} />{label}
+          </button>
+        ))}
+        {selected.filter((name) => !field.options.some(([key]) => key === name)).map((name) => (
+          <button type="button" className="participant-chip active tactile" key={name} onClick={() => toggle(name)}>
+            <Users size={15} />{name}
+          </button>
+        ))}
+      </div>
+      <div className="inline-add">
+        <input value={customName} onChange={(e) => setCustomName(e.target.value)} placeholder="Add participant name" />
+        <button className="secondary tactile" type="button" onClick={addCustom}>Add</button>
+      </div>
+    </label>
+  );
 }
 
 function Select({ value, onChange, options }) {
@@ -2576,14 +2659,7 @@ function DateGroupedRecordTable({ list, type, setModal, remove }) {
 }
 
 function ProjectParticipantBreakdown({ project, transactions }) {
-  const names = project.participants?.length ? project.participants : [...new Set(transactions.flatMap((item) => item.participants || []).filter(Boolean))];
-  const stats = names.map((name) => {
-    const paid = sum(transactions, (item) => item.type === "Debit" && item.paidBy === name);
-    const involved = transactions.filter((item) => item.type === "Debit" && (item.participants || []).includes(name));
-    const share = involved.reduce((total, item) => total + amount(item.amount) / Math.max((item.participants || []).length, 1), 0);
-    const credit = sum(transactions, (item) => item.type === "Credit" && item.paidBy === name);
-    return { name, paid, share, credit, balance: paid + credit - share };
-  });
+  const { stats } = projectSplitSummary(project, transactions);
   return (
     <section className="participant-panel">
       <SectionHeader title="Participant Spending" />
@@ -2597,6 +2673,92 @@ function ProjectParticipantBreakdown({ project, transactions }) {
       )) : <EmptyState text="Add project participants to see person-wise spending." small />}
     </section>
   );
+}
+
+function ProjectSplitView({ project, transactions }) {
+  const { stats, settlements, splitTransactions } = projectSplitSummary(project, transactions);
+  return (
+    <section className="split-ledger">
+      <SectionHeader title="Split Settlement" />
+      <div className="split-summary-grid">
+        {stats.length ? stats.map((item) => (
+          <article className="split-person-card" key={item.name}>
+            <strong>{item.name}</strong>
+            <span>Paid {rupee.format(item.paid)}</span>
+            <span>Share {rupee.format(item.share)}</span>
+            <b className={item.balance >= 0 ? "credit" : "debit"}>{item.balance >= 0 ? "Should receive" : "Should pay"} {rupee.format(Math.abs(item.balance))}</b>
+          </article>
+        )) : <EmptyState text="Add participants and project expenses to calculate split balances." />}
+      </div>
+      <section className="date-money-group">
+        <SectionHeader title="Who Pays Whom" />
+        {settlements.length ? settlements.map((item, index) => (
+          <div className="settlement-row" key={`${item.from}-${item.to}-${index}`}>
+            <span>{item.from}</span>
+            <strong>pays {rupee.format(item.amount)}</strong>
+            <span>{item.to}</span>
+          </div>
+        )) : <EmptyState text="No one owes anything yet." small />}
+      </section>
+      <section className="date-money-group">
+        <SectionHeader title="Split Transactions" />
+        {splitTransactions.length ? splitTransactions.map((item) => (
+          <div className="transaction-row" key={item.id}>
+            <div>
+              <strong>{item.title}</strong>
+              <small>{formatDate(item.date)} - paid by {item.paidBy || "Unassigned"}</small>
+            </div>
+            <span>{(item.participants || []).join(", ") || "No split members"}</span>
+            <b>{rupee.format(amount(item.amount))}</b>
+          </div>
+        )) : <EmptyState text="Add debit transactions and select split participants." small />}
+      </section>
+    </section>
+  );
+}
+
+function projectSplitSummary(project, transactions) {
+  const names = uniqueList([...(project.participants || []), ...transactions.flatMap((item) => [item.paidBy, ...(item.participants || [])])]);
+  const debitTransactions = transactions.filter((item) => item.type === "Debit");
+  const stats = names.map((name) => {
+    const paid = sum(debitTransactions, (item) => item.paidBy === name);
+    const share = debitTransactions.reduce((total, item) => {
+      const splitMembers = (item.participants?.length ? item.participants : project.participants || []).filter(Boolean);
+      return splitMembers.includes(name) ? total + amount(item.amount) / Math.max(splitMembers.length, 1) : total;
+    }, 0);
+    const credit = sum(transactions, (item) => item.type === "Credit" && item.paidBy === name);
+    return { name, paid, share, credit, balance: paid + credit - share };
+  });
+  return {
+    stats,
+    settlements: buildSettlements(stats),
+    splitTransactions: debitTransactions
+  };
+}
+
+function buildSettlements(stats) {
+  const debtors = stats
+    .filter((item) => item.balance < -0.5)
+    .map((item) => ({ name: item.name, amount: Math.abs(item.balance) }))
+    .sort((a, b) => b.amount - a.amount);
+  const creditors = stats
+    .filter((item) => item.balance > 0.5)
+    .map((item) => ({ name: item.name, amount: item.balance }))
+    .sort((a, b) => b.amount - a.amount);
+  const settlements = [];
+  let d = 0;
+  let c = 0;
+  while (d < debtors.length && c < creditors.length) {
+    const amountToSettle = Math.min(debtors[d].amount, creditors[c].amount);
+    if (amountToSettle > 0.5) {
+      settlements.push({ from: debtors[d].name, to: creditors[c].name, amount: Math.round(amountToSettle) });
+    }
+    debtors[d].amount -= amountToSettle;
+    creditors[c].amount -= amountToSettle;
+    if (debtors[d].amount <= 0.5) d += 1;
+    if (creditors[c].amount <= 0.5) c += 1;
+  }
+  return settlements;
 }
 
 function ProjectCard({ state, project, active, onClick }) {
@@ -2676,12 +2838,12 @@ function getInitialForm(kind, item, context = {}, state) {
     expense: { title: "", amount: "", type: "Debit", category: "", date: baseDate, time: nowTime(), paymentMethod: "UPI", notes: "", reminder: false },
     salary: { title: "Salary", amount: "", receivedDate: baseDate, month: baseDate.slice(0, 7), source: "", paymentMethod: "Bank transfer", notes: "", budgetPlan: "" },
     salaryExpense: { salaryId: context.salaryId || "", title: "", amount: "", type: "Debit", category: "", date: baseDate, paymentMethod: "UPI", notes: "" },
-    project: { name: "", type: "Trip", description: "", startDate: baseDate, endDate: baseDate, budget: "", participants: "", status: "Active", notes: "" },
+    project: { name: "", type: "Trip", description: "", startDate: baseDate, endDate: baseDate, budget: "", participants: "", newParticipant: "", status: "Active", notes: "" },
     projectTransaction: { projectId: context.projectId || "", title: "", amount: "", type: "Debit", category: "", date: baseDate, time: nowTime(), paidBy: "", participants: "", paymentMethod: "UPI", notes: "" },
     category: { name: "", type: "Debit", color: "#f2b8a2", icon: "" },
-    credential: { title: "", type: "Debit Card", url: "", username: "", accountNumber: "", cardNumber: "", expiry: "", cvv: "", cardPin: "", password: "", recovery: "", extraSecret: "", notes: "", vaultPin: "" },
+    credential: { title: "", type: "Debit Card", url: "", username: "", accountNumber: "", cardNumber: "", expiry: "", cvv: "", cardPin: "", password: "", recovery: "", extraSecret: "", notes: "" },
     profile: { ...state.profile },
-    participants: { participants: (item?.participants || []).join(", ") }
+    participants: { participants: (item?.participants || []).join(", "), newParticipant: "" }
   };
   const merged = { ...defaults[kind], ...(item || {}) };
   if (kind === "project" && Array.isArray(merged.participants)) merged.participants = merged.participants.join(", ");
@@ -2697,6 +2859,7 @@ function fieldsForKind(kind, state, form = {}) {
   const participantOptions = selectedProject?.participants?.length
     ? selectedProject.participants.map((name) => [name, name])
     : [...new Set(state.projects.flatMap((project) => project.participants || []))].map((name) => [name, name]);
+  const allParticipantOptions = uniqueList(state.projects.flatMap((project) => project.participants || [])).map((name) => [name, name]);
   const commonMoney = [
     { name: "title", label: "Title", required: true },
     { name: "amount", label: "Amount", type: "number", min: 0, required: true },
@@ -2767,11 +2930,11 @@ function fieldsForKind(kind, state, form = {}) {
       { name: "startDate", label: "Start date", type: "date", required: true },
       { name: "endDate", label: "End date", type: "date", required: true },
       { name: "budget", label: "Budget amount", type: "number", min: 0, required: true },
-      { name: "participants", label: "Participants", wide: true },
+      { name: "participants", label: "Project participants", type: "participantMultiCustom", options: allParticipantOptions, wide: true },
       { name: "status", label: "Project status", type: "select", options: ["Active", "Paused", "Completed", "Cancelled", "Archived"] },
       { name: "notes", label: "Notes", type: "textarea", wide: true }
     ],
-    projectTransaction: [{ name: "projectId", label: "Project", type: "select", options: projectOptions, required: true }, ...commonMoney.slice(0, 4), { name: "date", label: "Date", type: "date", required: true }, { name: "time", label: "Time", type: "time" }, { name: "paidBy", label: "Paid by", type: participantOptions.length ? "select" : "text", options: [["", "Select payer"], ...participantOptions] }, { name: "participants", label: "Participants involved", type: participantOptions.length ? "participantMulti" : "text", options: participantOptions }, ...commonMoney.slice(4)],
+    projectTransaction: [{ name: "projectId", label: "Project", type: "select", options: projectOptions, required: true }, ...commonMoney.slice(0, 4), { name: "date", label: "Date", type: "date", required: true }, { name: "time", label: "Time", type: "time" }, { name: "paidBy", label: "Paid by", type: participantOptions.length ? "select" : "text", options: [["", "Select payer"], ...participantOptions] }, { name: "participants", label: "Split between", type: participantOptions.length ? "participantMulti" : "text", options: participantOptions }, ...commonMoney.slice(4)],
     category: [
       { name: "name", label: "Category name", required: true },
       { name: "type", label: "Category type", type: "select", options: ["Credit", "Debit", "Both"] },
@@ -2791,8 +2954,7 @@ function fieldsForKind(kind, state, form = {}) {
       { name: "password", label: "Password", type: "password" },
       { name: "recovery", label: "Recovery code / backup", type: "password", wide: true },
       { name: "extraSecret", label: "Other private details", type: "textarea", wide: true },
-      { name: "notes", label: "Public notes", type: "textarea", wide: true },
-      { name: "vaultPin", label: "LifePilot PIN to save", type: "password", required: true }
+      { name: "notes", label: "Public notes", type: "textarea", wide: true }
     ],
     profile: [
       { name: "image", label: "Profile image", type: "file", wide: true },
@@ -2804,7 +2966,7 @@ function fieldsForKind(kind, state, form = {}) {
       { name: "monthlyBudget", label: "Monthly budget goal", type: "number", min: 0 }
     ],
     participants: [
-      { name: "participants", label: "Participants", wide: true }
+      { name: "participants", label: "Participants", type: "participantMultiCustom", options: allParticipantOptions, wide: true }
     ]
   }[kind];
 }
@@ -2821,7 +2983,10 @@ function validateForm(kind, form) {
 }
 
 function normalizeForm(kind, form) {
-  if (kind === "project") return { ...form, participants: splitParticipants(form.participants) };
+  if (kind === "project") {
+    const { newParticipant, ...rest } = form;
+    return { ...rest, participants: splitParticipants(form.participants) };
+  }
   if (kind === "projectTransaction") return { ...form, participants: splitParticipants(form.participants) };
   return form;
 }
@@ -2846,6 +3011,10 @@ function withAiDefaults(kind, data) {
 
 function splitParticipants(value) {
   return String(value || "").split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function uniqueList(items) {
+  return [...new Set(items.map((item) => String(item || "").trim()).filter(Boolean))];
 }
 
 function collectionForKind(kind) {

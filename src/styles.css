@@ -25,15 +25,25 @@
   box-sizing: border-box;
 }
 
+#root {
+  min-height: 100dvh;
+  width: 100%;
+  overflow-x: hidden;
+}
+
 html {
   overflow-x: hidden;
   touch-action: manipulation;
+  overscroll-behavior-x: none;
 }
 
 body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  min-height: 100dvh;
+  overflow-x: hidden;
+  overscroll-behavior-y: contain;
   background:
     radial-gradient(circle at top left, rgba(255, 244, 211, 0.9), transparent 34rem),
     radial-gradient(circle at bottom right, rgba(193, 231, 216, 0.75), transparent 32rem),
@@ -96,6 +106,9 @@ label {
   display: grid;
   grid-template-columns: 260px 1fr;
   min-height: 100vh;
+  min-height: 100dvh;
+  width: 100%;
+  overflow-x: hidden;
 }
 
 .sidebar {
@@ -180,6 +193,8 @@ label {
 .main {
   padding: 1.15rem 1.3rem 6rem;
   min-width: 0;
+  width: 100%;
+  overflow-x: clip;
 }
 
 .topbar {
@@ -869,6 +884,47 @@ label {
   border-top: 1px solid var(--line);
 }
 
+.split-ledger {
+  display: grid;
+  gap: 0.85rem;
+  margin-top: 0.9rem;
+}
+
+.split-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 0.75rem;
+}
+
+.split-person-card {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.9rem;
+  border-radius: 18px;
+  background: linear-gradient(145deg, #fffdf7, #eef7df);
+  box-shadow: var(--shadow);
+}
+
+.split-person-card span {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.settlement-row {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.68rem;
+  border-radius: 14px;
+  background: #fffdf7;
+  box-shadow: var(--shadow-inset);
+}
+
+.settlement-row span:last-child {
+  text-align: right;
+}
+
 .participant-picker {
   display: flex;
   flex-wrap: wrap;
@@ -889,6 +945,12 @@ label {
 
 .participant-chip.active {
   background: linear-gradient(145deg, #d9ff8f, #b9e5d2);
+}
+
+.inline-add {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.55rem;
 }
 
 .transaction-row strong,
@@ -1017,33 +1079,77 @@ label {
 }
 
 .credential-card {
+  position: relative;
+  overflow: hidden;
   display: grid;
   gap: 0.7rem;
-  padding: 1rem;
-  border-radius: 18px;
-  background: linear-gradient(145deg, #fffdf7, #edf5e8);
+  min-height: 164px;
+  padding: 1.05rem;
+  border-radius: 22px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.32) 0 24%, transparent 24% 100%),
+    linear-gradient(145deg, #1b1b22, #5956a8);
+  color: #ffffff;
   box-shadow: var(--shadow);
+}
+
+.credential-card::after {
+  content: "";
+  position: absolute;
+  right: -36px;
+  bottom: -36px;
+  width: 130px;
+  height: 130px;
+  border: 2px solid rgba(255, 255, 255, 0.24);
+  border-radius: 50%;
 }
 
 .credential-card h3,
 .credential-card p {
+  position: relative;
+  z-index: 1;
   margin: 0;
 }
 
 .credential-card p:not(.eyebrow) {
-  color: var(--muted);
+  color: rgba(255, 255, 255, 0.76);
 }
 
 .credential-card.revealed {
-  background: linear-gradient(145deg, #fffdf7, #e8e4ff);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.26) 0 24%, transparent 24% 100%),
+    linear-gradient(145deg, #2a2948, #6f68d8);
+}
+
+.credential-debit-card,
+.credential-credit-card {
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.3) 0 24%, transparent 24% 100%),
+    linear-gradient(145deg, #141414, #8077ff 58%, #d8ff8f);
+}
+
+.credential-bank-account {
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.3) 0 24%, transparent 24% 100%),
+    linear-gradient(145deg, #17352c, #50a37d 58%, #d8ff8f);
+}
+
+.credential-social-media,
+.credential-email {
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.3) 0 24%, transparent 24% 100%),
+    linear-gradient(145deg, #272049, #c5c8ff 58%, #ffd995);
 }
 
 .credential-field {
+  position: relative;
+  z-index: 1;
   min-height: 42px;
   padding: 0.55rem;
   border-radius: 13px;
   background: rgba(255, 250, 241, 0.8);
   box-shadow: var(--shadow-inset);
+  color: #111111;
 }
 
 .credential-field span {

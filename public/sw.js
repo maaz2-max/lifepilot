@@ -1,4 +1,4 @@
-const CACHE_NAME = "lifepilot-v5";
+const CACHE_NAME = "lifepilot-v6";
 const APP_SHELL = [
   "/",
   "/index.html",
