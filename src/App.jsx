@@ -163,7 +163,7 @@ function base64ToBytes(value) {
 }
 
 async function isValidPin(pin) {
-  return sha256Hex(pin) === APP_PIN_HASH;
+  return (await sha256Hex(pin)) === APP_PIN_HASH;
 }
 
 async function deriveVaultKey(pin, salt) {
