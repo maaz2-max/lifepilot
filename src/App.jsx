@@ -899,6 +899,39 @@ function QuickActionSheet({ openAdd }) {
   );
 }
 
+async function fetchWeatherSnapshot({ location, latitude, longitude }) {
+  let lat = latitude;
+  let lon = longitude;
+  const label = location?.trim();
+  if ((!lat || !lon) && label) {
+    const geo = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(label)}&count=1&language=en&format=json`).then((res) => res.json());
+    const match = geo.results?.[0];
+    if (!match) throw new Error("Location not found");
+    lat = match.latitude;
+    lon = match.longitude;
+  }
+  if (!lat || !lon) throw new Error("Weather location missing");
+
+  const [serverTime, weather] = await Promise.all([
+    fetch("/api/time", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .catch(() => null),
+    fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,is_day,wind_speed_10m&timezone=auto`).then((res) => res.json())
+  ]);
+
+  if (!weather.current) throw new Error("Weather unavailable");
+  return {
+    location: label || "Current location",
+    latitude: lat,
+    longitude: lon,
+    current: weather.current,
+    serverTime: serverTime?.iso || "",
+    error: "",
+    loading: false,
+    updatedAt: new Date().toISOString()
+  };
+}
+
 function useWeather(state, setState) {
   useEffect(() => {
     const location = state.settings.weatherLocation?.trim();
@@ -908,34 +941,25 @@ function useWeather(state, setState) {
 
     let alive = true;
     const load = async () => {
+      setState((current) => ({ ...current, weather: { ...current.weather, loading: true, error: "" } }));
       try {
-        let latitude = state.weather?.latitude;
-        let longitude = state.weather?.longitude;
-        if (!latitude || !longitude || state.weather?.location?.toLowerCase() !== location.toLowerCase()) {
-          const geo = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(location)}&count=1&language=en&format=json`).then((res) => res.json());
-          const match = geo.results?.[0];
-          if (!match) return;
-          latitude = match.latitude;
-          longitude = match.longitude;
-        }
-        const serverTime = await fetch("/api/time", { cache: "no-store" })
-          .then((res) => (res.ok ? res.json() : null))
-          .catch(() => null);
-        const weather = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code,is_day,wind_speed_10m&timezone=auto`).then((res) => res.json());
+        const snapshot = await fetchWeatherSnapshot({
+          location,
+          latitude: state.weather?.location?.toLowerCase() === location.toLowerCase() ? state.weather?.latitude : "",
+          longitude: state.weather?.location?.toLowerCase() === location.toLowerCase() ? state.weather?.longitude : ""
+        });
+        if (!alive) return;
+        setState((current) => ({ ...current, weather: { ...current.weather, ...snapshot } }));
+      } catch (error) {
         if (!alive) return;
         setState((current) => ({
           ...current,
           weather: {
-            location,
-            latitude,
-            longitude,
-            current: weather.current,
-            serverTime: serverTime?.iso || "",
-            updatedAt: new Date().toISOString()
+            ...current.weather,
+            loading: false,
+            error: error.message || "Weather update failed"
           }
         }));
-      } catch {
-        // Weather is decorative; the app stays fully usable offline.
       }
     };
     load();
@@ -979,6 +1003,12 @@ function HomeView({ state, setState, openAdd, setActive }) {
   const money = useMoneyStats(state);
   const filteredExpenses = state.expenses.filter((expense) => inRange(expense.date, range));
   const budgetAlerts = projectAlerts(state);
+  const refreshWeather = () => {
+    setState((current) => ({
+      ...current,
+      weather: { ...current.weather, updatedAt: "", loading: false, error: "" }
+    }));
+  };
 
   return (
     <section className="page-grid">
@@ -994,15 +1024,29 @@ function HomeView({ state, setState, openAdd, setActive }) {
 
       {state.settings.weatherEnabled && (
         <section className="panel weather-card span-2">
-          <SectionHeader title="Live Weather" action={<button className="secondary tactile" onClick={() => setActive("settings")}>Weather Settings</button>} />
+          <SectionHeader
+            title="Live Weather"
+            action={
+              <div className="cluster">
+                <button className="secondary tactile" onClick={refreshWeather}>Refresh</button>
+                <button className="secondary tactile" onClick={() => setActive("settings")}>Weather Settings</button>
+              </div>
+            }
+          />
           {state.weather?.current ? (
             <div className="weather-details">
               <CloudSun size={34} />
               <div>
                 <strong>{state.weather.location}</strong>
                 <span>{weatherCodeMeta(state.weather.current.weather_code).label} - {Math.round(state.weather.current.temperature_2m)} C - Wind {Math.round(state.weather.current.wind_speed_10m)} km/h</span>
+                {state.weather.loading && <small>Updating latest weather...</small>}
+                {!state.weather.loading && state.weather.updatedAt && <small>Updated {new Date(state.weather.updatedAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</small>}
               </div>
             </div>
+          ) : state.weather?.loading ? (
+            <EmptyState text="Updating weather from your saved location..." small />
+          ) : state.weather?.error ? (
+            <EmptyState text={`${state.weather.error}. Tap Refresh or update location in Settings.`} small />
           ) : <EmptyState text="Add a weather location in Settings to show live conditions here." small />}
         </section>
       )}
@@ -1554,24 +1598,43 @@ function SettingsView({ state, setState, setToast, requestNotifications, setModa
       setToast("Location permission is not supported");
       return;
     }
+    setState((current) => ({ ...current, weather: { ...current.weather, loading: true, error: "" } }));
     navigator.geolocation.getCurrentPosition(
-      (position) => {
+      async (position) => {
         const label = "Current location";
-        setState((current) => ({
-          ...current,
-          settings: { ...current.settings, weatherEnabled: true, weatherLocation: label },
-          weather: {
-            ...current.weather,
+        try {
+          const snapshot = await fetchWeatherSnapshot({
             location: label,
             latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
-            current: null,
-            updatedAt: ""
-          }
-        }));
-        setToast("Weather location updated");
+            longitude: position.coords.longitude
+          });
+          setState((current) => ({
+            ...current,
+            settings: { ...current.settings, weatherEnabled: true, weatherLocation: label },
+            weather: { ...current.weather, ...snapshot }
+          }));
+          setToast("Weather updated");
+        } catch {
+          setState((current) => ({
+            ...current,
+            settings: { ...current.settings, weatherEnabled: true, weatherLocation: label },
+            weather: {
+              ...current.weather,
+              location: label,
+              latitude: position.coords.latitude,
+              longitude: position.coords.longitude,
+              loading: false,
+              error: "Weather update failed",
+              updatedAt: ""
+            }
+          }));
+          setToast("Location saved. Weather will retry on Home.");
+        }
       },
-      () => setToast("Location permission denied"),
+      () => {
+        setState((current) => ({ ...current, weather: { ...current.weather, loading: false, error: "Location permission denied" } }));
+        setToast("Location permission denied");
+      },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 15 * 60 * 1000 }
     );
   };

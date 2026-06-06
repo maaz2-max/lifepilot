@@ -11,6 +11,10 @@ export default defineConfig(({ mode }) => {
       {
         name: "lifepilot-local-ai-api",
         configureServer(server) {
+          server.middlewares.use("/api/time", (req, res) => {
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ iso: new Date().toISOString() }));
+          });
           server.middlewares.use("/api/ai", async (req, res) => {
             await handleAiRequest(req, res, env);
           });
