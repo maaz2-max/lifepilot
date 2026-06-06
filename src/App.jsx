@@ -2751,7 +2751,7 @@ function ProjectSplitView({ project, transactions }) {
         )) : <EmptyState text="No one owes anything yet." small />}
       </section>
       <section className="date-money-group">
-        <SectionHeader title="Expense-wise Split" />
+        <SectionHeader title="Expense-wise Split and Direct Owed" />
         {expenseSplits.length ? expenseSplits.map((expense) => (
           <div className="expense-split-card" key={expense.id}>
             <div className="date-money-header">
@@ -2761,7 +2761,7 @@ function ProjectSplitView({ project, transactions }) {
             {expense.rows.map((row) => (
               <div className="settlement-row" key={`${expense.id}-${row.from}-${row.to}`}>
                 <span>{row.from}</span>
-                <strong>owes {rupee.format(row.amount)}</strong>
+                <strong>{row.label} {rupee.format(row.amount)}</strong>
                 <span>{row.to}</span>
               </div>
             ))}
@@ -2774,49 +2774,73 @@ function ProjectSplitView({ project, transactions }) {
           <div className="transaction-row" key={item.id}>
             <div>
               <strong>{item.title}</strong>
-              <small>{formatDate(item.date)} - paid by {item.paidBy || "Unassigned"}</small>
+              <small>{formatDate(item.date)} - {splitModeOf(item)} - paid by {item.paidBy || "Unassigned"}</small>
             </div>
-            <span>{(item.participants || []).join(", ") || "No split members"}</span>
+            <span>{splitModeOf(item) === "Direct owed" ? `Owed by ${item.owedBy || "Unassigned"}` : (item.participants || []).join(", ")}</span>
             <b>{rupee.format(amount(item.amount))}</b>
           </div>
-        )) : <EmptyState text="Add debit transactions and select split participants." small />}
+        )) : <EmptyState text="Add equal-split members or direct owed details to include expenses in this ledger." small />}
       </section>
     </section>
   );
 }
 
 function projectSplitSummary(project, transactions) {
-  const names = uniqueList([...(project.participants || []), ...transactions.flatMap((item) => [item.paidBy, ...(item.participants || [])])]);
+  const names = uniqueList([...(project.participants || []), ...transactions.flatMap((item) => [item.paidBy, item.owedBy, ...(item.participants || [])])]);
   const debitTransactions = transactions.filter((item) => item.type === "Debit");
   const stats = names.map((name) => {
-    const paid = sum(debitTransactions, (item) => item.paidBy === name);
+    const paid = debitTransactions.reduce((total, item) => {
+      const mode = splitModeOf(item);
+      const hasEqualSplit = mode === "Equal split" && (item.participants || []).filter(Boolean).length > 0;
+      const hasDirectOwed = mode === "Direct owed" && item.owedBy;
+      return item.paidBy === name && (hasEqualSplit || hasDirectOwed) ? total + amount(item.amount) : total;
+    }, 0);
     const share = debitTransactions.reduce((total, item) => {
+      const mode = splitModeOf(item);
+      if (mode === "Direct owed") return item.owedBy === name ? total + amount(item.amount) : total;
+      if (mode !== "Equal split") return total;
       const splitMembers = (item.participants || []).filter(Boolean);
       return splitMembers.includes(name) ? total + amount(item.amount) / Math.max(splitMembers.length, 1) : total;
     }, 0);
-    const credit = sum(transactions, (item) => item.type === "Credit" && item.paidBy === name);
+    const credit = 0;
     return { name, paid, share, credit, balance: paid + credit - share };
   });
+  const activeSplitTransactions = debitTransactions.filter((item) =>
+    (splitModeOf(item) === "Equal split" && (item.participants || []).filter(Boolean).length > 0) ||
+    (splitModeOf(item) === "Direct owed" && item.paidBy && item.owedBy)
+  );
   return {
     stats,
     settlements: buildSettlements(stats),
-    splitTransactions: debitTransactions,
-    expenseSplits: buildExpenseSplits(debitTransactions)
+    splitTransactions: activeSplitTransactions,
+    expenseSplits: buildExpenseSplits(activeSplitTransactions)
   };
 }
 
 function buildExpenseSplits(transactions) {
   return transactions
     .map((item) => {
+      if (splitModeOf(item) === "Direct owed") {
+        if (!item.paidBy || !item.owedBy) return null;
+        return {
+          ...item,
+          rows: [{ from: item.owedBy, to: item.paidBy, amount: Math.round(amount(item.amount)), label: "owes" }]
+        };
+      }
       const splitMembers = (item.participants || []).filter(Boolean);
       if (!item.paidBy || !splitMembers.length) return null;
       const share = amount(item.amount) / splitMembers.length;
       const rows = splitMembers
         .filter((name) => name !== item.paidBy)
-        .map((name) => ({ from: name, to: item.paidBy, amount: Math.round(share) }));
+        .map((name) => ({ from: name, to: item.paidBy, amount: Math.round(share), label: "owes" }));
       return { ...item, rows };
     })
     .filter((item) => item && item.rows.length);
+}
+
+function splitModeOf(item) {
+  if (item.splitMode) return item.splitMode;
+  return (item.participants || []).filter(Boolean).length ? "Equal split" : "No split";
 }
 
 function buildSettlements(stats) {
@@ -2922,7 +2946,7 @@ function getInitialForm(kind, item, context = {}, state) {
     salary: { title: "Salary", amount: "", receivedDate: baseDate, month: baseDate.slice(0, 7), source: "", paymentMethod: "Bank transfer", notes: "", budgetPlan: "" },
     salaryExpense: { salaryId: context.salaryId || "", title: "", amount: "", type: "Debit", category: "", date: baseDate, paymentMethod: "UPI", notes: "" },
     project: { name: "", type: "Trip", description: "", startDate: baseDate, endDate: baseDate, budget: "", participants: "", newParticipant: "", status: "Active", notes: "" },
-    projectTransaction: { projectId: context.projectId || "", title: "", amount: "", type: "Debit", category: "", date: baseDate, time: nowTime(), paidBy: "", participants: "", paymentMethod: "UPI", notes: "" },
+    projectTransaction: { projectId: context.projectId || "", title: "", amount: "", type: "Debit", splitMode: "No split", category: "", date: baseDate, time: nowTime(), paidBy: "", owedBy: "", participants: "", paymentMethod: "UPI", notes: "" },
     category: { name: "", type: "Debit", color: "#f2b8a2", icon: "" },
     credential: { title: "", type: "Debit Card", url: "", username: "", accountNumber: "", cardNumber: "", expiry: "", cvv: "", cardPin: "", password: "", recovery: "", extraSecret: "", notes: "" },
     profile: { ...state.profile },
@@ -2930,7 +2954,10 @@ function getInitialForm(kind, item, context = {}, state) {
   };
   const merged = { ...defaults[kind], ...(item || {}) };
   if (kind === "project" && Array.isArray(merged.participants)) merged.participants = merged.participants.join(", ");
-  if (kind === "projectTransaction" && Array.isArray(merged.participants)) merged.participants = merged.participants.join(", ");
+  if (kind === "projectTransaction") {
+    if (!item?.splitMode && Array.isArray(merged.participants) && merged.participants.length) merged.splitMode = "Equal split";
+    if (Array.isArray(merged.participants)) merged.participants = merged.participants.join(", ");
+  }
   return merged;
 }
 
@@ -3017,7 +3044,22 @@ function fieldsForKind(kind, state, form = {}) {
       { name: "status", label: "Project status", type: "select", options: ["Active", "Paused", "Completed", "Cancelled", "Archived"] },
       { name: "notes", label: "Notes", type: "textarea", wide: true }
     ],
-    projectTransaction: [{ name: "projectId", label: "Project", type: "select", options: projectOptions, required: true }, ...commonMoney.slice(0, 4), { name: "date", label: "Date", type: "date", required: true }, { name: "time", label: "Time", type: "time" }, { name: "paidBy", label: "Paid by", type: participantOptions.length ? "select" : "text", options: [["", "Select payer"], ...participantOptions] }, { name: "participants", label: "Split between", type: participantOptions.length ? "participantMulti" : "text", options: participantOptions }, ...commonMoney.slice(4)],
+    projectTransaction: [
+      { name: "projectId", label: "Project", type: "select", options: projectOptions, required: true },
+      ...commonMoney.slice(0, 3),
+      { name: "splitMode", label: "Split mode", type: "select", options: ["No split", "Equal split", "Direct owed"] },
+      commonMoney[3],
+      { name: "date", label: "Date", type: "date", required: true },
+      { name: "time", label: "Time", type: "time" },
+      { name: "paidBy", label: form.splitMode === "Direct owed" ? "Receiver / paid by" : "Paid by", type: participantOptions.length ? "select" : "text", options: [["", "Select participant"], ...participantOptions] },
+      ...(form.splitMode === "Direct owed"
+        ? [{ name: "owedBy", label: "Owed by", type: participantOptions.length ? "select" : "text", options: [["", "Select participant"], ...participantOptions] }]
+        : []),
+      ...(form.splitMode === "Equal split"
+        ? [{ name: "participants", label: "Split between", type: participantOptions.length ? "participantMulti" : "text", options: participantOptions }]
+        : []),
+      ...commonMoney.slice(4)
+    ],
     category: [
       { name: "name", label: "Category name", required: true },
       { name: "type", label: "Category type", type: "select", options: ["Credit", "Debit", "Both"] },
@@ -3061,6 +3103,8 @@ function validateForm(kind, form) {
   if (kind === "credential" && !form.title?.trim()) return "Credential name is required.";
   if (kind === "profile" && (!form.name?.trim() || !form.dob)) return "Name and date of birth are required.";
   if (["expense", "salary", "salaryExpense", "projectTransaction"].includes(kind) && amount(form.amount) <= 0) return "Amount must be greater than zero.";
+  if (kind === "projectTransaction" && form.type === "Debit" && form.splitMode === "Equal split" && !splitParticipants(form.participants).length) return "Select participants for equal split, or choose No split.";
+  if (kind === "projectTransaction" && form.type === "Debit" && form.splitMode === "Direct owed" && (!form.paidBy || !form.owedBy)) return "Select receiver and owed by participant.";
   if (kind === "project" && amount(form.budget) < 0) return "Budget cannot be negative.";
   return "";
 }
@@ -3070,7 +3114,15 @@ function normalizeForm(kind, form) {
     const { newParticipant, ...rest } = form;
     return { ...rest, participants: splitParticipants(form.participants) };
   }
-  if (kind === "projectTransaction") return { ...form, participants: splitParticipants(form.participants) };
+  if (kind === "projectTransaction") {
+    const mode = form.splitMode || (splitParticipants(form.participants).length ? "Equal split" : "No split");
+    return {
+      ...form,
+      splitMode: mode,
+      owedBy: mode === "Direct owed" ? form.owedBy : "",
+      participants: mode === "Equal split" ? splitParticipants(form.participants) : []
+    };
+  }
   return form;
 }
 
@@ -3085,7 +3137,7 @@ function withAiDefaults(kind, data) {
     salary: { title: "Salary", amount: 0, receivedDate: date, month: date.slice(0, 7), source: "", paymentMethod: "Bank transfer", notes: "", budgetPlan: "" },
     salaryExpense: { salaryId: "", title: "Salary expense", amount: 0, type: "Debit", category: "", date, paymentMethod: "UPI", notes: "" },
     project: { name: "Project", type: "Custom", description: "", startDate: date, endDate: date, budget: 0, participants: [], status: "Active", notes: "" },
-    projectTransaction: { projectId: "", title: "Project transaction", amount: 0, type: "Debit", category: "", date, time: nowTime(), paidBy: "", participants: [], paymentMethod: "UPI", notes: "" },
+    projectTransaction: { projectId: "", title: "Project transaction", amount: 0, type: "Debit", splitMode: "No split", category: "", date, time: nowTime(), paidBy: "", owedBy: "", participants: [], paymentMethod: "UPI", notes: "" },
     category: { name: "Category", type: "Both", color: "#d8ff8f", icon: "spark" }
   };
 

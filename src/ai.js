@@ -161,6 +161,8 @@ export const AI_JSON_REFERENCE = `{
         "date": "2026-06-06",
         "time": "12:00",
         "paidBy": "Maaz",
+        "splitMode": "Equal split",
+        "owedBy": "",
         "participants": ["Maaz"],
         "paymentMethod": "UPI",
         "notes": ""
@@ -223,7 +225,7 @@ function compactState(state) {
       participants: project.participants
     })),
     salaryExpenses: take(state.salaryExpenses, ["id", "salaryId", "title", "amount", "type", "category", "date", "paymentMethod"]),
-    projectTransactions: take(state.projectTransactions, ["id", "projectId", "title", "amount", "type", "category", "date", "time", "paidBy", "participants", "paymentMethod"]),
+    projectTransactions: take(state.projectTransactions, ["id", "projectId", "title", "amount", "type", "category", "date", "time", "paidBy", "owedBy", "splitMode", "participants", "paymentMethod"]),
     credentials: (state.credentials || []).map((credential) => ({
       id: credential.id,
       title: credential.title,
@@ -299,13 +301,26 @@ function settlementRows(stats) {
 
 function expenseSplitRows(transactions) {
   return transactions
-    .filter((item) => item.type === "Debit" && item.paidBy && item.participants?.length)
+    .filter((item) => item.type === "Debit" && item.paidBy && (splitModeOf(item) === "Direct owed" ? item.owedBy : item.participants?.length))
     .map((item) => {
+      if (splitModeOf(item) === "Direct owed") {
+        return {
+          id: item.id,
+          title: item.title,
+          paidBy: item.paidBy,
+          owedBy: item.owedBy,
+          splitMode: "Direct owed",
+          amount: moneyAmount(item.amount),
+          splitBetween: [],
+          rows: [{ from: item.owedBy, to: item.paidBy, amount: Math.round(moneyAmount(item.amount)) }]
+        };
+      }
       const share = moneyAmount(item.amount) / item.participants.length;
       return {
         id: item.id,
         title: item.title,
         paidBy: item.paidBy,
+        splitMode: "Equal split",
         amount: moneyAmount(item.amount),
         splitBetween: item.participants,
         rows: item.participants
@@ -314,6 +329,11 @@ function expenseSplitRows(transactions) {
       };
     })
     .filter((item) => item.rows.length);
+}
+
+function splitModeOf(item) {
+  if (item.splitMode) return item.splitMode;
+  return item.participants?.length ? "Equal split" : "No split";
 }
 
 function buildInsights(state) {
@@ -358,12 +378,20 @@ function buildInsights(state) {
       const categoryDebit = transactions.filter((item) => item.type === "Debit").reduce((acc, item) => addGroup(acc, item.category, item.amount), {});
       const participantNames = uniqueNames([...(project.participants || []), ...transactions.flatMap((item) => [item.paidBy, ...(item.participants || [])])]);
       const participantSpend = participantNames.reduce((acc, name) => {
-        const paid = transactions.filter((item) => item.type === "Debit" && item.paidBy === name).reduce((total, item) => total + moneyAmount(item.amount), 0);
+        const paid = transactions.filter((item) => item.type === "Debit" && item.paidBy === name).reduce((total, item) => {
+          const mode = splitModeOf(item);
+          const hasEqualSplit = mode === "Equal split" && (item.participants || []).filter(Boolean).length > 0;
+          const hasDirectOwed = mode === "Direct owed" && item.owedBy;
+          return hasEqualSplit || hasDirectOwed ? total + moneyAmount(item.amount) : total;
+        }, 0);
         const share = transactions.filter((item) => item.type === "Debit").reduce((total, item) => {
+          const mode = splitModeOf(item);
+          if (mode === "Direct owed") return item.owedBy === name ? total + moneyAmount(item.amount) : total;
+          if (mode !== "Equal split") return total;
           const splitMembers = (item.participants || []).filter(Boolean);
           return splitMembers.includes(name) ? total + moneyAmount(item.amount) / Math.max(splitMembers.length, 1) : total;
         }, 0);
-        const credit = transactions.filter((item) => item.type === "Credit" && item.paidBy === name).reduce((total, item) => total + moneyAmount(item.amount), 0);
+        const credit = 0;
         acc[name] = { paid, share, credit, balance: paid + credit - share };
         return acc;
       }, {});
@@ -417,6 +445,10 @@ Rules:
 - For project transactions, always set paidBy to one participant from that project when clear and set participants to the involved participant names. If unclear, ask which project participants were involved.
 - For project split expenses, participants means the people sharing/splitting that payment, not only people present in the project.
 - Do not assume all project participants are splitting an expense. Only names in projectTransaction.participants split that specific expense.
+- Project transaction splitMode must be one of "No split", "Equal split", or "Direct owed".
+- Use splitMode "No split" when the expense belongs only to the payer and nobody owes anyone.
+- Use splitMode "Equal split" when the amount should be divided equally among projectTransaction.participants.
+- Use splitMode "Direct owed" when one participant owes the full amount to another; put receiver in paidBy and debtor in owedBy. Do not set participants for Direct owed.
 - If the user asks to create an expense project but does not include transaction details, output only a project create action and ask in reply if they want to add expenses inside it after confirmation.
 - If the user asks to create a new project and also gives project expenses in the same prompt, output the project create action first, then projectTransaction actions with data.projectName equal to the project name. The app can resolve it after creation.
 - If a project expense references a project name that does not exist, output a project create action first if enough project details are known; otherwise ask for the missing project budget/date before creating.
@@ -443,7 +475,7 @@ expense: { title, amount, type, category, date, time, paymentMethod, notes, remi
 salary: { title, amount, receivedDate, month, source, paymentMethod, notes, budgetPlan }
 salaryExpense: { salaryId, title, amount, type, category, date, paymentMethod, notes }
 project: { name, type, description, startDate, endDate, budget, participants, status, notes }
-projectTransaction: { projectId, title, amount, type, category, date, time, paidBy, participants, paymentMethod, notes }
+projectTransaction: { projectId, title, amount, type, category, date, time, paidBy, splitMode, owedBy, participants, paymentMethod, notes }
 category: { name, type, color, icon }
 
 Output JSON shape:
