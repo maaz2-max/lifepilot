@@ -123,6 +123,7 @@ const navItems = [
   { key: "notes", label: "Notes", icon: NotebookPen },
   { key: "events", label: "Events", icon: Sparkles },
   { key: "expenses", label: "Expenses", icon: WalletCards },
+  { key: "vault", label: "Vault", icon: KeyRound },
   { key: "settings", label: "Settings", icon: Settings }
 ];
 
@@ -636,6 +637,15 @@ export default function App() {
             requestConfirm={requestConfirm}
           />
         )}
+        {active === "vault" && (
+          <VaultView
+            state={state}
+            upsert={upsert}
+            setToast={setToast}
+            setModal={setModal}
+            remove={remove}
+          />
+        )}
         {active === "settings" && (
           <SettingsView
             state={state}
@@ -661,7 +671,7 @@ export default function App() {
         <button className={active === "calendar" ? "active" : ""} onClick={() => showView("calendar")}><CalendarDays size={21} /><span>Calendar</span></button>
         <button className={`bottom-add ${quickOpen ? "open" : ""}`} onClick={() => setQuickOpen((value) => !value)}>{quickOpen ? <X size={24} /> : <Plus size={24} />}</button>
         <button className={active === "expenses" ? "active" : ""} onClick={() => showView("expenses")}><WalletCards size={21} /><span>Money</span></button>
-        <button className={active === "settings" ? "active" : ""} onClick={() => showView("settings")}><Settings size={21} /><span>Settings</span></button>
+        <button className={active === "vault" ? "active" : ""} onClick={() => showView("vault")}><KeyRound size={21} /><span>Vault</span></button>
       </nav>
 
       {modal && (
@@ -1544,7 +1554,6 @@ function Analytics({ state }) {
 
 function SettingsView({ state, setState, setToast, requestNotifications, setModal, remove, upsert, requestConfirm }) {
   const [storageInfo, setStorageInfo] = useState(null);
-  const [vaultReveal, setVaultReveal] = useState(null);
 
   useEffect(() => {
     let alive = true;
@@ -1715,34 +1724,6 @@ function SettingsView({ state, setState, setToast, requestNotifications, setModa
         </div>
       </div>
 
-      <div className="panel span-2">
-        <SectionHeader
-          title="Secure Vault"
-          action={<button className="primary tactile" onClick={() => setModal({ kind: "credential" })}><KeyRound size={17} />Add Credential</button>}
-        />
-        <div className="vault-warning">
-          <ShieldCheck size={20} />
-          <span>Secrets are encrypted locally and are not included in AI API requests. PIN is required every time details are revealed.</span>
-        </div>
-        <div className="credential-grid">
-          {state.credentials.length ? state.credentials.map((credential) => (
-            <article className={`credential-card ${credentialTypeClass(credential.type)}`} key={credential.id}>
-              <div>
-                <p className="eyebrow">{credential.type}</p>
-                <h3>{credential.title}</h3>
-                <p>{credential.url || credential.username || "No public metadata added."}</p>
-              </div>
-              <div className="record-actions">
-                <button className="icon-button tactile" title="View" onClick={() => setVaultReveal({ credentials: [credential] })}><Eye size={16} /></button>
-                <button className="icon-button tactile" title="Edit" onClick={() => setModal({ kind: "credential", item: credential })}><Edit3 size={16} /></button>
-                <button className="icon-button tactile danger" title="Delete" onClick={() => remove("credentials", credential.id, "credential")}><Trash2 size={16} /></button>
-              </div>
-            </article>
-          )) : <EmptyState text="No credentials saved. Add cards, banks, social accounts, or custom secure notes." />}
-        </div>
-        {state.credentials.length > 1 && <button className="secondary tactile spaced" onClick={() => setVaultReveal({ credentials: state.credentials })}>View all saved credentials</button>}
-      </div>
-
       <div className="panel">
         <SectionHeader title="Data Management" />
         <div className="storage-status">
@@ -1775,6 +1756,68 @@ function SettingsView({ state, setState, setToast, requestNotifications, setModa
           </button>
         </div>
       </div>
+    </section>
+  );
+}
+
+function VaultView({ state, upsert, setToast, setModal, remove }) {
+  const [vaultReveal, setVaultReveal] = useState(null);
+  const [query, setQuery] = useState("");
+  const [typeFilter, setTypeFilter] = useState("All");
+  const [pinFilter, setPinFilter] = useState("All");
+  const typeOptions = ["All", ...uniqueList(state.credentials.map((credential) => credential.type))];
+  const filtered = state.credentials
+    .filter((credential) => matchesQuery(credential, query))
+    .filter((credential) => typeFilter === "All" || credential.type === typeFilter)
+    .filter((credential) => pinFilter === "All" || (pinFilter === "Pinned" ? credential.pinned : !credential.pinned))
+    .sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || String(a.title).localeCompare(String(b.title)));
+  const pinnedCount = state.credentials.filter((credential) => credential.pinned).length;
+
+  return (
+    <section className="vault-page">
+      <div className="hero-panel vault-hero raised">
+        <div>
+          <p className="eyebrow">Private local vault</p>
+          <h2>Secure Vault</h2>
+          <p>{state.credentials.length} credentials saved, {pinnedCount} pinned. Details stay locked until PIN unlock.</p>
+        </div>
+        <button className="primary tactile" onClick={() => setModal({ kind: "credential" })}><KeyRound size={18} />Add Credential</button>
+      </div>
+
+      <section className="panel">
+        <div className="vault-warning">
+          <ShieldCheck size={20} />
+          <span>Secrets are encrypted locally and are not included in AI API requests. PIN is required every time details are revealed.</span>
+        </div>
+        <div className="vault-toolbar">
+          <label className="search-box"><Search size={18} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search cards, banks, usernames, URLs" /></label>
+          <label className="filter-box"><Filter size={18} /><Select value={typeFilter} onChange={setTypeFilter} options={typeOptions} /></label>
+          <Segmented value={pinFilter} onChange={setPinFilter} options={[["All", "All"], ["Pinned", "Pinned"], ["Unpinned", "Unpinned"]]} />
+        </div>
+        <div className="cluster spaced">
+          {filtered.length > 1 && <button className="secondary tactile" onClick={() => setVaultReveal({ credentials: filtered })}><Eye size={16} />View filtered</button>}
+          {state.credentials.length > 1 && <button className="secondary tactile" onClick={() => setVaultReveal({ credentials: state.credentials })}><Eye size={16} />View all</button>}
+        </div>
+      </section>
+
+      <div className="credential-grid vault-grid">
+        {filtered.length ? filtered.map((credential) => (
+          <article className={`credential-card ${credentialTypeClass(credential.type)} ${credential.pinned ? "pinned" : ""}`} key={credential.id}>
+            <div>
+              <p className="eyebrow">{credential.type}</p>
+              <h3>{credential.title}</h3>
+              <p>{credential.url || credential.username || "No public metadata added."}</p>
+            </div>
+            <div className="record-actions credential-actions">
+              <button className="icon-button tactile" title={credential.pinned ? "Unpin" : "Pin"} onClick={() => upsert("credentials", { ...credential, pinned: !credential.pinned }, "credential")}><Tag size={16} /></button>
+              <button className="icon-button tactile" title="View" onClick={() => setVaultReveal({ credentials: [credential] })}><Eye size={16} /></button>
+              <button className="icon-button tactile" title="Edit" onClick={() => setModal({ kind: "credential", item: credential })}><Edit3 size={16} /></button>
+              <button className="icon-button tactile danger" title="Delete" onClick={() => remove("credentials", credential.id, "credential")}><Trash2 size={16} /></button>
+            </div>
+          </article>
+        )) : <EmptyState text="No credentials match this vault view." />}
+      </div>
+
       {vaultReveal && <CredentialRevealModal records={vaultReveal.credentials} close={() => setVaultReveal(null)} setToast={setToast} />}
     </section>
   );
@@ -1818,6 +1861,7 @@ function EntityModal({ state, modal, close, upsert, setState, setToast }) {
         url: form.url.trim(),
         username: form.username.trim(),
         notes: form.notes.trim(),
+        pinned: Boolean(form.pinned),
         encrypted,
         fieldNames: Object.keys(secret).filter((key) => String(secret[key] || "").trim()),
         updatedAt: new Date().toISOString()
@@ -2045,7 +2089,7 @@ function AiAssistant({ state, setState, upsert, setToast, close }) {
         role: "ai",
         text: credentialIntent.mode === "view"
           ? "Credential details are locked locally. Enter PIN below to reveal matching cards in this chat. I will not send these details to any AI API."
-          : "For security, add or edit credential secrets from Secure Vault in Settings. I can show saved credential details here only after PIN unlock.",
+          : "For security, add or edit credential secrets from the Vault page. I can show saved credential details here only after PIN unlock.",
         credentialQuery: credentialIntent,
         actions: []
       });
@@ -2302,7 +2346,7 @@ function CredentialChatCard({ state, query, setToast }) {
     }
   };
 
-  if (!matches.length) return <div className="ai-action-card done"><strong>No matching credential found.</strong><small>Add it from Settings &gt; Secure Vault.</small></div>;
+  if (!matches.length) return <div className="ai-action-card done"><strong>No matching credential found.</strong><small>Add it from the Vault page.</small></div>;
 
   return (
     <div className="ai-action-card vault-chat-card">
@@ -2948,7 +2992,7 @@ function getInitialForm(kind, item, context = {}, state) {
     project: { name: "", type: "Trip", description: "", startDate: baseDate, endDate: baseDate, budget: "", participants: "", newParticipant: "", status: "Active", notes: "" },
     projectTransaction: { projectId: context.projectId || "", title: "", amount: "", type: "Debit", splitMode: "No split", category: "", date: baseDate, time: nowTime(), paidBy: "", owedBy: "", participants: "", paymentMethod: "UPI", notes: "" },
     category: { name: "", type: "Debit", color: "#f2b8a2", icon: "" },
-    credential: { title: "", type: "Debit Card", url: "", username: "", accountNumber: "", cardNumber: "", expiry: "", cvv: "", cardPin: "", password: "", recovery: "", extraSecret: "", notes: "" },
+    credential: { title: "", type: "Debit Card", url: "", username: "", accountNumber: "", cardNumber: "", expiry: "", cvv: "", cardPin: "", password: "", recovery: "", extraSecret: "", notes: "", pinned: false },
     profile: { ...state.profile },
     participants: { participants: (item?.participants || []).join(", "), newParticipant: "" }
   };
@@ -3079,7 +3123,8 @@ function fieldsForKind(kind, state, form = {}) {
       { name: "password", label: "Password", type: "password" },
       { name: "recovery", label: "Recovery code / backup", type: "password", wide: true },
       { name: "extraSecret", label: "Other private details", type: "textarea", wide: true },
-      { name: "notes", label: "Public notes", type: "textarea", wide: true }
+      { name: "notes", label: "Public notes", type: "textarea", wide: true },
+      { name: "pinned", label: "Pin in vault", type: "checkbox" }
     ],
     profile: [
       { name: "image", label: "Profile image", type: "file", wide: true },
