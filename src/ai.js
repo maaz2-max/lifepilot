@@ -196,13 +196,13 @@ export const AI_JSON_REFERENCE = `{
 }`;
 
 function compactState(state) {
-  const take = (items, fields) => items.slice(0, 35).map((item) =>
+  const take = (items, fields) => items.map((item) =>
     fields.reduce((acc, field) => ({ ...acc, [field]: item[field] }), {})
   );
 
   return {
     profile: state.profile ? { name: state.profile.name, dob: state.profile.dob } : null,
-    today: new Date().toISOString().slice(0, 10),
+    today: state.__today || new Date().toLocaleDateString("en-CA"),
     currentTime: new Date().toTimeString().slice(0, 5),
     categories: state.categories.map((category) => category.name),
     tasks: take(state.tasks, ["id", "title", "dueDate", "dueTime", "status", "priority", "category"]),
@@ -211,7 +211,7 @@ function compactState(state) {
     events: take(state.events, ["id", "title", "startDate", "startTime", "endDate", "location"]),
     expenses: take(state.expenses, ["id", "title", "amount", "type", "category", "date", "time", "paymentMethod", "notes"]),
     salaries: take(state.salaries, ["id", "title", "amount", "receivedDate", "month", "source"]),
-    projects: state.projects.slice(0, 25).map((project) => ({
+    projects: state.projects.map((project) => ({
       id: project.id,
       name: project.name,
       budget: project.budget,
@@ -239,6 +239,7 @@ Rules:
 - If the user asks to create, edit, or delete something, propose an action. Do not claim it is already saved.
 - Ask for user confirmation in the reply before any action is applied.
 - You may search all compact app data by title, amount, category, date, payment method, status, project, participant, notes, or source.
+- If the user asks whether any task/reminder/note/event/expense exists, list all matching records. If they ask "any task available", list every task with ID, title, date, time, status, priority.
 - If the user asks for a specific day transaction list, reply with a markdown table only in the reply field. Include Source, Title, Type, Amount, Category, Time, Payment Method, ID when available.
 - For listing tasks/reminders/events/notes, use a markdown table when useful.
 - Use Indian Rupees only for money.

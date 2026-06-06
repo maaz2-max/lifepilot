@@ -1079,8 +1079,7 @@ button:disabled {
   z-index: 70;
   display: grid;
   justify-items: end;
-  background: rgba(17, 17, 17, 0.24);
-  backdrop-filter: blur(6px);
+  background: #c7c8f4;
 }
 
 .ai-panel {
@@ -1088,8 +1087,8 @@ button:disabled {
   grid-template-rows: auto auto auto minmax(0, 1fr) auto auto;
   gap: 0.8rem;
   width: min(520px, 100vw);
-  height: 100vh;
-  padding: 1rem;
+  height: 100dvh;
+  padding: 1rem 1rem calc(1rem + env(safe-area-inset-bottom));
   border-left: 2px solid #111111;
   background: #c7c8f4;
   box-shadow: -9px 0 0 #111111;
@@ -1292,6 +1291,11 @@ button:disabled {
 
 .ai-input {
   align-items: stretch;
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  padding-top: 0.25rem;
+  background: #c7c8f4;
 }
 
 .ai-input input {
@@ -1334,6 +1338,54 @@ button:disabled {
   display: grid;
   place-items: center;
   padding: 1rem;
+}
+
+.pin-screen {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background:
+    linear-gradient(128deg, rgba(255, 255, 255, 0.18) 0 12%, transparent 12% 100%),
+    linear-gradient(145deg, #d8dafd 0%, #c7c8f4 42%, #b9bbea 100%);
+}
+
+.pin-card {
+  display: grid;
+  gap: 0.85rem;
+  width: min(420px, 100%);
+  padding: 1.15rem;
+  border: 2px solid #111111;
+  border-radius: 30px;
+  background: #fbf7e8;
+  box-shadow: 9px 10px 0 #111111;
+}
+
+.pin-card h1,
+.pin-card p {
+  margin: 0;
+}
+
+.pin-card h1 {
+  color: #111111;
+  font-size: 2rem;
+  font-weight: 950;
+}
+
+.pin-card p {
+  color: #414253;
+  font-weight: 850;
+}
+
+.pin-icon {
+  display: grid;
+  place-items: center;
+  width: 66px;
+  height: 66px;
+  border: 2px solid #111111;
+  border-radius: 22px;
+  background: #d8ff8f;
+  box-shadow: 5px 6px 0 #111111;
 }
 
 .onboarding-panel {
@@ -1529,6 +1581,7 @@ button:disabled {
 
   .ai-panel {
     width: 100vw;
+    height: 100dvh;
     border-left: 0;
     box-shadow: none;
   }

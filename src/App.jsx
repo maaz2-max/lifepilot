@@ -16,6 +16,7 @@ import {
   Filter,
   Home,
   IndianRupee,
+  KeyRound,
   LayoutDashboard,
   ListPlus,
   NotebookPen,
@@ -42,6 +43,8 @@ import {
 import { AI_JSON_REFERENCE, askGeminiAssistant, FREE_GEMINI_MODELS } from "./ai.js";
 
 const STORE_KEY = "lifepilot.state.v1";
+const PIN_SESSION_KEY = "lifepilot.pin.validUntil";
+const APP_PIN = "2611";
 const rupee = new Intl.NumberFormat("en-IN", {
   style: "currency",
   currency: "INR",
@@ -120,7 +123,7 @@ const quickActions = [
 ];
 
 function todayISO() {
-  return new Date().toISOString().slice(0, 10);
+  return localDateISO(new Date());
 }
 
 function nowTime() {
@@ -129,6 +132,17 @@ function nowTime() {
 
 function id(prefix) {
   return `${prefix}-${crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36)}`;
+}
+
+function localDateISO(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function currentMonthCursor() {
+  return new Date(`${todayISO()}T12:00:00`);
 }
 
 function mergeState(parsed) {
@@ -168,7 +182,7 @@ function monthName(value) {
 }
 
 function dateKey(date) {
-  return date.toISOString().slice(0, 10);
+  return localDateISO(date);
 }
 
 function startOfWeek(date, firstDay = "Sunday") {
@@ -304,6 +318,8 @@ function useInstallPrompt() {
 
 export default function App() {
   const [state, setState, storageReady] = useLocalState();
+  const [pinUnlocked, setPinUnlocked] = useState(() => Number(localStorage.getItem(PIN_SESSION_KEY) || 0) > Date.now());
+  const [pinBooting, setPinBooting] = useState(true);
   const [active, setActive] = useState("home");
   const [modal, setModal] = useState(null);
   const [quickOpen, setQuickOpen] = useState(false);
@@ -316,6 +332,11 @@ export default function App() {
   const [selectedProject, setSelectedProject] = useState("");
   const installPrompt = useInstallPrompt();
   const notified = useRef(new Set());
+
+  useEffect(() => {
+    const timer = setTimeout(() => setPinBooting(false), 900);
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     if (!toast) return;
@@ -414,6 +435,9 @@ export default function App() {
 
   const showView = (key) => {
     setQuickOpen(false);
+    if (key === "calendar") {
+      setSelectedDate(todayISO());
+    }
     setActive(key);
   };
 
@@ -431,6 +455,17 @@ export default function App() {
 
   if (!storageReady) {
     return <LoadingScreen />;
+  }
+
+  if (pinBooting) {
+    return <LoadingScreen message="Securing LifePilot" />;
+  }
+
+  if (!pinUnlocked) {
+    return <PinLock onUnlock={() => {
+      localStorage.setItem(PIN_SESSION_KEY, String(Date.now() + 60 * 60 * 1000));
+      setPinUnlocked(true);
+    }} />;
   }
 
   if (!state.onboarded) {
@@ -458,7 +493,7 @@ export default function App() {
           setAiOpen={setAiOpen}
         />
 
-        {active === "home" && <HomeView state={state} openAdd={openAdd} setActive={setActive} />}
+        {active === "home" && <HomeView state={state} openAdd={openAdd} setActive={showView} />}
         {active === "calendar" && (
           <CalendarView
             state={state}
@@ -561,15 +596,54 @@ function Brand() {
   );
 }
 
-function LoadingScreen() {
+function LoadingScreen({ message = "Preparing your offline workspace" }) {
   return (
     <main className="onboarding">
       <section className="onboarding-panel loading-panel">
         <Brand />
         <div className="loading-orbit" />
-        <h1>Preparing your offline workspace</h1>
+        <h1>{message}</h1>
         <p>Opening local storage and getting LifePilot ready.</p>
       </section>
+    </main>
+  );
+}
+
+function PinLock({ onUnlock }) {
+  const [pin, setPin] = useState("");
+  const [error, setError] = useState("");
+
+  const submit = (event) => {
+    event.preventDefault();
+    if (pin === APP_PIN) {
+      onUnlock();
+      return;
+    }
+    setError("Wrong PIN. Please try again.");
+    setPin("");
+  };
+
+  return (
+    <main className="pin-screen">
+      <form className="pin-card" onSubmit={submit}>
+        <Brand />
+        <div className="pin-icon"><KeyRound size={30} /></div>
+        <h1>Enter PIN</h1>
+        <p>LifePilot is locked for your privacy.</p>
+        <input
+          value={pin}
+          onChange={(event) => {
+            setError("");
+            setPin(event.target.value.replace(/\D/g, "").slice(0, 4));
+          }}
+          inputMode="numeric"
+          type="password"
+          placeholder="2611"
+          autoFocus
+        />
+        {error && <p className="validation">{error}</p>}
+        <button className="primary tactile" type="submit">Unlock</button>
+      </form>
     </main>
   );
 }
@@ -780,6 +854,11 @@ function CalendarView({ state, selectedDate, setSelectedDate, openAdd, setModal,
   const [cursor, setCursor] = useState(new Date(`${selectedDate}T12:00:00`));
   const [view, setView] = useState("month");
   const [preview, setPreview] = useState(null);
+  useEffect(() => {
+    if (selectedDate === todayISO()) {
+      setCursor(currentMonthCursor());
+    }
+  }, [selectedDate]);
   const days = useMemo(() => calendarDays(cursor, state.settings.calendarStartDay), [cursor, state.settings.calendarStartDay]);
   const selectedItems = itemsForDate(state, selectedDate);
 
@@ -848,7 +927,7 @@ function CalendarView({ state, selectedDate, setSelectedDate, openAdd, setModal,
         />
         <div className="calendar-controls">
           <button className="icon-button tactile" onClick={() => setCursor(shiftCursor(cursor, view, -1))}><ChevronLeft /></button>
-          <button className="secondary tactile" onClick={() => { setCursor(new Date()); setSelectedDate(todayISO()); }}>Today</button>
+          <button className="secondary tactile" onClick={() => { setCursor(currentMonthCursor()); setSelectedDate(todayISO()); }}>Today</button>
           <button className="icon-button tactile" onClick={() => setCursor(shiftCursor(cursor, view, 1))}><ChevronRight /></button>
         </div>
         {view === "month" && <MonthGrid days={days} cursor={cursor} state={state} selectedDate={selectedDate} setSelectedDate={setSelectedDate} />}
@@ -1470,7 +1549,7 @@ function AiAssistant({ state, setState, upsert, setToast, close }) {
         ...current,
         settings: { ...current.settings, aiEnabled: true, aiModel: model }
       }));
-      const result = await askGeminiAssistant({ state, model, message: text });
+      const result = await askGeminiAssistant({ state: { ...state, __today: todayISO() }, model, message: text });
       addMessage({ role: "ai", text: result.reply, actions: normalizeAiActions(result) });
     } catch (error) {
       addMessage({ role: "ai", text: error.busy ? "Server busy. Please try after some time." : "AI is unavailable right now. Please try again later.", actions: [] });
@@ -1608,17 +1687,32 @@ function AiMessage({ state, setState, message, copyMessage, upsert, setToast }) 
       <MessageBody text={message.text} />
       {message.actions?.length ? (
         <div className="ai-actions">
-          {message.actions.map((action, index) => <AiActionCard key={`${message.id}-${index}`} state={state} setState={setState} action={action} upsert={upsert} setToast={setToast} />)}
+          {message.actions.map((action, index) => <AiActionCard key={`${message.id}-${index}`} messageId={message.id} actionIndex={index} state={state} setState={setState} action={action} upsert={upsert} setToast={setToast} />)}
         </div>
       ) : null}
     </article>
   );
 }
 
-function AiActionCard({ state, setState, action, upsert, setToast }) {
+function AiActionCard({ messageId, actionIndex, state, setState, action, upsert, setToast }) {
   const operation = action.operation || "create";
   const [draft, setDraft] = useState(JSON.stringify(action.data || {}, null, 2));
-  const [done, setDone] = useState(false);
+  const [done, setDone] = useState(Boolean(action.status));
+
+  const persistActionStatus = (status) => {
+    setState((current) => ({
+      ...current,
+      aiMessages: (current.aiMessages || []).map((message) => {
+        if (message.id !== messageId) return message;
+        return {
+          ...message,
+          actions: (message.actions || []).map((entry, index) =>
+            index === actionIndex ? { ...entry, status, resolvedAt: new Date().toISOString() } : entry
+          )
+        };
+      })
+    }));
+  };
 
   const apply = () => {
     try {
@@ -1631,6 +1725,7 @@ function AiActionCard({ state, setState, action, upsert, setToast }) {
         setState((current) => applyAiDelete(current, collection, action));
         setToast("Deleted");
         setDone(true);
+        persistActionStatus("deleted");
         return;
       }
       const data = JSON.parse(draft);
@@ -1645,10 +1740,12 @@ function AiActionCard({ state, setState, action, upsert, setToast }) {
         }));
         setToast("Changes saved");
         setDone(true);
+        persistActionStatus("updated");
         return;
       }
       upsert(collection, normalizeForm(action.type, withAiDefaults(action.type, data)), action.type);
       setDone(true);
+      persistActionStatus("created");
     } catch {
       setToast("Fix the action JSON before confirming");
     }
@@ -1656,12 +1753,12 @@ function AiActionCard({ state, setState, action, upsert, setToast }) {
 
   return (
     <div className={`ai-action-card ${done ? "done" : ""}`}>
-      <strong>{done ? actionDoneLabel(operation) : action.summary || `${operationLabel(operation)} ${kindLabel(action.type)}`}</strong>
+      <strong>{done ? actionDoneLabel(action.status || operation) : action.summary || `${operationLabel(operation)} ${kindLabel(action.type)}`}</strong>
       {operation !== "create" && action.id && <small>ID: {action.id}</small>}
       {operation !== "delete" && <textarea value={draft} onChange={(e) => setDraft(e.target.value)} disabled={done} />}
       <div className="cluster">
         <button className="primary tactile" type="button" onClick={apply} disabled={done}>{done ? "Done" : `Confirm & ${operationLabel(operation)}`}</button>
-        <button className="secondary tactile" type="button" onClick={() => setDone(true)} disabled={done}>Cancel</button>
+        <button className="secondary tactile" type="button" onClick={() => { setDone(true); persistActionStatus("cancelled"); }} disabled={done}>Cancel</button>
       </div>
     </div>
   );
@@ -1732,7 +1829,7 @@ function operationLabel(operation) {
 }
 
 function actionDoneLabel(operation) {
-  return { create: "Created", edit: "Updated", delete: "Deleted" }[operation] || "Done";
+  return { create: "Created", edit: "Updated", delete: "Deleted", created: "Created", updated: "Updated", deleted: "Deleted", cancelled: "Cancelled" }[operation] || "Done";
 }
 
 function Field({ field, value, set }) {
