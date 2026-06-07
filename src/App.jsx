@@ -2018,7 +2018,8 @@ function SettingsView({ state, setState, setToast, requestNotifications, setModa
           ["budgetAlerts", "Budget alerts"],
           ["salaryReminder", "Salary reminder"],
           ["dailyExpenseReminder", "Daily expense reminder"],
-          ["birthdayNotification", "Birthday notification"]
+          ["birthdayNotification", "Birthday notification"],
+          ["telegramNotifications", "Telegram bot notifications"]
         ].map(([key, label]) => <Toggle key={key} label={label} checked={state.settings[key]} onChange={(value) => setSetting(key, value)} />)}
         <label>Repeated notification frequency<input type="number" min="2" max="3" value={state.settings.repeatHours} onChange={(e) => setSetting("repeatHours", e.target.value)} /></label>
       </div>
