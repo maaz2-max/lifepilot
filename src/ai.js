@@ -276,6 +276,12 @@ function monthOf(date) {
   return String(date || "").slice(0, 7);
 }
 
+function addDaysISO(iso, days) {
+  const date = new Date(`${iso}T12:00:00`);
+  date.setDate(date.getDate() + days);
+  return date.toLocaleDateString("en-CA");
+}
+
 function addGroup(acc, key, value) {
   const label = key || "Uncategorized";
   acc[label] = (acc[label] || 0) + moneyAmount(value);
@@ -356,6 +362,7 @@ function splitModeOf(item) {
 function buildInsights(state) {
   const today = state.__today || new Date().toLocaleDateString("en-CA");
   const month = today.slice(0, 7);
+  const weekEnd = addDaysISO(today, 7);
   const projectById = Object.fromEntries(state.projects.map((project) => [project.id, project]));
   const monthlyDaily = state.expenses.filter((expense) => monthOf(expense.date) === month);
   const monthlySalaryExpenses = state.salaryExpenses.filter((expense) => monthOf(expense.date) === month);
@@ -374,6 +381,20 @@ function buildInsights(state) {
   const totalProjectDebit = monthlyProjects.filter((expense) => expense.type === "Debit").reduce((total, expense) => total + moneyAmount(expense.amount), 0);
   const totalPaidBills = monthlyBills.filter((bill) => bill.status === "Paid").reduce((total, bill) => total + moneyAmount(bill.amount), 0);
   const totalUnpaidBills = monthlyBills.filter((bill) => bill.status !== "Paid").reduce((total, bill) => total + moneyAmount(bill.amount), 0);
+  const allMoneyRows = [
+    ...state.expenses.map((item) => ({ ...item, source: "Daily Expense", date: item.date })),
+    ...(state.bills || []).map((item) => ({ ...item, source: "Bill Tracker", date: item.dueDate, type: item.status === "Paid" ? "Debit" : "Due" })),
+    ...state.salaryExpenses.map((item) => ({ ...item, source: "Salary-Linked Expense", date: item.date })),
+    ...state.projectTransactions.map((item) => ({ ...item, source: "Project Expense", date: item.date, projectName: projectById[item.projectId]?.name || "" }))
+  ];
+  const dueBillsThisWeek = (state.bills || [])
+    .filter((bill) => bill.status !== "Paid" && bill.dueDate >= today && bill.dueDate <= weekEnd)
+    .sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate)));
+  const overdue = {
+    tasks: state.tasks.filter((task) => !["Completed", "Cancelled"].includes(task.status) && task.dueDate < today),
+    reminders: state.reminders.filter((reminder) => reminder.status === "Active" && reminder.date < today),
+    bills: (state.bills || []).filter((bill) => bill.status !== "Paid" && bill.dueDate < today)
+  };
 
   return {
     month,
@@ -392,6 +413,21 @@ function buildInsights(state) {
       projectDebitByCategory,
       highestDailyCategory: highestEntry(dailyDebitByCategory),
       highestProjectCategory: highestEntry(projectDebitByCategory)
+    },
+    thisWeek: {
+      start: today,
+      end: weekEnd,
+      dueBills: dueBillsThisWeek,
+      dueBillTotal: dueBillsThisWeek.reduce((total, bill) => total + moneyAmount(bill.amount), 0)
+    },
+    overdue,
+    moneyTables: {
+      currentMonth: allMoneyRows
+        .filter((item) => monthOf(item.date) === month)
+        .sort((a, b) => String(b.date).localeCompare(String(a.date))),
+      thisWeek: allMoneyRows
+        .filter((item) => item.date >= today && item.date <= weekEnd)
+        .sort((a, b) => String(a.date).localeCompare(String(b.date)))
     },
     projects: state.projects.map((project) => {
       const transactions = state.projectTransactions.filter((item) => item.projectId === project.id);
@@ -455,6 +491,7 @@ Rules:
 - For listing tasks/reminders/events/notes, use a markdown table when useful.
 - For insight questions, use the provided insights object first. Answer with exact totals from insights and tables when useful.
 - If user asks "highest usage/spending this month", compare currentMonth daily, salary, and project debit plus category breakdowns.
+- If user asks for this week bills, overdue work, cashflow, or a month expense table, use insights.thisWeek, insights.overdue, insights.currentMonth, and insights.moneyTables before reading raw lists.
 - If user asks for a specific project summary, use insights.projects and include budget, debit, credit, remaining, overspent, highest category, and recent transactions.
 - If user asks about project splits, who owes whom, or participant balances, use insights.projects[].participantSpend and splitSettlements. Reply with a clear table showing payer, receiver, and amount.
 - For expense-specific split questions, use insights.projects[].expenseSplits. Each expense split is isolated to that transaction's selected participants only.

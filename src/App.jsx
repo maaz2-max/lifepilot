@@ -111,6 +111,10 @@ const emptyState = {
     aiMonthlySummary: true,
     aiReminderSuggestions: true,
     aiTaskBreakdown: true,
+    telegramNotifications: false,
+    telegramLastSyncAt: "",
+    telegramLastStatus: "",
+    telegramLastError: "",
     weatherEnabled: false,
     weatherLocation: ""
   }
@@ -303,6 +307,170 @@ function inRange(date, range) {
   return true;
 }
 
+function isoDateTime(date, time = "09:00", offsetMinutes = 0) {
+  if (!date) return "";
+  const [hours = "09", minutes = "00"] = String(time || "09:00").split(":");
+  const value = new Date(`${date}T${hours.padStart(2, "0")}:${minutes.padStart(2, "0")}:00`);
+  if (Number.isNaN(value.getTime())) return "";
+  value.setMinutes(value.getMinutes() - offsetMinutes);
+  return value.toISOString();
+}
+
+function reminderOffsetMinutes(value) {
+  const map = {
+    "Same day": 0,
+    "15 minutes": 15,
+    "30 minutes": 30,
+    "1 hour": 60,
+    "2 hours": 120,
+    "1 day": 24 * 60,
+    "2 days": 2 * 24 * 60,
+    "3 days": 3 * 24 * 60,
+    "1 week": 7 * 24 * 60
+  };
+  return map[value] || 0;
+}
+
+function nextBirthdayISO(profile) {
+  if (!profile?.dob) return "";
+  const today = todayISO();
+  let candidate = `${today.slice(0, 4)}-${profile.dob.slice(5)}`;
+  if (candidate < today) candidate = `${Number(today.slice(0, 4)) + 1}-${profile.dob.slice(5)}`;
+  return candidate;
+}
+
+function buildTelegramNotificationPayload(state) {
+  const timezone = "Asia/Kolkata";
+  const items = [];
+  const add = (item) => {
+    if (!item.dueAt) return;
+    items.push({
+      timezone,
+      enabled: true,
+      priority: "Medium",
+      updatedAt: item.updatedAt || item.dueAt,
+      ...item
+    });
+  };
+
+  if (state.settings.taskNotifications) {
+    state.tasks
+      .filter((task) => !["Completed", "Cancelled"].includes(task.status))
+      .forEach((task) => add({
+        localId: task.id,
+        type: "task",
+        title: task.title,
+        body: [task.description, task.priority ? `Priority: ${task.priority}` : ""].filter(Boolean).join("\n"),
+        dueAt: isoDateTime(task.dueDate, task.dueTime || "09:00"),
+        repeat: "No repeat",
+        status: "active",
+        priority: task.priority || "Medium",
+        updatedAt: task.updatedAt
+      }));
+  }
+
+  if (state.settings.reminderNotifications) {
+    state.reminders
+      .filter((reminder) => reminder.status === "Active" && reminder.notificationEnabled !== false)
+      .forEach((reminder) => add({
+        localId: reminder.id,
+        type: "reminder",
+        title: reminder.title,
+        body: reminder.description || "",
+        dueAt: isoDateTime(reminder.date, reminder.time || state.settings.defaultReminderTime || "09:00"),
+        repeat: reminder.repeat || "No repeat",
+        status: "active",
+        priority: reminder.priority || "Medium",
+        updatedAt: reminder.updatedAt
+      }));
+  }
+
+  if (state.settings.eventNotifications) {
+    state.events
+      .filter((event) => event.status !== "Cancelled")
+      .forEach((event) => add({
+        localId: event.id,
+        type: "event",
+        title: event.title,
+        body: [event.location, event.description].filter(Boolean).join("\n"),
+        dueAt: isoDateTime(event.startDate, event.startTime || "09:00", reminderOffsetMinutes(event.reminderBefore)),
+        repeat: event.repeat || "No repeat",
+        status: "active",
+        updatedAt: event.updatedAt
+      }));
+  }
+
+  (state.bills || [])
+    .filter((bill) => bill.status !== "Paid")
+    .forEach((bill) => add({
+      localId: bill.id,
+      type: "bill",
+      title: bill.title,
+      body: `${rupee.format(amount(bill.amount))} due ${formatDate(bill.dueDate)}${bill.category ? `\nCategory: ${bill.category}` : ""}`,
+      dueAt: isoDateTime(billReminderDate(bill), "09:00"),
+      repeat: "No repeat",
+      status: "active",
+      updatedAt: bill.updatedAt
+    }));
+
+  if (state.settings.birthdayNotification && state.profile?.dob) {
+    add({
+      localId: `birthday-${state.profile.dob}`,
+      type: "birthday",
+      title: `Birthday: ${state.profile.name}`,
+      body: "LifePilot birthday reminder.",
+      dueAt: isoDateTime(nextBirthdayISO(state.profile), "09:00"),
+      repeat: "Yearly",
+      status: "active",
+      updatedAt: state.profile.updatedAt
+    });
+  }
+
+  if (state.settings.budgetAlerts) {
+    projectAlerts(state).forEach((alert) => add({
+      localId: alert.id,
+      type: "budget",
+      title: alert.title,
+      body: alert.message,
+      dueAt: isoDateTime(todayISO(), "09:00"),
+      repeat: "No repeat",
+      status: "active",
+      priority: alert.level === "danger" ? "High" : "Medium"
+    }));
+  }
+
+  return { items, timezone };
+}
+
+async function syncTelegramNotifications(state) {
+  const payload = buildTelegramNotificationPayload(state);
+  const response = await fetch("/api/notifications/sync", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ...payload,
+      categories: {
+        tasks: state.settings.taskNotifications,
+        reminders: state.settings.reminderNotifications,
+        events: state.settings.eventNotifications,
+        bills: true,
+        budgets: state.settings.budgetAlerts,
+        birthdays: state.settings.birthdayNotification
+      }
+    })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || "Telegram sync failed");
+  return data;
+}
+
+async function testTelegramNotifications() {
+  const response = await fetch("/api/notifications/test-telegram", { method: "POST" });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || "Telegram test failed");
+  return data;
+}
+
 function nextRepeatDate(date, repeat) {
   const next = new Date(`${date || todayISO()}T12:00:00`);
   if (repeat === "Daily") next.setDate(next.getDate() + 1);
@@ -437,6 +605,7 @@ export default function App() {
   const [selectedProject, setSelectedProject] = useState("");
   const installPrompt = useInstallPrompt();
   const notified = useRef(new Set());
+  const telegramSyncSignature = useRef("");
 
   useEffect(() => {
     const timer = setTimeout(() => setPinBooting(false), 900);
@@ -507,6 +676,47 @@ export default function App() {
       )
     }));
   }, [setState, storageReady]);
+
+  useEffect(() => {
+    if (!storageReady || !state.settings.telegramNotifications) return;
+    const payload = buildTelegramNotificationPayload(state);
+    const signature = JSON.stringify(payload.items.map((item) => [
+      item.localId,
+      item.type,
+      item.title,
+      item.dueAt,
+      item.repeat,
+      item.status,
+      item.updatedAt
+    ]));
+    if (signature === telegramSyncSignature.current) return;
+    telegramSyncSignature.current = signature;
+    const timer = setTimeout(() => {
+      syncTelegramNotifications(state)
+        .then((result) => {
+          setState((current) => ({
+            ...current,
+            settings: {
+              ...current.settings,
+              telegramLastSyncAt: new Date().toISOString(),
+              telegramLastStatus: `${result.synced || 0} reminders synced`,
+              telegramLastError: ""
+            }
+          }));
+        })
+        .catch((error) => {
+          setState((current) => ({
+            ...current,
+            settings: {
+              ...current.settings,
+              telegramLastStatus: "Sync failed",
+              telegramLastError: error.message || "Telegram sync failed"
+            }
+          }));
+        });
+    }, 900);
+    return () => clearTimeout(timer);
+  }, [state, setState, storageReady]);
 
   const updateState = (recipe, message = "Saved") => {
     setState((current) => {
@@ -614,7 +824,7 @@ export default function App() {
           setAiOpen={setAiOpen}
         />
 
-        {active === "home" && <HomeView state={state} setState={setState} openAdd={openAdd} setActive={showView} />}
+        {active === "home" && <HomeView state={state} setState={setState} openAdd={openAdd} setActive={showView} setAiOpen={setAiOpen} />}
         {active === "calendar" && (
           <CalendarView
             state={state}
@@ -999,7 +1209,59 @@ function weatherCodeMeta(code = 0) {
   return { label: "Clear", theme: "clear" };
 }
 
-function HomeView({ state, setState, openAdd, setActive }) {
+function homeInsightCards(state) {
+  const today = todayISO();
+  const weekEnd = addDaysISO(today, 7);
+  const transactions = allTransactions(state);
+  const monthCredit = sum(transactions, (item) => item.type === "Credit" && inRange(item.date, "month"));
+  const monthDebit = sum(transactions, (item) => item.type === "Debit" && inRange(item.date, "month"));
+  const todayDue = [
+    ...state.tasks.filter((task) => task.dueDate === today && !["Completed", "Cancelled"].includes(task.status)),
+    ...state.reminders.filter((reminder) => reminder.date === today && reminder.status === "Active"),
+    ...state.events.filter((event) => event.startDate === today)
+  ];
+  const weekTasks = state.tasks.filter((task) => task.dueDate >= today && task.dueDate <= weekEnd && !["Completed", "Cancelled"].includes(task.status));
+  const weekSpend = sum(transactions, (item) => item.type === "Debit" && item.date >= today && item.date <= weekEnd);
+  const overdueTasks = state.tasks.filter((task) => task.status === "Overdue" || (!["Completed", "Cancelled"].includes(task.status) && task.dueDate < today));
+  const overdueBills = (state.bills || []).filter((bill) => bill.status !== "Paid" && bill.dueDate < today);
+  const upcomingBills = (state.bills || []).filter((bill) => bill.status !== "Paid" && bill.dueDate >= today && bill.dueDate <= weekEnd);
+  return [
+    {
+      title: "Today",
+      value: `${todayDue.length} items`,
+      detail: `${rupee.format(sum(transactions, (item) => item.type === "Debit" && item.date === today))} spending today`,
+      target: "calendar"
+    },
+    {
+      title: "This week",
+      value: rupee.format(weekSpend),
+      detail: `${weekTasks.length} open tasks in next 7 days`,
+      target: "tasks"
+    },
+    {
+      title: "Cashflow",
+      value: rupee.format(monthCredit - monthDebit),
+      detail: `${rupee.format(monthCredit)} in - ${rupee.format(monthDebit)} out this month`,
+      target: "expenses",
+      tone: monthCredit - monthDebit < 0 ? "warn" : "good"
+    },
+    {
+      title: "Overdue",
+      value: `${overdueTasks.length + overdueBills.length}`,
+      detail: `${overdueTasks.length} work items, ${overdueBills.length} unpaid bills`,
+      target: overdueBills.length ? "expenses" : "tasks",
+      tone: overdueTasks.length || overdueBills.length ? "warn" : "good"
+    },
+    {
+      title: "Upcoming bills",
+      value: rupee.format(sum(upcomingBills)),
+      detail: `${upcomingBills.length} bill${upcomingBills.length === 1 ? "" : "s"} due this week`,
+      target: "expenses"
+    }
+  ];
+}
+
+function HomeView({ state, setState, openAdd, setActive, setAiOpen }) {
   const [range, setRange] = useState("today");
   useWeather(state, setState);
   const today = todayISO();
@@ -1010,6 +1272,7 @@ function HomeView({ state, setState, openAdd, setActive }) {
   const money = useMoneyStats(state);
   const filteredExpenses = state.expenses.filter((expense) => inRange(expense.date, range));
   const budgetAlerts = projectAlerts(state);
+  const insightCards = homeInsightCards(state);
   const refreshWeather = () => {
     setState((current) => ({
       ...current,
@@ -1057,6 +1320,19 @@ function HomeView({ state, setState, openAdd, setActive }) {
           ) : <EmptyState text="Add a weather location in Settings to show live conditions here." small />}
         </section>
       )}
+
+      <section className="panel span-2">
+        <SectionHeader title="Saved Insights" action={<button className="secondary tactile" onClick={() => setAiOpen(true)}>Ask AI</button>} />
+        <div className="insight-grid">
+          {insightCards.map((card) => (
+            <button className={`insight-card tactile ${card.tone || ""}`} key={card.title} onClick={() => card.target ? setActive(card.target) : setAiOpen(true)}>
+              <span>{card.title}</span>
+              <strong>{card.value}</strong>
+              <small>{card.detail}</small>
+            </button>
+          ))}
+        </div>
+      </section>
 
       <section className="panel">
         <SectionHeader title="Quick Add" action={<Select value={range} onChange={setRange} options={rangeOptions()} />} />
@@ -1578,7 +1854,9 @@ function Analytics({ state }) {
   const bySource = groupAmounts(transactions.filter((item) => item.type === "Debit"), "source");
   const byPayment = groupAmounts(transactions.filter((item) => item.type === "Debit"), "paymentMethod");
   const byProject = groupAmounts(transactions.filter((item) => item.type === "Debit" && item.projectId).map((item) => ({ ...item, projectName: state.projects.find((project) => project.id === item.projectId)?.name || "Project" })), "projectName");
-  const chartData = { Category: byCategory, Month: byMonth, Source: bySource, Payment: byPayment, Project: byProject }[chartMode] || byCategory;
+  const byBillTimeline = groupByDate((state.bills || []).filter((bill) => bill.status !== "Paid"));
+  const byParticipant = groupParticipantBalances(state, projectId);
+  const chartData = { Category: byCategory, Month: byMonth, Source: bySource, Payment: byPayment, Project: byProject, Bills: byBillTimeline, Participants: byParticipant }[chartMode] || byCategory;
   const totalCredit = sum(transactions, (item) => item.type === "Credit");
   const totalDebit = sum(transactions, (item) => item.type === "Debit");
   return (
@@ -1589,12 +1867,14 @@ function Analytics({ state }) {
           <label>Range<Select value={range} onChange={setRange} options={rangeOptions()} /></label>
           <label>Source<Select value={source} onChange={setSource} options={sourceOptions} /></label>
           <label>Project<Select value={projectId} onChange={setProjectId} options={projectOptions} /></label>
-          <label>Chart<Select value={chartMode} onChange={setChartMode} options={["Category", "Month", "Source", "Payment", "Project"]} /></label>
+          <label>Chart<Select value={chartMode} onChange={setChartMode} options={["Category", "Month", "Source", "Payment", "Project", "Bills", "Participants"]} /></label>
         </div>
       </section>
       <MetricGrid metrics={[["Filtered credit", totalCredit], ["Filtered debit", totalDebit], ["Filtered balance", totalCredit - totalDebit], ["Highest category", highestLabel(byCategory)]]} />
       <Chart title={`${chartMode}-wise Spending`} data={chartData} />
       <Chart title="Monthly Spending Trend" data={byMonth} />
+      <Chart title="Bill Due Timeline" data={byBillTimeline} />
+      <Chart title="Participant Balances" data={byParticipant} />
       <section className="sub-panel">
         <SectionHeader title="Credit vs Debit" />
         <BarPair credit={totalCredit} debit={totalDebit} />
@@ -1644,6 +1924,30 @@ function SettingsView({ state, setState, setToast, requestNotifications, setModa
     reader.readAsText(file);
   };
   const setSetting = (key, value) => setState((current) => ({ ...current, settings: { ...current.settings, [key]: value } }));
+  const testTelegram = async () => {
+    try {
+      await testTelegramNotifications();
+      setState((current) => ({
+        ...current,
+        settings: {
+          ...current.settings,
+          telegramLastStatus: "Telegram test sent",
+          telegramLastError: ""
+        }
+      }));
+      setToast("Telegram test sent");
+    } catch (error) {
+      setState((current) => ({
+        ...current,
+        settings: {
+          ...current.settings,
+          telegramLastStatus: "Telegram test failed",
+          telegramLastError: error.message || "Telegram test failed"
+        }
+      }));
+      setToast(error.message || "Telegram test failed");
+    }
+  };
   const useCurrentWeatherLocation = () => {
     if (!navigator.geolocation) {
       setToast("Location permission is not supported");
@@ -1717,6 +2021,26 @@ function SettingsView({ state, setState, setToast, requestNotifications, setModa
           ["birthdayNotification", "Birthday notification"]
         ].map(([key, label]) => <Toggle key={key} label={label} checked={state.settings[key]} onChange={(value) => setSetting(key, value)} />)}
         <label>Repeated notification frequency<input type="number" min="2" max="3" value={state.settings.repeatHours} onChange={(e) => setSetting("repeatHours", e.target.value)} /></label>
+      </div>
+
+      <div className="panel">
+        <SectionHeader
+          title="Telegram Bot"
+          action={<button className="secondary tactile" type="button" onClick={testTelegram}>Test</button>}
+        />
+        <Toggle label="Send reminders through Telegram when app is closed" checked={state.settings.telegramNotifications} onChange={(value) => setSetting("telegramNotifications", value)} />
+        <div className="storage-status">
+          <div>
+            <span>Backend sync</span>
+            <strong>{state.settings.telegramLastStatus || "Not synced yet"}</strong>
+          </div>
+          <div>
+            <span>Last sync</span>
+            <strong>{state.settings.telegramLastSyncAt ? new Date(state.settings.telegramLastSyncAt).toLocaleString("en-IN") : "Waiting"}</strong>
+          </div>
+        </div>
+        {state.settings.telegramLastError && <p className="warning">{state.settings.telegramLastError}</p>}
+        <p className="helper-text">Telegram works while the app is closed after Supabase tables and Vercel env vars are configured.</p>
       </div>
 
       <div className="panel">
@@ -3700,6 +4024,27 @@ function groupByMonth(items) {
     acc[label] = (acc[label] || 0) + amount(item.amount);
     return acc;
   }, {});
+}
+
+function groupByDate(items) {
+  return items.reduce((acc, item) => {
+    const label = item.dueDate || item.date || "No date";
+    acc[label] = (acc[label] || 0) + amount(item.amount);
+    return acc;
+  }, {});
+}
+
+function groupParticipantBalances(state, projectId = "All") {
+  return state.projects
+    .filter((project) => projectId === "All" || project.id === projectId)
+    .reduce((acc, project) => {
+      const transactions = state.projectTransactions.filter((item) => item.projectId === project.id);
+      const { stats } = projectSplitSummary(project, transactions);
+      Object.entries(stats).forEach(([name, row]) => {
+        acc[`${project.name}: ${name}`] = Math.round(Math.abs(row.balance || 0));
+      });
+      return acc;
+    }, {});
 }
 
 function highestLabel(group) {

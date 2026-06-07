@@ -522,6 +522,49 @@ input[type="datetime-local"] {
   gap: 0.75rem;
 }
 
+.insight-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
+  gap: 0.75rem;
+}
+
+.insight-card {
+  display: grid;
+  gap: 0.38rem;
+  min-height: 126px;
+  padding: 0.95rem;
+  border-radius: 18px;
+  background: #f7f5fb;
+  border: 2px solid #111111;
+  box-shadow: var(--shadow);
+  text-align: left;
+}
+
+.insight-card span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 950;
+}
+
+.insight-card strong {
+  font-size: 1.25rem;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+
+.insight-card small {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.insight-card.good {
+  background: #d8ff8f;
+}
+
+.insight-card.warn {
+  background: #ffe09a;
+}
+
 .quick-card {
   display: flex;
   align-items: center;
