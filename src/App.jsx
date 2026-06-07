@@ -2943,7 +2943,9 @@ function ProjectDashboard({ state, project }) {
   return (
     <>
       <MetricGrid metrics={[["Budget", amount(project.budget)], ["Total credit", stats.credit], ["Total debit", stats.debit], ["Remaining", stats.remaining], ["Overspent", stats.overspent], ["Participants", project.participants?.length || 0], ["Days remaining", `${stats.daysRemaining}`], ["Usage", `${Math.round(stats.usage)}%`]]} />
-      <Progress value={stats.usage} />
+      <div className="project-progress">
+        <Progress value={stats.usage} />
+      </div>
     </>
   );
 }

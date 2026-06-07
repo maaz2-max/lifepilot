@@ -2444,6 +2444,101 @@ label {
   }
 }
 
+/* UI stability pass: shared controls divide space evenly and avoid overlap. */
+.section-header {
+  min-width: 0;
+}
+
+.section-header > * {
+  min-width: 0;
+}
+
+.section-header > .segmented,
+.section-header > .cluster {
+  width: 100%;
+}
+
+.cluster,
+.modal-actions,
+.date-actions,
+.ai-batch-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(136px, 1fr));
+  align-items: stretch;
+  width: 100%;
+}
+
+.cluster > *,
+.modal-actions > *,
+.date-actions > *,
+.ai-batch-actions > * {
+  width: 100%;
+  min-width: 0;
+}
+
+.segmented {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.segmented button {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  width: 100%;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.metric-grid {
+  align-items: stretch;
+}
+
+.metric-card {
+  display: grid;
+  align-content: start;
+  min-height: 118px;
+  overflow: hidden;
+}
+
+.metric-card strong {
+  overflow-wrap: anywhere;
+  line-height: 1.15;
+}
+
+.sub-panel > .progress,
+.panel > .progress {
+  margin: 1rem 0 1.05rem;
+  width: 100%;
+}
+
+.project-progress {
+  display: block;
+  width: 100%;
+  margin: 1rem 0 1.1rem;
+}
+
+.project-progress .progress {
+  margin: 0;
+}
+
+.progress {
+  flex: 0 0 auto;
+  width: 100%;
+}
+
+.project-row {
+  align-items: center;
+}
+
+.project-row .progress {
+  min-width: 0;
+}
+
 @media (max-width: 1080px) {
   .bottom-nav {
     background: #c9cbff;
@@ -2480,5 +2575,52 @@ label {
   textarea,
   select {
     box-shadow: 4px 5px 0 #111111;
+  }
+
+  .section-header {
+    gap: 0.7rem;
+  }
+
+  .section-header h2 {
+    width: 100%;
+  }
+
+  .calendar-controls {
+    display: grid;
+    grid-template-columns: 1fr 1.35fr 1fr;
+    width: min(100%, 360px);
+    margin-inline: auto;
+  }
+
+  .calendar-controls > * {
+    width: 100%;
+  }
+
+  .cluster,
+  .modal-actions,
+  .date-actions,
+  .ai-batch-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cluster .primary,
+  .cluster .secondary,
+  .modal-actions .primary,
+  .modal-actions .secondary,
+  .date-actions .secondary {
+    padding-inline: 0.5rem;
+  }
+
+  .segmented {
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+  }
+
+  .segmented button {
+    padding-inline: 0.35rem;
+  }
+
+  .metric-card {
+    min-height: 104px;
   }
 }
