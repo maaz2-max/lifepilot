@@ -565,6 +565,48 @@ input[type="datetime-local"] {
   background: #ffe09a;
 }
 
+.glass-panel {
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.7), rgba(251, 247, 232, 0.76)),
+    rgba(251, 247, 232, 0.58);
+  backdrop-filter: blur(14px) saturate(1.1);
+}
+
+.digest-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(180px, 0.7fr);
+  gap: 0.85rem;
+}
+
+.digest-main,
+.digest-side {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.9rem;
+  border: 2px solid #111111;
+  border-radius: 18px;
+  background: rgba(248, 247, 255, 0.78);
+  box-shadow: 4px 5px 0 #111111;
+}
+
+.digest-main p {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 0;
+  color: #252532;
+  font-weight: 850;
+}
+
+.digest-side strong {
+  font-weight: 950;
+}
+
+.digest-side small {
+  color: var(--muted);
+  font-weight: 850;
+}
+
 .quick-card {
   display: flex;
   align-items: center;
@@ -848,6 +890,15 @@ input[type="datetime-local"] {
   color: #6e5a4c;
 }
 
+.record-card.completed {
+  opacity: 0.78;
+}
+
+.record-card.completed h3 {
+  text-decoration: line-through;
+  text-decoration-thickness: 3px;
+}
+
 .record-card.selected {
   outline: 3px solid rgba(185, 220, 246, 0.85);
 }
@@ -857,6 +908,10 @@ input[type="datetime-local"] {
   align-items: flex-start;
   gap: 0.45rem;
   flex-wrap: wrap;
+}
+
+.record-actions .icon-button.active {
+  background: #d8ff8f;
 }
 
 .segmented {
@@ -1711,7 +1766,7 @@ button:disabled {
 
 .ai-panel {
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr) auto auto;
+  grid-template-rows: auto auto auto auto minmax(0, 1fr) auto auto;
   gap: 0.8rem;
   width: min(520px, 100vw);
   height: 100dvh;
@@ -1794,6 +1849,30 @@ button:disabled {
   max-height: 20vh;
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
   font-size: 0.8rem;
+}
+
+.ai-chip-row {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  padding: 0.1rem 0.1rem 0.35rem;
+  scrollbar-width: thin;
+}
+
+.ai-chip {
+  flex: 0 0 auto;
+  min-height: 38px;
+  padding: 0.55rem 0.75rem;
+  border: 2px solid #111111;
+  border-radius: 999px;
+  background: rgba(251, 247, 232, 0.84);
+  box-shadow: 3px 4px 0 #111111;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.ai-chip:nth-child(2n) {
+  background: rgba(216, 255, 143, 0.88);
 }
 
 .ai-messages {
@@ -2177,6 +2256,7 @@ button:disabled {
   }
 
   .today-columns,
+  .digest-layout,
   .toolbar,
   .vault-toolbar,
   .form-grid,

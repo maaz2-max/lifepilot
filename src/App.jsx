@@ -80,6 +80,12 @@ const emptyState = {
   projectTransactions: [],
   credentials: [],
   aiMessages: [],
+  aiMemory: {
+    defaultPaymentMethod: "",
+    commonParticipants: [],
+    frequentMerchants: [],
+    updatedAt: ""
+  },
   weather: {
     location: "",
     latitude: "",
@@ -143,6 +149,14 @@ const quickActions = [
   { kind: "salary", label: "Add Salary", icon: CircleDollarSign },
   { kind: "project", label: "Add Expense Project", icon: BriefcaseBusiness },
   { kind: "credential", label: "Add Secure Credential", icon: KeyRound }
+];
+
+const aiQuickChips = [
+  { label: "Add expense", prompt: "Add daily expense" },
+  { label: "Analyze month", prompt: "Analyze this month spending, cashflow, bills, and project balances" },
+  { label: "Find overdue", prompt: "Find all overdue tasks, reminders, bills, and unpaid items" },
+  { label: "Split project", prompt: "Show project split balances and who owes whom" },
+  { label: "Parse bank message", prompt: "Paste bank SMS or bill reminder here: " }
 ];
 
 function todayISO() {
@@ -242,6 +256,7 @@ function mergeState(parsed) {
     ...(parsed || {}),
     settings: { ...emptyState.settings, ...(parsed?.settings || {}) },
     weather: { ...emptyState.weather, ...(parsed?.weather || {}) },
+    aiMemory: { ...emptyState.aiMemory, ...(parsed?.aiMemory || {}) },
     categories: parsed?.categories?.length ? parsed.categories : DEFAULT_CATEGORIES,
     credentials: parsed?.credentials || [],
     bills: parsed?.bills || []
@@ -361,8 +376,8 @@ function buildTelegramNotificationPayload(state) {
         localId: task.id,
         type: "task",
         title: task.title,
-        body: [task.description, task.priority ? `Priority: ${task.priority}` : ""].filter(Boolean).join("\n"),
-        dueAt: isoDateTime(task.dueDate, task.dueTime || "09:00"),
+        body: [task.description, task.startTime || task.endTime ? `Time: ${[task.startTime, task.endTime].filter(Boolean).join(" - ")}` : "", task.priority ? `Priority: ${task.priority}` : ""].filter(Boolean).join("\n"),
+        dueAt: isoDateTime(task.dueDate, task.endTime || task.dueTime || task.startTime || "09:00"),
         repeat: "No repeat",
         status: "active",
         priority: task.priority || "Medium",
@@ -440,6 +455,30 @@ function buildTelegramNotificationPayload(state) {
     }));
   }
 
+  add({
+    localId: `daily-digest-${todayISO()}`,
+    type: "digest",
+    title: "LifePilot daily digest",
+    body: dailyDigestTelegramText(state),
+    dueAt: isoDateTime(todayISO(), "08:00"),
+    repeat: "Daily",
+    status: "active",
+    priority: "Medium",
+    updatedAt: `${todayISO()}T00:00:00.000Z`
+  });
+
+  add({
+    localId: `month-end-review-${todayISO().slice(0, 7)}`,
+    type: "month-review",
+    title: "LifePilot month-end review",
+    body: dailyDigestTelegramText(state),
+    dueAt: isoDateTime(monthEndReviewDate(), "19:00"),
+    repeat: "No repeat",
+    status: "active",
+    priority: "High",
+    updatedAt: `${todayISO().slice(0, 7)}-01T00:00:00.000Z`
+  });
+
   return { items, timezone };
 }
 
@@ -507,6 +546,124 @@ function formatBytes(value) {
 
 function sum(items, predicate = () => true) {
   return items.filter(predicate).reduce((total, item) => total + amount(item.amount), 0);
+}
+
+function topEntries(values, limit = 8) {
+  const counts = values
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .reduce((acc, value) => ({ ...acc, [value]: (acc[value] || 0) + 1 }), {});
+  return Object.entries(counts)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, limit)
+    .map(([value, count]) => ({ value, count }));
+}
+
+function buildAiMemory(state) {
+  const transactions = allTransactions(state);
+  const paymentMethods = topEntries(transactions.map((item) => item.paymentMethod));
+  const participants = topEntries([
+    ...state.projects.flatMap((project) => project.participants || []),
+    ...state.projectTransactions.flatMap((item) => [item.paidBy, item.owedBy, ...(item.participants || [])])
+  ]);
+  const merchants = topEntries(
+    transactions
+      .filter((item) => item.type === "Debit")
+      .map((item) => item.title)
+  );
+  return {
+    defaultPaymentMethod: paymentMethods[0]?.value || state.aiMemory?.defaultPaymentMethod || "UPI",
+    commonParticipants: participants,
+    frequentMerchants: merchants,
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function memorySignature(memory) {
+  return JSON.stringify({
+    defaultPaymentMethod: memory?.defaultPaymentMethod || "",
+    commonParticipants: (memory?.commonParticipants || []).map((item) => `${item.value}:${item.count}`),
+    frequentMerchants: (memory?.frequentMerchants || []).map((item) => `${item.value}:${item.count}`)
+  });
+}
+
+function buildDailyDigest(state) {
+  const today = todayISO();
+  const weekEnd = addDaysISO(today, 7);
+  const transactions = allTransactions(state);
+  const todaySpend = sum(transactions, (item) => item.type === "Debit" && item.date === today);
+  const monthDebit = sum(transactions, (item) => item.type === "Debit" && inRange(item.date, "month"));
+  const monthCredit = sum(transactions, (item) => item.type === "Credit" && inRange(item.date, "month"));
+  const openTasks = state.tasks.filter((task) => task.dueDate === today && !["Completed", "Cancelled"].includes(task.status));
+  const dueReminders = state.reminders.filter((reminder) => reminder.date === today && reminder.status === "Active");
+  const overdueTasks = state.tasks.filter((task) => !["Completed", "Cancelled"].includes(task.status) && task.dueDate < today);
+  const overdueBills = (state.bills || []).filter((bill) => bill.status !== "Paid" && bill.dueDate < today);
+  const upcomingBills = (state.bills || []).filter((bill) => bill.status !== "Paid" && bill.dueDate >= today && bill.dueDate <= weekEnd);
+  const activeProjectBalances = buildMonthEndReview(state).projectBalances;
+  return {
+    today,
+    title: "AI Daily Digest",
+    lines: [
+      `${openTasks.length} task${openTasks.length === 1 ? "" : "s"} and ${dueReminders.length} reminder${dueReminders.length === 1 ? "" : "s"} today`,
+      `${rupee.format(todaySpend)} spent today`,
+      `${rupee.format(monthCredit - monthDebit)} cashflow this month`,
+      `${upcomingBills.length} unpaid bill${upcomingBills.length === 1 ? "" : "s"} due within 7 days`,
+      `${overdueTasks.length + overdueBills.length} overdue item${overdueTasks.length + overdueBills.length === 1 ? "" : "s"}`
+    ],
+    openTasks,
+    dueReminders,
+    upcomingBills,
+    overdueTasks,
+    overdueBills,
+    projectBalances: activeProjectBalances
+  };
+}
+
+function buildMonthEndReview(state) {
+  const today = todayISO();
+  const month = today.slice(0, 7);
+  const unpaidBills = (state.bills || [])
+    .filter((bill) => bill.status !== "Paid" && String(bill.dueDate || "").startsWith(month))
+    .sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate)));
+  const overspending = projectAlerts(state);
+  const upcomingReminders = state.reminders
+    .filter((reminder) => reminder.status === "Active" && reminder.date >= today && reminder.date <= addDaysISO(today, 7))
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const projectBalances = state.projects
+    .filter((project) => project.status === "Active")
+    .map((project) => {
+      const stats = projectStats(state, project);
+      return {
+        id: project.id,
+        name: project.name,
+        debit: stats.debit,
+        credit: stats.credit,
+        remaining: stats.remaining,
+        overspent: stats.overspent
+      };
+    });
+  return { unpaidBills, overspending, upcomingReminders, projectBalances };
+}
+
+function dailyDigestTelegramText(state) {
+  const digest = buildDailyDigest(state);
+  const review = buildMonthEndReview(state);
+  const lines = [
+    "LifePilot daily digest",
+    ...digest.lines,
+    review.unpaidBills.length ? `Unpaid bills: ${review.unpaidBills.map((bill) => `${bill.title} ${rupee.format(amount(bill.amount))} on ${formatDate(bill.dueDate)}`).join("; ")}` : "No unpaid bills this month.",
+    review.overspending.length ? `Budget alerts: ${review.overspending.map((alert) => alert.title).join(", ")}` : "No active budget alerts.",
+    review.projectBalances.length ? `Projects: ${review.projectBalances.map((project) => `${project.name} remaining ${rupee.format(project.remaining)}`).join("; ")}` : "No active project balances."
+  ];
+  return lines.join("\n");
+}
+
+function monthEndReviewDate() {
+  const today = todayISO();
+  const now = new Date(`${today}T12:00:00`);
+  const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  lastDay.setDate(Math.max(1, lastDay.getDate() - 2));
+  return localDateISO(lastDay);
 }
 
 function unwrapIcsLine(text) {
@@ -625,7 +782,10 @@ export default function App() {
       const now = new Date();
       const hhmm = now.toTimeString().slice(0, 5);
       const today = todayISO();
-      const dueTasks = state.tasks.filter((task) => task.dueDate === today && task.dueTime <= hhmm && !["Completed", "Cancelled"].includes(task.status));
+      const dueTasks = state.tasks.filter((task) => {
+        const taskTime = task.endTime || task.dueTime || task.startTime || "09:00";
+        return task.dueDate === today && taskTime <= hhmm && !["Completed", "Cancelled"].includes(task.status);
+      });
       const dueReminders = state.reminders.filter((reminder) =>
         reminder.date <= today &&
         reminder.time <= hhmm &&
@@ -677,6 +837,13 @@ export default function App() {
       )
     }));
   }, [setState, storageReady]);
+
+  useEffect(() => {
+    if (!storageReady) return;
+    const nextMemory = buildAiMemory(state);
+    if (memorySignature(nextMemory) === memorySignature(state.aiMemory)) return;
+    setState((current) => ({ ...current, aiMemory: nextMemory }));
+  }, [state.expenses, state.salaryExpenses, state.projectTransactions, state.projects, storageReady, setState]);
 
   useEffect(() => {
     if (!storageReady || !state.settings.telegramNotifications) return;
@@ -1275,6 +1442,8 @@ function HomeView({ state, setState, openAdd, setActive, setAiOpen }) {
   const filteredExpenses = state.expenses.filter((expense) => inRange(expense.date, range));
   const budgetAlerts = projectAlerts(state);
   const insightCards = homeInsightCards(state);
+  const dailyDigest = buildDailyDigest(state);
+  const monthReview = buildMonthEndReview(state);
   const refreshWeather = () => {
     setState((current) => ({
       ...current,
@@ -1333,6 +1502,22 @@ function HomeView({ state, setState, openAdd, setActive, setAiOpen }) {
               <small>{card.detail}</small>
             </button>
           ))}
+        </div>
+      </section>
+
+      <section className="panel span-2 glass-panel home-digest">
+        <SectionHeader title="AI Daily Digest" action={<button className="secondary tactile" onClick={() => setAiOpen(true)}><Bot size={17} />Review</button>} />
+        <div className="digest-layout">
+          <div className="digest-main">
+            {dailyDigest.lines.map((line) => <p key={line}><Sparkles size={16} />{line}</p>)}
+          </div>
+          <div className="digest-side">
+            <strong>Month-end review</strong>
+            <small>{monthReview.unpaidBills.length} unpaid bills</small>
+            <small>{monthReview.overspending.length} budget alerts</small>
+            <small>{monthReview.projectBalances.length} active project balances</small>
+            <small>{monthReview.upcomingReminders.length} upcoming reminders</small>
+          </div>
         </div>
       </section>
 
@@ -1622,17 +1807,26 @@ function WorkList({ type, state, openAdd, setModal, remove, upsert }) {
       <SectionHeader title={config.title} action={<button className="primary tactile" onClick={() => openAdd(config.add)}><Plus size={18} />Add</button>} />
       <Toolbar query={query} setQuery={setQuery} filter={filter} setFilter={setFilter} options={config.status} />
       <div className="list-grid">
-        {list.length ? list.map((item) => (
-          <article className={`record-card ${type}`} key={item.id}>
+        {list.length ? list.map((item) => {
+          const isDone = item.status === "Completed";
+          const displayTime = item.startTime || item.endTime
+            ? [item.startTime, item.endTime].filter(Boolean).join(" - ")
+            : item.time || item.dueTime || "";
+          return (
+          <article className={`record-card ${type} ${isDone ? "completed" : ""}`} key={item.id}>
             <div>
               <p className="eyebrow">{item.category || item.priority || item.status || (item.imported ? "Imported" : "")}</p>
               <h3>{item.title}</h3>
               <p>{item.description || item.content || item.notes || "No extra notes."}</p>
-              <small>{formatDate(item[config.date])} {item.time || item.dueTime || item.startTime || ""}</small>
+              <small>{formatDate(item[config.date])} {displayTime}</small>
             </div>
             <div className="record-actions">
               {(type === "task" || type === "reminder") && (
-                <button className="icon-button tactile" title="Mark completed" onClick={() => upsert(config.collection, { ...item, status: "Completed" }, type)}>
+                <button
+                  className={`icon-button tactile ${isDone ? "active" : ""}`}
+                  title={isDone ? "Undo completed" : "Mark completed"}
+                  onClick={() => upsert(config.collection, { ...item, status: isDone ? (type === "reminder" ? "Active" : "Pending") : "Completed" }, type)}
+                >
                   <CheckCircle2 size={17} />
                 </button>
               )}
@@ -1645,7 +1839,8 @@ function WorkList({ type, state, openAdd, setModal, remove, upsert }) {
               <button className="icon-button danger tactile" title="Delete" onClick={() => remove(config.collection, item.id, type)}><Trash2 size={17} /></button>
             </div>
           </article>
-        )) : <EmptyState text={`No ${config.title.toLowerCase()} match this view.`} />}
+          );
+        }) : <EmptyState text={`No ${config.title.toLowerCase()} match this view.`} />}
       </div>
     </section>
   );
@@ -2000,6 +2195,31 @@ function SettingsView({ state, setState, setToast, requestNotifications, setModa
       setToast(error.message || "Telegram test failed");
     }
   };
+  const syncTelegramNow = async () => {
+    try {
+      const result = await syncTelegramNotifications(state);
+      setState((current) => ({
+        ...current,
+        settings: {
+          ...current.settings,
+          telegramLastSyncAt: new Date().toISOString(),
+          telegramLastStatus: `${result.synced || 0} reminders synced`,
+          telegramLastError: ""
+        }
+      }));
+      setToast("Telegram reminders synced");
+    } catch (error) {
+      setState((current) => ({
+        ...current,
+        settings: {
+          ...current.settings,
+          telegramLastStatus: "Sync failed",
+          telegramLastError: error.message || "Telegram sync failed"
+        }
+      }));
+      setToast(error.message || "Telegram sync failed");
+    }
+  };
   const useCurrentWeatherLocation = () => {
     if (!navigator.geolocation) {
       setToast("Location permission is not supported");
@@ -2079,7 +2299,7 @@ function SettingsView({ state, setState, setToast, requestNotifications, setModa
       <div className="panel">
         <SectionHeader
           title="Telegram Bot"
-          action={<button className="secondary tactile" type="button" onClick={testTelegram}>Test</button>}
+          action={<div className="cluster"><button className="secondary tactile" type="button" onClick={syncTelegramNow}>Sync now</button><button className="secondary tactile" type="button" onClick={testTelegram}>Test</button></div>}
         />
         <Toggle label="Send reminders through Telegram when app is closed" checked={state.settings.telegramNotifications} onChange={(value) => setSetting("telegramNotifications", value)} />
         <div className="storage-status">
@@ -2495,9 +2715,8 @@ function AiAssistant({ state, setState, upsert, setToast, close }) {
     return record;
   };
 
-  const send = async (event) => {
-    event.preventDefault();
-    const text = input.trim();
+  const submitPrompt = async (rawText) => {
+    const text = rawText.trim();
     if (!text || loading) return;
     setInput("");
     addMessage({ role: "user", text });
@@ -2555,6 +2774,20 @@ function AiAssistant({ state, setState, upsert, setToast, close }) {
     } finally {
       setLoading(false);
     }
+  };
+
+  const send = (event) => {
+    event.preventDefault();
+    submitPrompt(input);
+  };
+
+  const useQuickChip = (chip) => {
+    if (chip.label === "Parse bank message") {
+      setInput(chip.prompt);
+      requestAnimationFrame(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }));
+      return;
+    }
+    submitPrompt(chip.prompt);
   };
 
   const copyMessage = async (text) => {
@@ -2643,6 +2876,12 @@ function AiAssistant({ state, setState, upsert, setToast, close }) {
               </div>
             </div>
           )}
+        </div>
+
+        <div className="ai-chip-row" aria-label="Quick AI commands">
+          {aiQuickChips.map((chip) => (
+            <button className="ai-chip tactile" type="button" key={chip.label} onClick={() => useQuickChip(chip)}>{chip.label}</button>
+          ))}
         </div>
 
         <div className="ai-messages">
@@ -3817,7 +4056,7 @@ function Chart({ title, data, type = "bar" }) {
 function getInitialForm(kind, item, context = {}, state) {
   const baseDate = context.date || todayISO();
   const defaults = {
-    task: { title: "", description: "", dueDate: baseDate, dueTime: nowTime(), priority: state.settings.defaultTaskPriority, category: "", status: "Pending", reminder: false, notes: "" },
+    task: { title: "", description: "", dueDate: baseDate, startTime: "", endTime: "", dueTime: nowTime(), todayOnly: false, priority: state.settings.defaultTaskPriority, category: "", status: "Pending", reminder: false, notes: "" },
     reminder: { title: "", description: "", date: baseDate, time: state.settings.defaultReminderTime, repeat: "No repeat", priority: "Medium", notificationEnabled: true, status: "Active" },
     note: { title: "", content: "", date: baseDate, category: "", reminder: false, pinned: false },
     event: { title: "", description: "", startDate: baseDate, startTime: nowTime(), endDate: baseDate, endTime: "", location: "", category: "", reminderBefore: "", repeat: "No repeat", imported: false, status: "Scheduled" },
@@ -3862,8 +4101,11 @@ function fieldsForKind(kind, state, form = {}) {
     task: [
       { name: "title", label: "Task title", required: true },
       { name: "description", label: "Description", type: "textarea", wide: true },
-      { name: "dueDate", label: "Due date", type: "date", required: true },
-      { name: "dueTime", label: "Due time", type: "time" },
+      { name: "dueDate", label: "Task date", type: "date", required: true },
+      { name: "startTime", label: "Start time", type: "time" },
+      { name: "endTime", label: "End time", type: "time" },
+      { name: "dueTime", label: "Reminder time", type: "time" },
+      { name: "todayOnly", label: "Only today", type: "checkbox" },
       { name: "priority", label: "Priority", type: "select", options: ["Low", "Medium", "High", "Urgent"] },
       { name: "category", label: "Category", type: "select", options: categoryOptions },
       { name: "status", label: "Status", type: "select", options: ["Pending", "In Progress", "Completed", "Cancelled", "Overdue"] },
@@ -4001,6 +4243,13 @@ function validateForm(kind, form) {
 }
 
 function normalizeForm(kind, form) {
+  if (kind === "task") {
+    return {
+      ...form,
+      dueDate: form.todayOnly ? todayISO() : form.dueDate,
+      dueTime: form.dueTime || form.endTime || form.startTime || ""
+    };
+  }
   if (kind === "project") {
     const { newParticipant, ...rest } = form;
     return { ...rest, participants: splitParticipants(form.participants) };
@@ -4020,7 +4269,7 @@ function normalizeForm(kind, form) {
 function withAiDefaults(kind, data) {
   const date = todayISO();
   const defaults = {
-    task: { title: "Task", description: "", dueDate: date, dueTime: "", priority: "Medium", category: "", status: "Pending", reminder: false, notes: "" },
+    task: { title: "Task", description: "", dueDate: date, startTime: "", endTime: "", dueTime: "", todayOnly: false, priority: "Medium", category: "", status: "Pending", reminder: false, notes: "" },
     reminder: { title: "Reminder", description: "", date, time: "", repeat: "No repeat", priority: "Medium", notificationEnabled: true, status: "Active" },
     note: { title: "Note", content: "", date, category: "", reminder: false, pinned: false },
     event: { title: "Event", description: "", startDate: date, startTime: "", endDate: date, endTime: "", location: "", category: "", reminderBefore: "", repeat: "No repeat", status: "Scheduled", imported: false },

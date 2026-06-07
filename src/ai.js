@@ -33,7 +33,10 @@ export const AI_JSON_REFERENCE = `{
         "title": "Homework",
         "description": "",
         "dueDate": "2026-06-06",
+        "startTime": "",
+        "endTime": "",
         "dueTime": "18:00",
+        "todayOnly": true,
         "priority": "Medium",
         "category": "",
         "status": "Pending",
@@ -225,7 +228,12 @@ function compactState(state) {
     today: state.__today || new Date().toLocaleDateString("en-CA"),
     currentTime: new Date().toTimeString().slice(0, 5),
     categories: state.categories.map((category) => category.name),
-    tasks: take(state.tasks, ["id", "title", "dueDate", "dueTime", "status", "priority", "category"]),
+    preferences: {
+      defaultPaymentMethod: state.aiMemory?.defaultPaymentMethod || "",
+      commonParticipants: state.aiMemory?.commonParticipants || [],
+      frequentMerchants: state.aiMemory?.frequentMerchants || []
+    },
+    tasks: take(state.tasks, ["id", "title", "dueDate", "startTime", "endTime", "dueTime", "todayOnly", "status", "priority", "category"]),
     reminders: take(state.reminders, ["id", "title", "date", "time", "repeat", "status"]),
     notes: take(state.notes, ["id", "title", "date", "category", "pinned"]),
     events: take(state.events, ["id", "title", "startDate", "startTime", "endDate", "location"]),
@@ -395,6 +403,9 @@ function buildInsights(state) {
     reminders: state.reminders.filter((reminder) => reminder.status === "Active" && reminder.date < today),
     bills: (state.bills || []).filter((bill) => bill.status !== "Paid" && bill.dueDate < today)
   };
+  const upcomingReminders = state.reminders
+    .filter((reminder) => reminder.status === "Active" && reminder.date >= today && reminder.date <= weekEnd)
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
 
   return {
     month,
@@ -421,6 +432,15 @@ function buildInsights(state) {
       dueBillTotal: dueBillsThisWeek.reduce((total, bill) => total + moneyAmount(bill.amount), 0)
     },
     overdue,
+    monthEndReview: {
+      unpaidBills: monthlyBills.filter((bill) => bill.status !== "Paid").sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate))),
+      upcomingReminders,
+      overdueCounts: {
+        tasks: overdue.tasks.length,
+        reminders: overdue.reminders.length,
+        bills: overdue.bills.length
+      }
+    },
     moneyTables: {
       currentMonth: allMoneyRows
         .filter((item) => monthOf(item.date) === month)
@@ -492,6 +512,7 @@ Rules:
 - For insight questions, use the provided insights object first. Answer with exact totals from insights and tables when useful.
 - If user asks "highest usage/spending this month", compare currentMonth daily, salary, and project debit plus category breakdowns.
 - If user asks for this week bills, overdue work, cashflow, or a month expense table, use insights.thisWeek, insights.overdue, insights.currentMonth, and insights.moneyTables before reading raw lists.
+- If user asks for daily digest or month-end review, cover unpaid bills, overspending/budget alerts, project balances, upcoming reminders, overdue items, and cashflow.
 - If user asks for a specific project summary, use insights.projects and include budget, debit, credit, remaining, overspent, highest category, and recent transactions.
 - If user asks about project splits, who owes whom, or participant balances, use insights.projects[].participantSpend and splitSettlements. Reply with a clear table showing payer, receiver, and amount.
 - For expense-specific split questions, use insights.projects[].expenseSplits. Each expense split is isolated to that transaction's selected participants only.
@@ -504,6 +525,8 @@ Rules:
 - Use Indian Rupees only for money.
 - Convert natural dates like today/tomorrow into YYYY-MM-DD using the current app date.
 - Convert times like 6pm into HH:mm.
+- For task/todo actions, include startTime and endTime when the user gives a time range. If the user says "today only", set todayOnly true and use today's date.
+- Prefer compact app data preferences.defaultPaymentMethod, preferences.commonParticipants, and preferences.frequentMerchants as local defaults when the user does not specify payment method, participant, or merchant.
 - For daily expenses, output type "expense".
 - For expenses inside a named project, find the exact project id by name and output type "projectTransaction".
 - For project transactions, always set paidBy to one participant from that project when clear and set participants to the involved participant names. If unclear, ask which project participants were involved.
@@ -531,7 +554,7 @@ Allowed action types:
 ${ACTION_TYPES.join(", ")}
 
 Action data schemas:
-task: { title, description, dueDate, dueTime, priority, category, status, reminder, notes }
+task: { title, description, dueDate, startTime, endTime, dueTime, todayOnly, priority, category, status, reminder, notes }
 reminder: { title, description, date, time, repeat, priority, notificationEnabled, status }
 note: { title, content, date, category, reminder, pinned }
 event: { title, description, startDate, startTime, endDate, endTime, location, category, reminderBefore, repeat, status }
