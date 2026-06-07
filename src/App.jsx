@@ -129,6 +129,7 @@ const emptyState = {
 
 const navItems = [
   { key: "home", label: "Home", icon: Home },
+  { key: "todo", label: "Todo", icon: CheckCircle2 },
   { key: "calendar", label: "Calendar", icon: CalendarDays },
   { key: "tasks", label: "Tasks", icon: ClipboardCheck },
   { key: "reminders", label: "Reminders", icon: Bell },
@@ -140,6 +141,7 @@ const navItems = [
 ];
 
 const quickActions = [
+  { kind: "task", label: "Add Todo", icon: CheckCircle2 },
   { kind: "task", label: "Add Task", icon: ClipboardCheck },
   { kind: "reminder", label: "Add Reminder", icon: Bell },
   { kind: "note", label: "Add Note", icon: NotebookPen },
@@ -152,6 +154,7 @@ const quickActions = [
 ];
 
 const aiQuickChips = [
+  { label: "Add todo", prompt: "Add a todo task" },
   { label: "Add expense", prompt: "Add daily expense" },
   { label: "Analyze month", prompt: "Analyze this month spending, cashflow, bills, and project balances" },
   { label: "Find overdue", prompt: "Find all overdue tasks, reminders, bills, and unpaid items" },
@@ -1005,6 +1008,7 @@ export default function App() {
             setToast={setToast}
           />
         )}
+        {active === "todo" && <WorkList type="todo" state={state} openAdd={openAdd} setModal={setModal} remove={remove} upsert={upsert} />}
         {active === "tasks" && <WorkList type="task" state={state} openAdd={openAdd} setModal={setModal} remove={remove} upsert={upsert} />}
         {active === "reminders" && <WorkList type="reminder" state={state} openAdd={openAdd} setModal={setModal} remove={remove} upsert={upsert} />}
         {active === "notes" && <WorkList type="note" state={state} openAdd={openAdd} setModal={setModal} remove={remove} upsert={upsert} />}
@@ -1057,6 +1061,7 @@ export default function App() {
 
       <nav className="bottom-nav">
         <button className={active === "home" ? "active" : ""} onClick={() => showView("home")}><Home size={21} /><span>Home</span></button>
+        <button className={active === "todo" ? "active" : ""} onClick={() => showView("todo")}><CheckCircle2 size={21} /><span>Todo</span></button>
         <button className={active === "calendar" ? "active" : ""} onClick={() => showView("calendar")}><CalendarDays size={21} /><span>Calendar</span></button>
         <button className={`bottom-add ${quickOpen ? "open" : ""}`} onClick={() => setQuickOpen((value) => !value)}>{quickOpen ? <X size={24} /> : <Plus size={24} />}</button>
         <button className={active === "expenses" ? "active" : ""} onClick={() => showView("expenses")}><WalletCards size={21} /><span>Money</span></button>
@@ -1288,7 +1293,7 @@ function QuickActionSheet({ openAdd }) {
       {quickActions.map((action) => {
         const Icon = action.icon;
         return (
-          <button className="tactile" key={action.kind} onClick={() => openAdd(action.kind)}>
+          <button className="tactile" key={`${action.kind}-${action.label}`} onClick={() => openAdd(action.kind)}>
             <Icon size={18} />
             <span>{action.label}</span>
           </button>
@@ -1524,9 +1529,9 @@ function HomeView({ state, setState, openAdd, setActive, setAiOpen }) {
       <section className="panel">
         <SectionHeader title="Quick Add" action={<Select value={range} onChange={setRange} options={rangeOptions()} />} />
         <div className="quick-grid">
-          {quickActions.slice(0, 7).map((action) => {
+          {quickActions.slice(0, 8).map((action) => {
             const Icon = action.icon;
-            return <button className="quick-card tactile" key={action.kind} onClick={() => openAdd(action.kind)}><Icon size={22} />{action.label}</button>;
+            return <button className="quick-card tactile" key={`${action.kind}-${action.label}`} onClick={() => openAdd(action.kind)}><Icon size={22} />{action.label}</button>;
           })}
         </div>
       </section>
@@ -1771,7 +1776,7 @@ function DateDetail({ state, selectedDate, items, openAdd, setModal }) {
     <aside className="panel date-detail">
       <SectionHeader title={formatDate(selectedDate)} />
       <div className="date-actions">
-        {quickActions.slice(0, 7).map((action) => <button className="secondary tactile" key={action.kind} onClick={() => openAdd(action.kind, { date: selectedDate })}>{action.label.replace("Add ", "")}</button>)}
+        {quickActions.slice(0, 8).map((action) => <button className="secondary tactile" key={`${action.kind}-${action.label}`} onClick={() => openAdd(action.kind, { date: selectedDate })}>{action.label.replace("Add ", "")}</button>)}
       </div>
       {isBirthday(state.profile, selectedDate) && <div className="birthday-card">Birthday: {state.profile.name}</div>}
       {Object.entries(items).map(([key, list]) => (
@@ -1791,11 +1796,14 @@ function DateDetail({ state, selectedDate, items, openAdd, setModal }) {
 
 function WorkList({ type, state, openAdd, setModal, remove, upsert }) {
   const config = {
-    task: { collection: "tasks", title: "Tasks", add: "task", date: "dueDate", status: ["All", "Today", "Upcoming", "Past", "Overdue", "Completed", "Pending", "In Progress", "Cancelled"] },
+    todo: { collection: "tasks", title: "Todo List", add: "task", kind: "task", label: "todo", date: "dueDate", status: ["All", "Today", "Upcoming", "Past", "Overdue", "Completed", "Pending", "In Progress", "Cancelled"] },
+    task: { collection: "tasks", title: "Tasks", add: "task", kind: "task", label: "task", date: "dueDate", status: ["All", "Today", "Upcoming", "Past", "Overdue", "Completed", "Pending", "In Progress", "Cancelled"] },
     reminder: { collection: "reminders", title: "Reminders", add: "reminder", date: "date", status: ["All", "Today", "Upcoming", "Past", "Expired", "Completed", "Repeating"] },
     note: { collection: "notes", title: "Notes", add: "note", date: "date", status: ["All", "Today", "Pinned"] },
     event: { collection: "events", title: "Events", add: "event", date: "startDate", status: ["All", "Today", "Upcoming", "Past", "Imported", "Completed"] }
   }[type];
+  config.kind = config.kind || type;
+  config.label = config.label || type;
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("All");
   const list = state[config.collection]
@@ -1825,18 +1833,18 @@ function WorkList({ type, state, openAdd, setModal, remove, upsert }) {
                 <button
                   className={`icon-button tactile ${isDone ? "active" : ""}`}
                   title={isDone ? "Undo completed" : "Mark completed"}
-                  onClick={() => upsert(config.collection, { ...item, status: isDone ? (type === "reminder" ? "Active" : "Pending") : "Completed" }, type)}
+                  onClick={() => upsert(config.collection, { ...item, status: isDone ? (type === "reminder" ? "Active" : "Pending") : "Completed" }, config.kind)}
                 >
                   <CheckCircle2 size={17} />
                 </button>
               )}
               {type === "note" && (
-                <button className="icon-button tactile" title="Pin note" onClick={() => upsert(config.collection, { ...item, pinned: !item.pinned }, type)}>
+                <button className="icon-button tactile" title="Pin note" onClick={() => upsert(config.collection, { ...item, pinned: !item.pinned }, config.kind)}>
                   <Tag size={17} />
                 </button>
               )}
-              <button className="icon-button tactile" title="Edit" onClick={() => setModal({ kind: type, item })}><Edit3 size={17} /></button>
-              <button className="icon-button danger tactile" title="Delete" onClick={() => remove(config.collection, item.id, type)}><Trash2 size={17} /></button>
+              <button className="icon-button tactile" title="Edit" onClick={() => setModal({ kind: config.kind, item })}><Edit3 size={17} /></button>
+              <button className="icon-button danger tactile" title="Delete" onClick={() => remove(config.collection, item.id, config.label)}><Trash2 size={17} /></button>
             </div>
           </article>
           );
@@ -3170,22 +3178,52 @@ function CredentialChatCard({ state, query, setToast }) {
 }
 
 function MessageBody({ text }) {
-  const table = parseMarkdownTable(text);
-  if (!table) return <p>{text}</p>;
+  const parsed = splitMarkdownTable(text);
+  const money = extractMoneyHighlights(text);
+  if (!parsed.table) {
+    return (
+      <div className={money.length ? "ai-rich-text money" : "ai-rich-text"}>
+        {money.length ? <MoneyHighlights values={money} /> : null}
+        <p>{text}</p>
+      </div>
+    );
+  }
   return (
-    <div className="ai-table-wrap">
+    <div className="ai-rich-text">
+      {parsed.before && <p>{parsed.before}</p>}
+      {money.length ? <MoneyHighlights values={money} /> : null}
+      <div className="ai-table-wrap premium">
       <table className="ai-table">
         <thead>
-          <tr>{table.headers.map((header) => <th key={header}>{header}</th>)}</tr>
+          <tr>{parsed.table.headers.map((header) => <th key={header}>{header}</th>)}</tr>
         </thead>
         <tbody>
-          {table.rows.map((row, index) => (
-            <tr key={index}>{row.map((cell, cellIndex) => <td key={`${index}-${cellIndex}`}>{cell}</td>)}</tr>
+          {parsed.table.rows.map((row, index) => (
+            <tr key={index}>{row.map((cell, cellIndex) => <td className={hasMoney(cell) ? "money-cell" : ""} key={`${index}-${cellIndex}`}>{cell}</td>)}</tr>
           ))}
         </tbody>
       </table>
+      </div>
+      {parsed.after && <p>{parsed.after}</p>}
     </div>
   );
+}
+
+function splitMarkdownTable(text) {
+  const lines = String(text || "").trim().split("\n");
+  const start = lines.findIndex((line, index) =>
+    line.trim().startsWith("|") &&
+    line.trim().endsWith("|") &&
+    lines[index + 1]?.includes("---")
+  );
+  if (start < 0) return { before: "", after: String(text || ""), table: null };
+  let end = start;
+  while (end < lines.length && lines[end].trim().startsWith("|") && lines[end].trim().endsWith("|")) end += 1;
+  return {
+    before: lines.slice(0, start).join("\n").trim(),
+    table: parseMarkdownTable(lines.slice(start, end).join("\n")),
+    after: lines.slice(end).join("\n").trim()
+  };
 }
 
 function parseMarkdownTable(text) {
@@ -3199,17 +3237,37 @@ function parseMarkdownTable(text) {
   };
 }
 
+function hasMoney(text) {
+  return /(?:₹|inr|rs\.?)\s*[\d,]+(?:\.\d{1,2})?|[\d,]+(?:\.\d{1,2})?\s*(?:₹|inr|rs\.?)/i.test(String(text || ""));
+}
+
+function extractMoneyHighlights(text) {
+  const matches = String(text || "").match(/(?:₹|INR|Rs\.?)\s*[\d,]+(?:\.\d{1,2})?|[\d,]+(?:\.\d{1,2})?\s*(?:₹|INR|Rs\.?)/gi) || [];
+  return [...new Set(matches.map((match) => match.trim()))].slice(0, 6);
+}
+
+function MoneyHighlights({ values }) {
+  return (
+    <div className="ai-money-strip">
+      {values.map((value) => <span key={value}>{value}</span>)}
+    </div>
+  );
+}
+
 function normalizeAiActions(parsed) {
   const rawActions = Array.isArray(parsed) ? parsed : parsed.actions;
   if (!Array.isArray(rawActions)) return [];
   return rawActions
-    .map((action) => ({
+    .map((action) => {
+      const normalizedType = action.type === "todo" ? "task" : action.type;
+      return {
       operation: action.operation || "create",
-      type: action.type,
+      type: normalizedType,
       id: action.id || "",
       summary: action.summary || "",
       data: action.data || {}
-    }))
+      };
+    })
     .filter((action) => {
       const validOperation = ["create", "edit", "delete"].includes(action.operation);
       const validType = Boolean(collectionForKind(action.type));
@@ -4295,6 +4353,7 @@ function uniqueList(items) {
 
 function collectionForKind(kind) {
   return {
+    todo: "tasks",
     task: "tasks",
     reminder: "reminders",
     note: "notes",
@@ -4312,6 +4371,7 @@ function collectionForKind(kind) {
 
 function kindLabel(kind) {
   return {
+    todo: "Todo",
     task: "Task",
     reminder: "Reminder",
     note: "Note",

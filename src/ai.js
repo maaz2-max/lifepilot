@@ -454,8 +454,9 @@ function buildInsights(state) {
       const debit = transactions.filter((item) => item.type === "Debit").reduce((total, item) => total + moneyAmount(item.amount), 0);
       const credit = transactions.filter((item) => item.type === "Credit").reduce((total, item) => total + moneyAmount(item.amount), 0);
       const categoryDebit = transactions.filter((item) => item.type === "Debit").reduce((acc, item) => addGroup(acc, item.category, item.amount), {});
-      const participantNames = uniqueNames([...(project.participants || []), ...transactions.flatMap((item) => [item.paidBy, ...(item.participants || [])])]);
-      const participantSpend = participantNames.reduce((acc, name) => {
+      const participantNames = uniqueNames([...(project.participants || []), ...transactions.flatMap((item) => [item.paidBy, item.owedBy, ...(item.participants || [])])]);
+      const paidSettlements = (project.paidSettlements || []).filter((item) => item.from && item.to && moneyAmount(item.amount) > 0);
+      const rawParticipantSpend = participantNames.reduce((acc, name) => {
         const paid = transactions.filter((item) => item.type === "Debit" && item.paidBy === name).reduce((total, item) => {
           const mode = splitModeOf(item);
           const hasEqualSplit = mode === "Equal split" && (item.participants || []).filter(Boolean).length > 0;
@@ -473,6 +474,12 @@ function buildInsights(state) {
         acc[name] = { paid, share, credit, balance: paid + credit - share };
         return acc;
       }, {});
+      const participantSpend = Object.fromEntries(Object.entries(rawParticipantSpend).map(([name, value]) => {
+        const paidOut = paidSettlements.filter((item) => item.from === name).reduce((total, item) => total + moneyAmount(item.amount), 0);
+        const received = paidSettlements.filter((item) => item.to === name).reduce((total, item) => total + moneyAmount(item.amount), 0);
+        return [name, { ...value, settledPaid: paidOut, settledReceived: received, balance: value.balance + paidOut - received }];
+      }));
+      const splitSettlements = settlementRows(participantSpend);
       return {
         id: project.id,
         name: project.name,
@@ -484,7 +491,9 @@ function buildInsights(state) {
         categoryDebit,
         highestCategory: highestEntry(categoryDebit),
         participantSpend,
-        splitSettlements: settlementRows(participantSpend),
+        splitSettlements,
+        paidSettlements,
+        settlementStatus: splitSettlements.length ? "pending" : paidSettlements.length ? "settled" : "none",
         expenseSplits: expenseSplitRows(transactions),
         transactions: transactions.map((item) => ({ ...item, projectName: projectById[item.projectId]?.name || "" }))
       };
@@ -507,6 +516,7 @@ Rules:
 - Ask for user confirmation in the reply before any action is applied.
 - You may search all compact app data by title, amount, category, date, payment method, status, project, participant, notes, or source.
 - If the user asks whether any task/reminder/note/event/expense exists, list all matching records. If they ask "any task available", list every task with ID, title, date, time, status, priority.
+- Treat todo, to-do, and task as the same LifePilot task records. For todo create/edit/delete requests, output action type "task".
 - If the user asks for a specific day transaction list, reply with a markdown table only in the reply field. Include Source, Title, Type, Amount, Category, Time, Payment Method, ID when available.
 - For listing tasks/reminders/events/notes, use a markdown table when useful.
 - For insight questions, use the provided insights object first. Answer with exact totals from insights and tables when useful.
@@ -515,6 +525,8 @@ Rules:
 - If user asks for daily digest or month-end review, cover unpaid bills, overspending/budget alerts, project balances, upcoming reminders, overdue items, and cashflow.
 - If user asks for a specific project summary, use insights.projects and include budget, debit, credit, remaining, overspent, highest category, and recent transactions.
 - If user asks about project splits, who owes whom, or participant balances, use insights.projects[].participantSpend and splitSettlements. Reply with a clear table showing payer, receiver, and amount.
+- If a project's settlementStatus is "settled" or splitSettlements is empty after paidSettlements, say the relevant people are settled/cleared and do not claim money is still owed.
+- When replying with any money amounts, prefer a markdown table so the app can render a premium table.
 - For expense-specific split questions, use insights.projects[].expenseSplits. Each expense split is isolated to that transaction's selected participants only.
 - If user asks for daily expense summary, use only expenses, not salary/project transactions, unless they explicitly ask combined money.
 - If the user asks about bills, use bills and show title, amount, dueDate, status, reminderBefore.
