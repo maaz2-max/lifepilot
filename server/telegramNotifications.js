@@ -26,7 +26,11 @@ function telegramConfig(env = process.env) {
 }
 
 async function sendTelegramMessage(text, env = process.env) {
-  const { token, chatId } = telegramConfig(env);
+  return sendTelegramMessageTo(telegramConfig(env).chatId, text, env);
+}
+
+async function sendTelegramMessageTo(chatId, text, env = process.env) {
+  const { token } = telegramConfig(env);
   if (!token || !chatId) throw new Error("Telegram bot token or chat id is missing");
 
   const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
@@ -57,11 +61,45 @@ function notificationText(item) {
   const body = escapeHtml(item.body || "");
   const due = item.due_at ? new Date(item.due_at).toLocaleString("en-IN", { timeZone: item.timezone || "Asia/Kolkata" }) : "";
   return [
-    `🔔 <b>${title}</b>`,
+    `<b>${title}</b>`,
     `Type: ${type}`,
     due ? `Time: ${escapeHtml(due)}` : "",
     body ? `\n${body}` : ""
   ].filter(Boolean).join("\n");
+}
+
+function formatBotDate(value, timezone = "Asia/Kolkata") {
+  if (!value) return "";
+  return new Date(value).toLocaleString("en-IN", {
+    timeZone: timezone,
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function commandHelp() {
+  return [
+    "<b>LifePilot Bot Commands</b>",
+    "/start - Connect and show help",
+    "/help - Show commands",
+    "/test - Send a test reply",
+    "/status - Show synced reminder count",
+    "/today - Show items due today",
+    "/due - Show next 7 days",
+    "/bills - Show unpaid synced bills"
+  ].join("\n");
+}
+
+function listItems(title, items, limit = 10) {
+  if (!items.length) return `<b>${escapeHtml(title)}</b>\nNo synced items found.`;
+  const rows = items.slice(0, limit).map((item, index) => {
+    const due = formatBotDate(item.due_at, item.timezone || "Asia/Kolkata");
+    return `${index + 1}. ${escapeHtml(item.title)}\n   ${escapeHtml(item.type)} - ${escapeHtml(due)}`;
+  });
+  const more = items.length > limit ? `\n+${items.length - limit} more` : "";
+  return [`<b>${escapeHtml(title)}</b>`, ...rows, more].filter(Boolean).join("\n");
 }
 
 function nextRepeatDate(dueAt, repeat) {
@@ -130,7 +168,7 @@ export async function handleNotificationSync(req, res, env = process.env) {
         body: rows
       }, env);
     }
-    await supabaseRequest(`telegram_settings?on_conflict=user_key`, {
+    await supabaseRequest("telegram_settings?on_conflict=user_key", {
       method: "POST",
       headers: { Prefer: "resolution=merge-duplicates" },
       body: [{
@@ -155,10 +193,132 @@ export async function handleTelegramTest(req, res, env = process.env) {
     return;
   }
   try {
-    await sendTelegramMessage("✅ LifePilot Telegram notifications are connected.", env);
+    await sendTelegramMessage("[OK] LifePilot Telegram notifications are connected.", env);
     jsonResponse(res, 200, { ok: true });
   } catch (error) {
     jsonResponse(res, 502, { error: error.message || "Telegram test failed" });
+  }
+}
+
+export async function handleTelegramWebhook(req, res, env = process.env) {
+  if (req.method !== "POST") {
+    jsonResponse(res, 405, { error: "Method not allowed" });
+    return;
+  }
+
+  const expectedSecret = env.TELEGRAM_WEBHOOK_SECRET;
+  if (expectedSecret && req.headers["x-telegram-bot-api-secret-token"] !== expectedSecret) {
+    jsonResponse(res, 401, { error: "Unauthorized webhook request" });
+    return;
+  }
+
+  let body;
+  try {
+    body = await readBody(req);
+  } catch {
+    jsonResponse(res, 400, { error: "Invalid JSON body" });
+    return;
+  }
+
+  const message = body.message || body.edited_message;
+  const chatId = message?.chat?.id ? String(message.chat.id) : "";
+  const text = String(message?.text || "").trim();
+  const { chatId: allowedChatId, userKey } = telegramConfig(env);
+  if (!chatId || !text) {
+    jsonResponse(res, 200, { ok: true, ignored: true });
+    return;
+  }
+  if (allowedChatId && chatId !== String(allowedChatId)) {
+    jsonResponse(res, 200, { ok: true, ignored: "unauthorized chat" });
+    return;
+  }
+
+  try {
+    const command = text.split(/\s+/)[0].toLowerCase().split("@")[0];
+    if (command === "/start" || command === "/help") {
+      await sendTelegramMessageTo(chatId, commandHelp(), env);
+      jsonResponse(res, 200, { ok: true });
+      return;
+    }
+    if (command === "/test") {
+      await sendTelegramMessageTo(chatId, "[OK] LifePilot bot command test works.", env);
+      jsonResponse(res, 200, { ok: true });
+      return;
+    }
+
+    if (!hasSupabase(env)) {
+      await sendTelegramMessageTo(chatId, "Supabase is not configured on the backend yet.", env);
+      jsonResponse(res, 200, { ok: true });
+      return;
+    }
+
+    const now = new Date();
+    const todayStart = new Date(now);
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date(now);
+    todayEnd.setHours(23, 59, 59, 999);
+    const weekEnd = new Date(now);
+    weekEnd.setDate(weekEnd.getDate() + 7);
+
+    if (command === "/status") {
+      const items = await supabaseRequest(
+        `notification_items?user_key=eq.${encodeURIComponent(userKey)}&enabled=eq.true&status=eq.active&select=id,type,due_at`,
+        {},
+        env
+      );
+      const dueNow = (items || []).filter((item) => item.due_at <= now.toISOString()).length;
+      await sendTelegramMessageTo(chatId, [
+        "<b>LifePilot Sync Status</b>",
+        `Active synced items: ${items?.length || 0}`,
+        `Due now: ${dueNow}`,
+        "Cron checks every 5 minutes."
+      ].join("\n"), env);
+      jsonResponse(res, 200, { ok: true });
+      return;
+    }
+
+    if (command === "/today") {
+      const items = await supabaseRequest(
+        `notification_items?user_key=eq.${encodeURIComponent(userKey)}&enabled=eq.true&status=eq.active&due_at=gte.${encodeURIComponent(todayStart.toISOString())}&due_at=lte.${encodeURIComponent(todayEnd.toISOString())}&order=due_at.asc&select=*`,
+        {},
+        env
+      );
+      await sendTelegramMessageTo(chatId, listItems("Due Today", items || []), env);
+      jsonResponse(res, 200, { ok: true });
+      return;
+    }
+
+    if (command === "/due") {
+      const items = await supabaseRequest(
+        `notification_items?user_key=eq.${encodeURIComponent(userKey)}&enabled=eq.true&status=eq.active&due_at=gte.${encodeURIComponent(now.toISOString())}&due_at=lte.${encodeURIComponent(weekEnd.toISOString())}&order=due_at.asc&select=*`,
+        {},
+        env
+      );
+      await sendTelegramMessageTo(chatId, listItems("Due Next 7 Days", items || []), env);
+      jsonResponse(res, 200, { ok: true });
+      return;
+    }
+
+    if (command === "/bills") {
+      const items = await supabaseRequest(
+        `notification_items?user_key=eq.${encodeURIComponent(userKey)}&enabled=eq.true&status=eq.active&type=eq.bill&order=due_at.asc&select=*`,
+        {},
+        env
+      );
+      await sendTelegramMessageTo(chatId, listItems("Unpaid Bills", items || []), env);
+      jsonResponse(res, 200, { ok: true });
+      return;
+    }
+
+    await sendTelegramMessageTo(chatId, commandHelp(), env);
+    jsonResponse(res, 200, { ok: true });
+  } catch (error) {
+    try {
+      await sendTelegramMessageTo(chatId, `Command failed: ${escapeHtml(error.message || "Unknown error")}`, env);
+    } catch {
+      // Acknowledge webhook anyway so Telegram does not retry forever.
+    }
+    jsonResponse(res, 200, { ok: true, error: error.message || "Command failed" });
   }
 }
 
