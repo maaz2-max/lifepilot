@@ -970,7 +970,7 @@ input[type="datetime-local"] {
 
 .settlement-row {
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: 1fr auto 1fr auto;
   align-items: center;
   gap: 0.65rem;
   padding: 0.68rem;
@@ -979,8 +979,17 @@ input[type="datetime-local"] {
   box-shadow: var(--shadow-inset);
 }
 
-.settlement-row span:last-child {
+.settlement-row span:nth-of-type(2) {
   text-align: right;
+}
+
+.settlement-row.paid {
+  background: #d8ff8f;
+}
+
+.settlement-row .secondary {
+  min-height: 36px;
+  padding: 0.45rem 0.65rem;
 }
 
 .expense-split-card {
@@ -991,6 +1000,10 @@ input[type="datetime-local"] {
   border-radius: 16px;
   background: linear-gradient(145deg, #fffdf7, #edf5e8);
   box-shadow: var(--shadow);
+}
+
+.expense-split-card.direct {
+  background: linear-gradient(145deg, #fffdf7, #f2e9ff);
 }
 
 .participant-picker {
@@ -2774,6 +2787,16 @@ label {
     width: auto;
     min-width: 96px;
     padding-inline: 0.7rem;
+  }
+
+  .settlement-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .settlement-row span,
+  .settlement-row span:nth-of-type(2) {
+    text-align: left;
   }
 
   .metric-card {

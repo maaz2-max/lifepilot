@@ -1814,7 +1814,7 @@ function ProjectsView({ state, selectedProject, setSelectedProject, openAdd, set
             {projectTab === "transactions" ? (
               <DateGroupedRecordTable list={transactions} type="projectTransaction" setModal={setModal} remove={(id) => remove("projectTransactions", id, "project transaction")} />
             ) : (
-              <ProjectSplitView project={active} transactions={transactions} />
+              <ProjectSplitView project={active} transactions={transactions} upsert={upsert} />
             )}
             <button
               className="secondary danger tactile spaced"
@@ -3378,8 +3378,21 @@ function ProjectParticipantBreakdown({ project, transactions }) {
   );
 }
 
-function ProjectSplitView({ project, transactions }) {
-  const { stats, settlements, splitTransactions, expenseSplits } = projectSplitSummary(project, transactions);
+function ProjectSplitView({ project, transactions, upsert }) {
+  const { stats, settlements, splitTransactions, equalSplits, directOwedSplits, paidSettlements } = projectSplitSummary(project, transactions);
+  const markSettlementPaid = (item) => {
+    const paid = {
+      id: id("settlement"),
+      from: item.from,
+      to: item.to,
+      amount: item.amount,
+      paidAt: new Date().toISOString()
+    };
+    upsert("projects", { ...project, paidSettlements: [paid, ...(project.paidSettlements || [])] }, "project");
+  };
+  const undoSettlementPaid = (settlementId) => {
+    upsert("projects", { ...project, paidSettlements: (project.paidSettlements || []).filter((item) => item.id !== settlementId) }, "project");
+  };
   return (
     <section className="split-ledger">
       <SectionHeader title="Split Settlement" />
@@ -3400,12 +3413,24 @@ function ProjectSplitView({ project, transactions }) {
             <span>{item.from}</span>
             <strong>pays {rupee.format(item.amount)}</strong>
             <span>{item.to}</span>
+            <button className="secondary tactile" type="button" onClick={() => markSettlementPaid(item)}>Mark Paid</button>
           </div>
         )) : <EmptyState text="No one owes anything yet." small />}
       </section>
       <section className="date-money-group">
-        <SectionHeader title="Expense-wise Split and Direct Owed" />
-        {expenseSplits.length ? expenseSplits.map((expense) => (
+        <SectionHeader title="Paid Settlements" />
+        {paidSettlements.length ? paidSettlements.map((item) => (
+          <div className="settlement-row paid" key={item.id}>
+            <span>{item.from}</span>
+            <strong>paid {rupee.format(item.amount)}</strong>
+            <span>{item.to}</span>
+            <button className="secondary tactile" type="button" onClick={() => undoSettlementPaid(item.id)}>Undo</button>
+          </div>
+        )) : <EmptyState text="Paid settlement history will appear here." small />}
+      </section>
+      <section className="date-money-group">
+        <SectionHeader title="Expense-wise Equal Split" />
+        {equalSplits.length ? equalSplits.map((expense) => (
           <div className="expense-split-card" key={expense.id}>
             <div className="date-money-header">
               <strong>{expense.title}</strong>
@@ -3420,6 +3445,24 @@ function ProjectSplitView({ project, transactions }) {
             ))}
           </div>
         )) : <EmptyState text="Select split participants on each project expense to see isolated expense splits." small />}
+      </section>
+      <section className="date-money-group">
+        <SectionHeader title="Direct Owed" />
+        {directOwedSplits.length ? directOwedSplits.map((expense) => (
+          <div className="expense-split-card direct" key={expense.id}>
+            <div className="date-money-header">
+              <strong>{expense.title}</strong>
+              <span>{rupee.format(expense.amount)} - {formatDate(expense.date)}</span>
+            </div>
+            {expense.rows.map((row) => (
+              <div className="settlement-row" key={`${expense.id}-${row.from}-${row.to}`}>
+                <span>{row.from}</span>
+                <strong>{row.label} {rupee.format(row.amount)}</strong>
+                <span>{row.to}</span>
+              </div>
+            ))}
+          </div>
+        )) : <EmptyState text="Direct owed payments will appear separately here." small />}
       </section>
       <section className="date-money-group">
         <SectionHeader title="Split Transactions" />
@@ -3441,7 +3484,8 @@ function ProjectSplitView({ project, transactions }) {
 function projectSplitSummary(project, transactions) {
   const names = uniqueList([...(project.participants || []), ...transactions.flatMap((item) => [item.paidBy, item.owedBy, ...(item.participants || [])])]);
   const debitTransactions = transactions.filter((item) => item.type === "Debit");
-  const stats = names.map((name) => {
+  const paidSettlements = (project.paidSettlements || []).filter((item) => item.from && item.to && amount(item.amount) > 0);
+  const rawStats = names.map((name) => {
     const paid = debitTransactions.reduce((total, item) => {
       const mode = splitModeOf(item);
       const hasEqualSplit = mode === "Equal split" && (item.participants || []).filter(Boolean).length > 0;
@@ -3458,15 +3502,24 @@ function projectSplitSummary(project, transactions) {
     const credit = 0;
     return { name, paid, share, credit, balance: paid + credit - share };
   });
+  const stats = rawStats.map((row) => {
+    const paidOut = paidSettlements.filter((item) => item.from === row.name).reduce((total, item) => total + amount(item.amount), 0);
+    const received = paidSettlements.filter((item) => item.to === row.name).reduce((total, item) => total + amount(item.amount), 0);
+    return { ...row, settledPaid: paidOut, settledReceived: received, balance: row.balance + paidOut - received };
+  });
   const activeSplitTransactions = debitTransactions.filter((item) =>
     (splitModeOf(item) === "Equal split" && (item.participants || []).filter(Boolean).length > 0) ||
     (splitModeOf(item) === "Direct owed" && item.paidBy && item.owedBy)
   );
+  const expenseSplits = buildExpenseSplits(activeSplitTransactions);
   return {
     stats,
     settlements: buildSettlements(stats),
     splitTransactions: activeSplitTransactions,
-    expenseSplits: buildExpenseSplits(activeSplitTransactions)
+    expenseSplits,
+    equalSplits: expenseSplits.filter((item) => splitModeOf(item) === "Equal split"),
+    directOwedSplits: expenseSplits.filter((item) => splitModeOf(item) === "Direct owed"),
+    paidSettlements
   };
 }
 
@@ -3551,7 +3604,7 @@ function ProjectDashboard({ state, project }) {
   const stats = projectStats(state, project);
   return (
     <>
-      <MetricGrid metrics={[["Budget", amount(project.budget)], ["Total credit", stats.credit], ["Total debit", stats.debit], ["Remaining", stats.remaining], ["Overspent", stats.overspent], ["Participants", project.participants?.length || 0], ["Days remaining", `${stats.daysRemaining}`], ["Usage", `${Math.round(stats.usage)}%`]]} />
+      <MetricGrid metrics={[["Budget", amount(project.budget)], ["Total credit", stats.credit], ["Total debit", stats.debit], ["Remaining", stats.remaining], ["Overspent", stats.overspent], ["Participants", `${project.participants?.length || 0}`], ["Days remaining", `${stats.daysRemaining}`], ["Usage", `${Math.round(stats.usage)}%`]]} />
       <div className="project-progress">
         <Progress value={stats.usage} />
       </div>
