@@ -75,6 +75,8 @@ input,
 textarea,
 select {
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   border: 1px solid var(--line);
   border-radius: 14px;
   background: #fffaf4;
@@ -92,9 +94,22 @@ textarea {
 label {
   display: grid;
   gap: 0.42rem;
+  min-width: 0;
   color: var(--muted);
   font-size: 0.86rem;
   font-weight: 700;
+}
+
+input[type="date"],
+input[type="time"],
+input[type="month"],
+input[type="datetime-local"] {
+  display: block;
+  inline-size: 100%;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+  -webkit-appearance: none;
+  appearance: none;
 }
 
 ::-webkit-scrollbar {
@@ -2473,6 +2488,10 @@ label {
   width: 100%;
 }
 
+.section-header > .money-tabs {
+  width: 100%;
+}
+
 .cluster,
 .modal-actions,
 .date-actions,
@@ -2507,6 +2526,58 @@ label {
   width: 100%;
   text-align: center;
   white-space: nowrap;
+}
+
+.calendar-view-actions {
+  grid-template-columns: minmax(0, 1fr) 54px;
+  align-items: stretch;
+}
+
+.calendar-view-actions .icon-button {
+  width: 54px;
+  min-width: 54px;
+  min-height: 50px;
+  padding: 0;
+}
+
+.calendar-tabs {
+  min-width: 0;
+}
+
+.calendar-tabs button {
+  min-width: 0;
+}
+
+.money-tabs {
+  display: flex;
+  gap: 0.28rem;
+  justify-content: flex-start;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-inline: contain;
+  padding: 0.28rem;
+}
+
+.money-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.money-tabs button {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 108px;
+  padding-inline: 0.85rem;
+  scroll-snap-align: start;
+}
+
+.form-grid > label,
+.onboarding-panel label,
+.modal label,
+.ai-action-card label {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .metric-grid {
@@ -2633,6 +2704,33 @@ label {
 
   .segmented button {
     padding-inline: 0.35rem;
+  }
+
+  .calendar-view-actions {
+    grid-template-columns: minmax(0, 1fr) 52px;
+  }
+
+  .calendar-view-actions .icon-button {
+    width: 52px;
+    min-width: 52px;
+  }
+
+  .calendar-tabs button {
+    min-width: 0;
+    padding-inline: 0.25rem;
+  }
+
+  .money-tabs {
+    display: flex;
+    grid-auto-flow: initial;
+    grid-auto-columns: initial;
+    padding: 0.3rem;
+  }
+
+  .money-tabs button {
+    width: auto;
+    min-width: 96px;
+    padding-inline: 0.7rem;
   }
 
   .metric-card {

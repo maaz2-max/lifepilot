@@ -1170,8 +1170,8 @@ function CalendarView({ state, selectedDate, setSelectedDate, openAdd, setModal,
         <SectionHeader
           title={view === "month" ? monthName(dateKey(cursor)) : formatDate(selectedDate)}
           action={
-            <div className="cluster">
-              <Segmented value={view} onChange={setView} options={[["month", "Month"], ["week", "Week"], ["day", "Day"]]} />
+            <div className="cluster calendar-view-actions">
+              <Segmented className="calendar-tabs" value={view} onChange={setView} options={[["month", "Month"], ["week", "Week"], ["day", "Day"]]} />
               <label className="icon-button tactile" title="Import calendar file">
                 <FileUp size={18} />
                 <input hidden type="file" accept=".ics,text/calendar" onChange={(e) => importFile(e.target.files?.[0])} />
@@ -1377,7 +1377,7 @@ function ExpenseView({ state, expenseTab, setExpenseTab, selectedSalary, setSele
   const tabs = [["command", "Command"], ["daily", "Daily"], ["bills", "Bills"], ["salary", "Salary"], ["projects", "Projects"], ["analytics", "Analytics"]];
   return (
     <section className="panel">
-      <SectionHeader title="Money Command Center" action={<Segmented value={expenseTab} onChange={setExpenseTab} options={tabs} />} />
+      <SectionHeader title="Money Command Center" action={<Segmented className="money-tabs" value={expenseTab} onChange={setExpenseTab} options={tabs} />} />
       {expenseTab === "command" && <MoneyCommand state={state} openAdd={openAdd} />}
       {expenseTab === "daily" && <DailyExpenses state={state} openAdd={openAdd} setModal={setModal} remove={remove} />}
       {expenseTab === "bills" && <BillsView state={state} openAdd={openAdd} setModal={setModal} remove={remove} upsert={upsert} />}
@@ -2925,9 +2925,9 @@ function Select({ value, onChange, options }) {
   );
 }
 
-function Segmented({ value, onChange, options }) {
+function Segmented({ value, onChange, options, className = "" }) {
   return (
-    <div className="segmented">
+    <div className={`segmented ${className}`.trim()}>
       {options.map(([key, label]) => <button type="button" key={key} className={value === key ? "active" : ""} onClick={() => onChange(key)}>{label}</button>)}
     </div>
   );
