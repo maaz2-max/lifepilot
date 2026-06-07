@@ -1239,6 +1239,14 @@ label {
   grid-template-columns: 1fr;
 }
 
+.bank-parse-card {
+  background: linear-gradient(145deg, #fffdf7, #d8ff8f);
+}
+
+.compact-form {
+  margin-top: 0.75rem;
+}
+
 .toggle-row {
   display: flex;
   align-items: center;

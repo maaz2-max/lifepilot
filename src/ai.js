@@ -14,6 +14,7 @@ const ACTION_TYPES = [
   "note",
   "event",
   "expense",
+  "bill",
   "salary",
   "salaryExpense",
   "project",
@@ -100,6 +101,21 @@ export const AI_JSON_REFERENCE = `{
         "paymentMethod": "UPI",
         "notes": "",
         "reminder": false
+      }
+    },
+    {
+      "operation": "create",
+      "type": "bill",
+      "summary": "Create bill reminder",
+      "data": {
+        "title": "Electricity bill",
+        "amount": 2200,
+        "dueDate": "2026-06-06",
+        "status": "Unpaid",
+        "reminderBefore": "1 day",
+        "category": "Bills",
+        "paymentMethod": "UPI",
+        "notes": ""
       }
     },
     {
@@ -214,6 +230,7 @@ function compactState(state) {
     notes: take(state.notes, ["id", "title", "date", "category", "pinned"]),
     events: take(state.events, ["id", "title", "startDate", "startTime", "endDate", "location"]),
     expenses: take(state.expenses, ["id", "title", "amount", "type", "category", "date", "time", "paymentMethod", "notes"]),
+    bills: take(state.bills || [], ["id", "title", "amount", "dueDate", "status", "reminderBefore", "category", "paymentMethod", "notes"]),
     salaries: take(state.salaries, ["id", "title", "amount", "receivedDate", "month", "source"]),
     projects: state.projects.map((project) => ({
       id: project.id,
@@ -342,6 +359,7 @@ function buildInsights(state) {
   const projectById = Object.fromEntries(state.projects.map((project) => [project.id, project]));
   const monthlyDaily = state.expenses.filter((expense) => monthOf(expense.date) === month);
   const monthlySalaryExpenses = state.salaryExpenses.filter((expense) => monthOf(expense.date) === month);
+  const monthlyBills = (state.bills || []).filter((bill) => monthOf(bill.dueDate) === month);
   const monthlyProjects = state.projectTransactions.filter((expense) => monthOf(expense.date) === month);
   const dailyDebitByCategory = monthlyDaily
     .filter((expense) => expense.type === "Debit")
@@ -354,6 +372,8 @@ function buildInsights(state) {
   const totalSalaryReceived = state.salaries.filter((salary) => monthOf(salary.receivedDate) === month).reduce((total, salary) => total + moneyAmount(salary.amount), 0);
   const totalSalarySpent = monthlySalaryExpenses.filter((expense) => expense.type !== "Credit").reduce((total, expense) => total + moneyAmount(expense.amount), 0);
   const totalProjectDebit = monthlyProjects.filter((expense) => expense.type === "Debit").reduce((total, expense) => total + moneyAmount(expense.amount), 0);
+  const totalPaidBills = monthlyBills.filter((bill) => bill.status === "Paid").reduce((total, bill) => total + moneyAmount(bill.amount), 0);
+  const totalUnpaidBills = monthlyBills.filter((bill) => bill.status !== "Paid").reduce((total, bill) => total + moneyAmount(bill.amount), 0);
 
   return {
     month,
@@ -362,8 +382,10 @@ function buildInsights(state) {
       dailyDebit: totalDailyDebit,
       salaryReceived: totalSalaryReceived,
       salarySpent: totalSalarySpent,
+      paidBills: totalPaidBills,
+      unpaidBills: totalUnpaidBills,
       projectDebit: totalProjectDebit,
-      totalDebit: totalDailyDebit + totalSalarySpent + totalProjectDebit,
+      totalDebit: totalDailyDebit + totalSalarySpent + totalProjectDebit + totalPaidBills,
       totalCredit: totalDailyCredit + totalSalaryReceived,
       balance: totalDailyCredit + totalSalaryReceived - totalDailyDebit - totalSalarySpent - totalProjectDebit,
       dailyDebitByCategory,
@@ -437,6 +459,9 @@ Rules:
 - If user asks about project splits, who owes whom, or participant balances, use insights.projects[].participantSpend and splitSettlements. Reply with a clear table showing payer, receiver, and amount.
 - For expense-specific split questions, use insights.projects[].expenseSplits. Each expense split is isolated to that transaction's selected participants only.
 - If user asks for daily expense summary, use only expenses, not salary/project transactions, unless they explicitly ask combined money.
+- If the user asks about bills, use bills and show title, amount, dueDate, status, reminderBefore.
+- If user gives a bank/SMS transaction message, extract amount, debit/credit, merchant/title, date, time, account hint, and payment method. If any core field is uncertain, ask a short clarification before proposing actions.
+- For parsed bank debit/credit messages, ask whether to save it as daily expense, project expense, or bill tracker before final saving. You can propose a draft action after destination is clear.
 - Use Indian Rupees only for money.
 - Convert natural dates like today/tomorrow into YYYY-MM-DD using the current app date.
 - Convert times like 6pm into HH:mm.
@@ -472,6 +497,7 @@ reminder: { title, description, date, time, repeat, priority, notificationEnable
 note: { title, content, date, category, reminder, pinned }
 event: { title, description, startDate, startTime, endDate, endTime, location, category, reminderBefore, repeat, status }
 expense: { title, amount, type, category, date, time, paymentMethod, notes, reminder }
+bill: { title, amount, dueDate, status, reminderBefore, category, paymentMethod, notes }
 salary: { title, amount, receivedDate, month, source, paymentMethod, notes, budgetPlan }
 salaryExpense: { salaryId, title, amount, type, category, date, paymentMethod, notes }
 project: { name, type, description, startDate, endDate, budget, participants, status, notes }

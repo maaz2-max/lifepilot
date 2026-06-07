@@ -72,6 +72,7 @@ const emptyState = {
   notes: [],
   events: [],
   expenses: [],
+  bills: [],
   salaries: [],
   salaryExpenses: [],
   projects: [],
@@ -133,6 +134,7 @@ const quickActions = [
   { kind: "note", label: "Add Note", icon: NotebookPen },
   { kind: "event", label: "Add Event", icon: Sparkles },
   { kind: "expense", label: "Add Daily Expense", icon: IndianRupee },
+  { kind: "bill", label: "Add Bill", icon: Bell },
   { kind: "salary", label: "Add Salary", icon: CircleDollarSign },
   { kind: "project", label: "Add Expense Project", icon: BriefcaseBusiness },
   { kind: "credential", label: "Add Secure Credential", icon: KeyRound }
@@ -140,6 +142,12 @@ const quickActions = [
 
 function todayISO() {
   return localDateISO(new Date());
+}
+
+function addDaysISO(iso, days) {
+  const date = new Date(`${iso}T12:00:00`);
+  date.setDate(date.getDate() + days);
+  return localDateISO(date);
 }
 
 function nowTime() {
@@ -230,7 +238,8 @@ function mergeState(parsed) {
     settings: { ...emptyState.settings, ...(parsed?.settings || {}) },
     weather: { ...emptyState.weather, ...(parsed?.weather || {}) },
     categories: parsed?.categories?.length ? parsed.categories : DEFAULT_CATEGORIES,
-    credentials: parsed?.credentials || []
+    credentials: parsed?.credentials || [],
+    bills: parsed?.bills || []
   };
 }
 
@@ -453,11 +462,12 @@ export default function App() {
         reminder.status === "Active" &&
         reminder.notificationEnabled
       );
-      [...dueTasks, ...dueReminders].forEach((item) => {
+      const dueBills = (state.bills || []).filter((bill) => bill.status !== "Paid" && billReminderDate(bill) <= today);
+      [...dueTasks, ...dueReminders, ...dueBills].forEach((item) => {
         const key = `${item.id}-${today}-${hhmm.slice(0, 2)}`;
         if (notified.current.has(key)) return;
         notified.current.add(key);
-        new Notification(item.title, { body: "LifePilot reminder for today.", icon: "/icons/icon.svg" });
+        new Notification(item.title, { body: item.dueDate ? `Bill due ${formatDate(item.dueDate)}.` : "LifePilot reminder for today.", icon: "/icons/icon.svg" });
       });
       const recurringDue = dueReminders.filter((reminder) => reminder.repeat && reminder.repeat !== "No repeat");
       if (recurringDue.length) {
@@ -1364,12 +1374,13 @@ function WorkList({ type, state, openAdd, setModal, remove, upsert }) {
 }
 
 function ExpenseView({ state, expenseTab, setExpenseTab, selectedSalary, setSelectedSalary, selectedProject, setSelectedProject, openAdd, setModal, remove, upsert, requestConfirm }) {
-  const tabs = [["command", "Command"], ["daily", "Daily"], ["salary", "Salary"], ["projects", "Projects"], ["analytics", "Analytics"]];
+  const tabs = [["command", "Command"], ["daily", "Daily"], ["bills", "Bills"], ["salary", "Salary"], ["projects", "Projects"], ["analytics", "Analytics"]];
   return (
     <section className="panel">
       <SectionHeader title="Money Command Center" action={<Segmented value={expenseTab} onChange={setExpenseTab} options={tabs} />} />
       {expenseTab === "command" && <MoneyCommand state={state} openAdd={openAdd} />}
       {expenseTab === "daily" && <DailyExpenses state={state} openAdd={openAdd} setModal={setModal} remove={remove} />}
+      {expenseTab === "bills" && <BillsView state={state} openAdd={openAdd} setModal={setModal} remove={remove} upsert={upsert} />}
       {expenseTab === "salary" && <SalaryView state={state} selectedSalary={selectedSalary} setSelectedSalary={setSelectedSalary} openAdd={openAdd} setModal={setModal} remove={remove} />}
       {expenseTab === "projects" && <ProjectsView state={state} selectedProject={selectedProject} setSelectedProject={setSelectedProject} openAdd={openAdd} setModal={setModal} remove={remove} upsert={upsert} requestConfirm={requestConfirm} />}
       {expenseTab === "analytics" && <Analytics state={state} />}
@@ -1398,6 +1409,7 @@ function MoneyCommand({ state, openAdd }) {
         <SectionHeader title="Add Money Record" />
         <div className="quick-grid">
           <button className="quick-card tactile" onClick={() => openAdd("expense")}><IndianRupee />Daily Expense</button>
+          <button className="quick-card tactile" onClick={() => openAdd("bill")}><Bell />Bill Tracker</button>
           <button className="quick-card tactile" onClick={() => openAdd("salary")}><CircleDollarSign />Salary</button>
           <button className="quick-card tactile" onClick={() => openAdd("project")}><BriefcaseBusiness />Expense Project</button>
         </div>
@@ -1428,6 +1440,39 @@ function DailyExpenses({ state, openAdd, setModal, remove }) {
       <MetricGrid metrics={[["Daily Credit", sum(list, (e) => e.type === "Credit")], ["Daily Debit", sum(list, (e) => e.type === "Debit")], ["Balance", sum(list, (e) => e.type === "Credit") - sum(list, (e) => e.type === "Debit")], ["Today's Spending", sum(state.expenses, (e) => e.date === todayISO() && e.type === "Debit")]]} />
       <button className="primary tactile spaced" onClick={() => openAdd("expense")}><Plus size={18} />Add Entry</button>
       <RecordTable list={list} type="expense" setModal={setModal} remove={(id) => remove("expenses", id, "daily expense")} />
+    </div>
+  );
+}
+
+function BillsView({ state, openAdd, setModal, remove, upsert }) {
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState("Unpaid");
+  const list = state.bills
+    .filter((item) => matchesQuery(item, query))
+    .filter((item) => matchesBillFilter(item, filter))
+    .sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate)));
+  const unpaid = state.bills.filter((bill) => bill.status !== "Paid");
+  const overdue = unpaid.filter((bill) => bill.dueDate < todayISO());
+  const dueSoon = unpaid.filter((bill) => bill.dueDate >= todayISO() && bill.dueDate <= addDaysISO(todayISO(), 7));
+  return (
+    <div>
+      <Toolbar query={query} setQuery={setQuery} filter={filter} setFilter={setFilter} options={["All", "Unpaid", "Paid", "Overdue", "Due soon", "This month"]} />
+      <MetricGrid metrics={[["Unpaid bills", sum(unpaid)], ["Paid bills", sum(state.bills, (bill) => bill.status === "Paid")], ["Overdue", sum(overdue)], ["Due soon", sum(dueSoon)]]} />
+      <button className="primary tactile spaced" onClick={() => openAdd("bill")}><Plus size={18} />Add Bill</button>
+      <div className="record-table">
+        {list.length ? list.map((bill) => (
+          <div className="transaction-row" key={bill.id}>
+            <div>
+              <strong>{bill.title}</strong>
+              <small>{bill.status} - due {formatDate(bill.dueDate)} - reminder {bill.reminderBefore || "None"}</small>
+            </div>
+            <span className={bill.status === "Paid" ? "credit" : bill.dueDate < todayISO() ? "debit" : ""}>{rupee.format(amount(bill.amount))}</span>
+            <button className="icon-button tactile" title="Mark paid" onClick={() => upsert("bills", { ...bill, status: bill.status === "Paid" ? "Unpaid" : "Paid" }, "bill")}><CheckCircle2 size={16} /></button>
+            <button className="icon-button tactile" onClick={() => setModal({ kind: "bill", item: bill })}><Edit3 size={16} /></button>
+            <button className="icon-button tactile danger" onClick={() => remove("bills", bill.id, "bill")}><Trash2 size={16} /></button>
+          </div>
+        )) : <EmptyState text="No bills match this view." />}
+      </div>
     </div>
   );
 }
@@ -1521,7 +1566,8 @@ function Analytics({ state }) {
   const [range, setRange] = useState("month");
   const [source, setSource] = useState("All");
   const [projectId, setProjectId] = useState("All");
-  const sourceOptions = ["All", "Daily Expense", "Salary", "Salary-Linked Expense", "Project Expense"];
+  const [chartMode, setChartMode] = useState("Category");
+  const sourceOptions = ["All", "Daily Expense", "Bill Tracker", "Salary", "Salary-Linked Expense", "Project Expense"];
   const projectOptions = [["All", "All projects"], ...state.projects.map((project) => [project.id, project.name])];
   const transactions = allTransactions(state)
     .filter((item) => range === "all" || inRange(item.date, range))
@@ -1529,6 +1575,10 @@ function Analytics({ state }) {
     .filter((item) => projectId === "All" || item.projectId === projectId);
   const byCategory = groupAmounts(transactions.filter((item) => item.type === "Debit"), "category");
   const byMonth = groupByMonth(transactions.filter((item) => item.type === "Debit"));
+  const bySource = groupAmounts(transactions.filter((item) => item.type === "Debit"), "source");
+  const byPayment = groupAmounts(transactions.filter((item) => item.type === "Debit"), "paymentMethod");
+  const byProject = groupAmounts(transactions.filter((item) => item.type === "Debit" && item.projectId).map((item) => ({ ...item, projectName: state.projects.find((project) => project.id === item.projectId)?.name || "Project" })), "projectName");
+  const chartData = { Category: byCategory, Month: byMonth, Source: bySource, Payment: byPayment, Project: byProject }[chartMode] || byCategory;
   const totalCredit = sum(transactions, (item) => item.type === "Credit");
   const totalDebit = sum(transactions, (item) => item.type === "Debit");
   return (
@@ -1539,11 +1589,16 @@ function Analytics({ state }) {
           <label>Range<Select value={range} onChange={setRange} options={rangeOptions()} /></label>
           <label>Source<Select value={source} onChange={setSource} options={sourceOptions} /></label>
           <label>Project<Select value={projectId} onChange={setProjectId} options={projectOptions} /></label>
+          <label>Chart<Select value={chartMode} onChange={setChartMode} options={["Category", "Month", "Source", "Payment", "Project"]} /></label>
         </div>
       </section>
       <MetricGrid metrics={[["Filtered credit", totalCredit], ["Filtered debit", totalDebit], ["Filtered balance", totalCredit - totalDebit], ["Highest category", highestLabel(byCategory)]]} />
-      <Chart title="Category-wise Spending" data={byCategory} />
+      <Chart title={`${chartMode}-wise Spending`} data={chartData} />
       <Chart title="Monthly Spending Trend" data={byMonth} />
+      <section className="sub-panel">
+        <SectionHeader title="Credit vs Debit" />
+        <BarPair credit={totalCredit} debit={totalDebit} />
+      </section>
       <section className="sub-panel">
         <SectionHeader title="Project-wise Spending" />
         {state.projects.length ? state.projects.map((project) => <ProjectRow key={project.id} state={state} project={project} />) : <EmptyState text="No project analytics yet." />}
@@ -2096,6 +2151,19 @@ function AiAssistant({ state, setState, upsert, setToast, close }) {
       return;
     }
 
+    const bankParse = parseBankMessage(text);
+    if (bankParse) {
+      addMessage({
+        role: "ai",
+        text: bankParse.needsReview
+          ? "I found a bank-style message but need you to confirm the missing fields before saving."
+          : "I parsed this bank message. Choose where to save it, review the fields, then confirm.",
+        bankParse,
+        actions: []
+      });
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -2263,6 +2331,7 @@ function AiMessage({ state, setState, message, copyMessage, upsert, setToast }) 
         </div>
       ) : null}
       {message.credentialQuery && <CredentialChatCard state={state} query={message.credentialQuery} setToast={setToast} />}
+      {message.bankParse && <BankParseCard state={state} setState={setState} parsed={message.bankParse} setToast={setToast} />}
     </article>
   );
 }
@@ -2310,6 +2379,114 @@ function AiActionCard({ messageId, actionIndex, state, setState, action, upsert,
       <div className="cluster">
         <button className="primary tactile" type="button" onClick={apply} disabled={done}>{done ? "Done" : `Confirm & ${operationLabel(operation)}`}</button>
         <button className="secondary tactile" type="button" onClick={() => { setDone(true); persistActionStatus("cancelled"); }} disabled={done}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function BankParseCard({ state, setState, parsed, setToast }) {
+  const [saved, setSaved] = useState(false);
+  const [form, setForm] = useState(() => ({
+    destination: parsed.type === "Credit" ? "daily" : "daily",
+    projectId: state.projects[0]?.id || "",
+    title: parsed.title || "",
+    amount: parsed.amount || "",
+    type: parsed.type || "Debit",
+    date: parsed.date || todayISO(),
+    time: parsed.time || nowTime(),
+    category: parsed.type === "Credit" ? "Income" : "Bills",
+    paymentMethod: parsed.paymentMethod || "Bank",
+    paidBy: "",
+    notes: parsed.notes || "",
+    billStatus: parsed.type === "Debit" ? "Paid" : "Unpaid",
+    reminderBefore: "1 day"
+  }));
+  const selectedProject = state.projects.find((project) => project.id === form.projectId);
+  const projectParticipants = selectedProject?.participants || [];
+  const set = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+
+  const save = () => {
+    if (!form.title.trim() || amount(form.amount) <= 0) {
+      setToast("Confirm title and amount first");
+      return;
+    }
+    if (form.destination === "project" && !form.projectId) {
+      setToast("Select a project first");
+      return;
+    }
+    const base = {
+      title: form.title.trim(),
+      amount: amount(form.amount),
+      type: form.type,
+      category: form.category,
+      paymentMethod: form.paymentMethod,
+      notes: form.notes,
+      id: id(form.destination === "bill" ? "bill" : form.destination === "project" ? "projectTransaction" : "expense"),
+      updatedAt: new Date().toISOString()
+    };
+    setState((current) => {
+      if (form.destination === "project") {
+        return {
+          ...current,
+          projectTransactions: [{
+            ...base,
+            projectId: form.projectId,
+            date: form.date,
+            time: form.time,
+            paidBy: form.paidBy,
+            splitMode: "No split",
+            owedBy: "",
+            participants: []
+          }, ...current.projectTransactions]
+        };
+      }
+      if (form.destination === "bill") {
+        return {
+          ...current,
+          bills: [{
+            ...base,
+            dueDate: form.date,
+            status: form.billStatus,
+            reminderBefore: form.reminderBefore
+          }, ...current.bills]
+        };
+      }
+      return {
+        ...current,
+        expenses: [{
+          ...base,
+          date: form.date,
+          time: form.time,
+          reminder: false
+        }, ...current.expenses]
+      };
+    });
+    setSaved(true);
+    setToast("Bank message saved");
+  };
+
+  return (
+    <div className={`ai-action-card bank-parse-card ${saved ? "done" : ""}`}>
+      <strong>{saved ? "Saved" : "Bank message parsed"}</strong>
+      <small>Parsed confidence: {parsed.confidence}. Review before saving.</small>
+      <div className="form-grid compact-form">
+        <label>Save to<Select value={form.destination} onChange={(value) => set("destination", value)} options={[["daily", "Daily expense"], ["project", "Project expense"], ["bill", "Bill tracker"]]} /></label>
+        {form.destination === "project" && <label>Project<Select value={form.projectId} onChange={(value) => set("projectId", value)} options={[["", "Select project"], ...state.projects.map((project) => [project.id, project.name])]} /></label>}
+        <label>Type<Select value={form.type} onChange={(value) => set("type", value)} options={["Debit", "Credit"]} /></label>
+        <label>Amount<input type="number" min="0" value={form.amount} onChange={(e) => set("amount", e.target.value)} /></label>
+        <label className="wide">Title<input value={form.title} onChange={(e) => set("title", e.target.value)} /></label>
+        <label>Date<input value={form.date} onChange={(e) => set("date", e.target.value)} placeholder="YYYY-MM-DD" /></label>
+        <label>Time<input type="time" value={form.time} onChange={(e) => set("time", e.target.value)} /></label>
+        <label>Category<Select value={form.category} onChange={(value) => set("category", value)} options={[["", "Select category"], ...state.categories.map((category) => [category.name, category.name])]} /></label>
+        <label>Payment<input value={form.paymentMethod} onChange={(e) => set("paymentMethod", e.target.value)} /></label>
+        {form.destination === "project" && <label>Paid by<Select value={form.paidBy} onChange={(value) => set("paidBy", value)} options={[["", "Select payer"], ...projectParticipants.map((name) => [name, name])]} /></label>}
+        {form.destination === "bill" && <label>Status<Select value={form.billStatus} onChange={(value) => set("billStatus", value)} options={["Unpaid", "Paid"]} /></label>}
+        {form.destination === "bill" && <label>Reminder<Select value={form.reminderBefore} onChange={(value) => set("reminderBefore", value)} options={["None", "Same day", "1 day", "2 days", "3 days", "1 week"]} /></label>}
+        <label className="wide">Note<textarea value={form.notes} onChange={(e) => set("notes", e.target.value)} /></label>
+      </div>
+      {parsed.questions.length ? <p className="warning">Please confirm: {parsed.questions.join(", ")}</p> : null}
+      <div className="cluster">
+        <button className="primary tactile" type="button" onClick={save} disabled={saved}>{saved ? "Saved" : "Confirm & Save"}</button>
       </div>
     </div>
   );
@@ -2444,6 +2621,60 @@ function getCredentialIntent(text, credentials) {
     return { mode: "manage", text, count: credentials.length };
   }
   return null;
+}
+
+function parseBankMessage(text) {
+  const raw = String(text || "").trim();
+  const lower = raw.toLowerCase();
+  const bankWords = /(debited|credited|debit|credit|spent|withdrawn|received|deposited|transaction|upi|imps|neft|rtgs|a\/c|acct|account|card|available balance|avl bal|inr|rs\.?|\u20b9)/i;
+  if (!bankWords.test(raw)) return null;
+  const amountMatch = raw.match(/(?:inr|rs\.?|\u20b9)\s*([\d,]+(?:\.\d{1,2})?)/i) || raw.match(/([\d,]+(?:\.\d{1,2})?)\s*(?:inr|rs\.?|\u20b9)/i);
+  if (!amountMatch) return null;
+  const amountValue = Number(String(amountMatch[1]).replace(/,/g, ""));
+  if (!amountValue || Number.isNaN(amountValue)) return null;
+  const debit = /(debited|debit|spent|paid|withdrawn|purchase|\bdr\b|sent)/i.test(lower);
+  const credit = /(credited|received|deposited|refund|\bcr\b)/i.test(lower);
+  const merchantMatch = raw.match(/\b(?:to|at|for|towards|from|by)\s+([A-Z0-9][A-Z0-9 ._&-]{2,40})/i);
+  const accountMatch = raw.match(/(?:a\/c|acct|account|card)\s*(?:xx|x+|\*)?(\d{3,6})/i);
+  const dateMatch = raw.match(/\b(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})\b/);
+  const timeMatch = raw.match(/\b(\d{1,2}):(\d{2})(?:\s?([ap]m))?\b/i);
+  const parsedDate = dateMatch ? normalizeSmsDate(dateMatch) : todayISO();
+  const parsedTime = timeMatch ? normalizeSmsTime(timeMatch) : nowTime();
+  const paymentMethod = /(upi)/i.test(raw) ? "UPI" : /(card)/i.test(raw) ? "Card" : /(imps|neft|rtgs)/i.test(raw) ? "Bank transfer" : "Bank";
+  const type = debit && !credit ? "Debit" : credit && !debit ? "Credit" : "";
+  const titleBase = merchantMatch?.[1]?.replace(/\s+(on|dt|ref|utr).*$/i, "").trim();
+  const questions = [];
+  if (!type) questions.push("Debit or credit");
+  if (!titleBase) questions.push("merchant/title");
+  return {
+    amount: amountValue,
+    type: type || "Debit",
+    title: titleBase || (type === "Credit" ? "Bank credit" : "Bank transaction"),
+    date: parsedDate,
+    time: parsedTime,
+    paymentMethod,
+    confidence: type && titleBase ? "High" : "Review needed",
+    needsReview: !type || !titleBase,
+    questions,
+    notes: [`Parsed from bank message`, accountMatch ? `Account/card ending ${accountMatch[1]}` : "", raw].filter(Boolean).join("\n")
+  };
+}
+
+function normalizeSmsDate(match) {
+  const day = String(match[1]).padStart(2, "0");
+  const month = String(match[2]).padStart(2, "0");
+  const yearRaw = String(match[3]);
+  const year = yearRaw.length === 2 ? `20${yearRaw}` : yearRaw;
+  return `${year}-${month}-${day}`;
+}
+
+function normalizeSmsTime(match) {
+  let hour = Number(match[1]);
+  const minute = String(match[2]).padStart(2, "0");
+  const meridian = match[3]?.toLowerCase();
+  if (meridian === "pm" && hour < 12) hour += 12;
+  if (meridian === "am" && hour === 12) hour = 0;
+  return `${String(hour).padStart(2, "0")}:${minute}`;
 }
 
 function matchingCredentials(credentials, queryText) {
@@ -2989,6 +3220,7 @@ function getInitialForm(kind, item, context = {}, state) {
     note: { title: "", content: "", date: baseDate, category: "", reminder: false, pinned: false },
     event: { title: "", description: "", startDate: baseDate, startTime: nowTime(), endDate: baseDate, endTime: "", location: "", category: "", reminderBefore: "", repeat: "No repeat", imported: false, status: "Scheduled" },
     expense: { title: "", amount: "", type: "Debit", category: "", date: baseDate, time: nowTime(), paymentMethod: "UPI", notes: "", reminder: false },
+    bill: { title: "", amount: "", dueDate: baseDate, status: "Unpaid", reminderBefore: "1 day", category: "Bills", paymentMethod: "", notes: "" },
     salary: { title: "Salary", amount: "", receivedDate: baseDate, month: baseDate.slice(0, 7), source: "", paymentMethod: "Bank transfer", notes: "", budgetPlan: "" },
     salaryExpense: { salaryId: context.salaryId || "", title: "", amount: "", type: "Debit", category: "", date: baseDate, paymentMethod: "UPI", notes: "" },
     project: { name: "", type: "Trip", description: "", startDate: baseDate, endDate: baseDate, budget: "", participants: "", newParticipant: "", status: "Active", notes: "" },
@@ -3068,6 +3300,16 @@ function fieldsForKind(kind, state, form = {}) {
       { name: "status", label: "Status", type: "select", options: ["Scheduled", "Completed", "Cancelled"] }
     ],
     expense: [...commonMoney.slice(0, 4), { name: "date", label: "Date", type: "date", required: true }, { name: "time", label: "Time", type: "time" }, ...commonMoney.slice(4), { name: "reminder", label: "Optional reminder", type: "checkbox" }],
+    bill: [
+      { name: "title", label: "Bill name", required: true },
+      { name: "amount", label: "Amount", type: "number", min: 0, required: true },
+      { name: "dueDate", label: "Due date", type: "date", required: true },
+      { name: "status", label: "Status", type: "select", options: ["Unpaid", "Paid"] },
+      { name: "reminderBefore", label: "Reminder before due", type: "select", options: ["None", "Same day", "1 day", "2 days", "3 days", "1 week"] },
+      { name: "category", label: "Category", type: "select", options: categoryOptions },
+      { name: "paymentMethod", label: "Payment method" },
+      { name: "notes", label: "Notes", type: "textarea", wide: true }
+    ],
     salary: [
       { name: "title", label: "Salary title", required: true },
       { name: "amount", label: "Amount", type: "number", min: 0, required: true },
@@ -3144,12 +3386,12 @@ function fieldsForKind(kind, state, form = {}) {
 }
 
 function validateForm(kind, form) {
-  if (["task", "reminder", "note", "event", "expense", "salary", "salaryExpense", "projectTransaction"].includes(kind) && !form.title?.trim()) return "Title is required.";
+  if (["task", "reminder", "note", "event", "expense", "bill", "salary", "salaryExpense", "projectTransaction"].includes(kind) && !form.title?.trim()) return "Title is required.";
   if (kind === "project" && !form.name?.trim()) return "Project name is required.";
   if (kind === "category" && !form.name?.trim()) return "Category name is required.";
   if (kind === "credential" && !form.title?.trim()) return "Credential name is required.";
   if (kind === "profile" && (!form.name?.trim() || !form.dob)) return "Name and date of birth are required.";
-  if (["expense", "salary", "salaryExpense", "projectTransaction"].includes(kind) && amount(form.amount) <= 0) return "Amount must be greater than zero.";
+  if (["expense", "bill", "salary", "salaryExpense", "projectTransaction"].includes(kind) && amount(form.amount) <= 0) return "Amount must be greater than zero.";
   if (kind === "projectTransaction" && form.type === "Debit" && form.splitMode === "Equal split" && !splitParticipants(form.participants).length) return "Select participants for equal split, or choose No split.";
   if (kind === "projectTransaction" && form.type === "Debit" && form.splitMode === "Direct owed" && (!form.paidBy || !form.owedBy)) return "Select receiver and owed by participant.";
   if (kind === "project" && amount(form.budget) < 0) return "Budget cannot be negative.";
@@ -3181,6 +3423,7 @@ function withAiDefaults(kind, data) {
     note: { title: "Note", content: "", date, category: "", reminder: false, pinned: false },
     event: { title: "Event", description: "", startDate: date, startTime: "", endDate: date, endTime: "", location: "", category: "", reminderBefore: "", repeat: "No repeat", status: "Scheduled", imported: false },
     expense: { title: "Expense", amount: 0, type: "Debit", category: "", date, time: nowTime(), paymentMethod: "UPI", notes: "", reminder: false },
+    bill: { title: "Bill", amount: 0, dueDate: date, status: "Unpaid", reminderBefore: "1 day", category: "Bills", paymentMethod: "", notes: "" },
     salary: { title: "Salary", amount: 0, receivedDate: date, month: date.slice(0, 7), source: "", paymentMethod: "Bank transfer", notes: "", budgetPlan: "" },
     salaryExpense: { salaryId: "", title: "Salary expense", amount: 0, type: "Debit", category: "", date, paymentMethod: "UPI", notes: "" },
     project: { name: "Project", type: "Custom", description: "", startDate: date, endDate: date, budget: 0, participants: [], status: "Active", notes: "" },
@@ -3206,6 +3449,7 @@ function collectionForKind(kind) {
     note: "notes",
     event: "events",
     expense: "expenses",
+    bill: "bills",
     salary: "salaries",
     salaryExpense: "salaryExpenses",
     project: "projects",
@@ -3222,6 +3466,7 @@ function kindLabel(kind) {
     note: "Note",
     event: "Event",
     expense: "Daily Expense",
+    bill: "Bill",
     salary: "Salary",
     salaryExpense: "Salary-Linked Expense",
     project: "Expense Project",
@@ -3257,6 +3502,21 @@ function matchesMoneyFilter(item, filter) {
   return inRange(item.date, map[filter]);
 }
 
+function matchesBillFilter(item, filter) {
+  if (filter === "All") return true;
+  if (filter === "Unpaid" || filter === "Paid") return item.status === filter;
+  if (filter === "Overdue") return item.status !== "Paid" && item.dueDate < todayISO();
+  if (filter === "Due soon") return item.status !== "Paid" && item.dueDate >= todayISO() && item.dueDate <= addDaysISO(todayISO(), 7);
+  if (filter === "This month") return inRange(item.dueDate, "month");
+  return true;
+}
+
+function billReminderDate(bill) {
+  const offsets = { "Same day": 0, "1 day": 1, "2 days": 2, "3 days": 3, "1 week": 7 };
+  const offset = offsets[bill.reminderBefore] ?? 0;
+  return addDaysISO(bill.dueDate || todayISO(), -offset);
+}
+
 function rangeOptions() {
   return [["today", "Today"], ["week", "This week"], ["month", "This month"], ["lastMonth", "Last month"], ["year", "This year"], ["all", "All time"]];
 }
@@ -3268,6 +3528,7 @@ function markersForDate(state, date) {
   if (state.notes.some((item) => item.date === date)) markers.push("note");
   if (state.events.some((item) => item.startDate === date)) markers.push("event");
   if (state.expenses.some((item) => item.date === date && item.type === "Debit")) markers.push("expense");
+  if (state.bills.some((item) => item.dueDate === date && item.status !== "Paid")) markers.push("expense");
   if (state.expenses.some((item) => item.date === date && item.type === "Credit")) markers.push("credit");
   if (state.salaries.some((item) => item.receivedDate === date)) markers.push("salary");
   if (state.projectTransactions.some((item) => item.date === date)) markers.push("project");
@@ -3283,6 +3544,7 @@ function itemsForDate(state, date) {
     events: state.events.filter((item) => item.startDate === date).map((item) => ({ ...item, kind: "event" })),
     notes: state.notes.filter((item) => item.date === date).map((item) => ({ ...item, kind: "note" })),
     dailyTransactions: state.expenses.filter((item) => item.date === date).map((item) => ({ ...item, kind: "expense" })),
+    bills: state.bills.filter((item) => item.dueDate === date).map((item) => ({ ...item, title: item.title, date: item.dueDate, kind: "bill" })),
     salaries: state.salaries.filter((item) => item.receivedDate === date).map((item) => ({ ...item, title: item.title, date: item.receivedDate, kind: "salary" })),
     salaryExpenses: state.salaryExpenses.filter((item) => item.date === date).map((item) => ({ ...item, kind: "salaryExpense" })),
     projectTransactions: state.projectTransactions.filter((item) => item.date === date).map((item) => ({ ...item, kind: "projectTransaction" })),
@@ -3301,6 +3563,7 @@ function sectionLabel(key) {
     events: "Events",
     notes: "Notes",
     dailyTransactions: "Daily Credit and Debit",
+    bills: "Bills Due",
     salaries: "Salary Credits",
     salaryExpenses: "Salary-Linked Expenses",
     projectTransactions: "Project Transactions",
@@ -3312,6 +3575,7 @@ function useMoneyStats(state) {
   return useMemo(() => {
     const dailyCredit = sum(state.expenses, (item) => item.type === "Credit");
     const dailyDebit = sum(state.expenses, (item) => item.type === "Debit");
+    const unpaidBills = sum(state.bills, (item) => item.status !== "Paid");
     const salaryTotal = sum(state.salaries);
     const salarySpent = sum(state.salaryExpenses, (item) => item.type !== "Credit");
     const salaryCreditExpense = sum(state.salaryExpenses, (item) => item.type === "Credit");
@@ -3322,23 +3586,24 @@ function useMoneyStats(state) {
       .reduce((total, project) => total + amount(project.budget), 0);
     const remainingBudget = state.projects.reduce((total, project) => total + projectStats(state, project).remaining, 0);
     const overspent = state.projects.reduce((total, project) => total + projectStats(state, project).overspent, 0);
-    const monthDebit = sum(state.expenses, (item) => item.type === "Debit" && inRange(item.date, "month")) + sum(state.salaryExpenses, (item) => item.type === "Debit" && inRange(item.date, "month")) + sum(state.projectTransactions, (item) => item.type === "Debit" && inRange(item.date, "month"));
+    const monthDebit = sum(state.expenses, (item) => item.type === "Debit" && inRange(item.date, "month")) + sum(state.bills, (item) => item.status === "Paid" && inRange(item.dueDate, "month")) + sum(state.salaryExpenses, (item) => item.type === "Debit" && inRange(item.date, "month")) + sum(state.projectTransactions, (item) => item.type === "Debit" && inRange(item.date, "month"));
     const monthCredit = sum(state.expenses, (item) => item.type === "Credit" && inRange(item.date, "month")) + sum(state.salaries, (item) => inRange(item.receivedDate, "month")) + sum(state.projectTransactions, (item) => item.type === "Credit" && inRange(item.date, "month"));
     const totalCredit = dailyCredit + salaryTotal + salaryCreditExpense + projectCredit;
-    const totalDebit = dailyDebit + salarySpent + projectDebit;
-    return { dailyCredit, dailyDebit, dailyExpense: dailyDebit, salaryTotal, salarySpent, projectCredit, projectDebit, activeBudget, remainingBudget, overspent, monthDebit, monthCredit, totalCredit, totalDebit, balance: totalCredit - totalDebit };
+    const totalDebit = dailyDebit + salarySpent + projectDebit + sum(state.bills, (item) => item.status === "Paid");
+    return { dailyCredit, dailyDebit, dailyExpense: dailyDebit, unpaidBills, salaryTotal, salarySpent, projectCredit, projectDebit, activeBudget, remainingBudget, overspent, monthDebit, monthCredit, totalCredit, totalDebit, balance: totalCredit - totalDebit };
   }, [state]);
 }
 
 function allTransactions(state) {
   const daily = state.expenses.map((item) => ({ ...item, source: "Daily Expense" }));
+  const bills = state.bills.map((item) => ({ ...item, date: item.dueDate, type: item.status === "Paid" ? "Debit" : "Due", category: item.category || "Bills", source: "Bill Tracker" }));
   const salary = state.salaries.map((item) => ({ ...item, title: item.title, date: item.receivedDate, type: "Credit", category: "Salary", source: "Salary" }));
   const salaryLinked = state.salaryExpenses.map((item) => ({ ...item, source: "Salary-Linked Expense" }));
   const project = state.projectTransactions.map((item) => {
     const projectRecord = state.projects.find((entry) => entry.id === item.projectId);
     return { ...item, source: projectRecord ? `${projectRecord.name} Project` : "Project Expense" };
   });
-  return [...daily, ...salary, ...salaryLinked, ...project].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  return [...daily, ...bills, ...salary, ...salaryLinked, ...project].sort((a, b) => String(b.date).localeCompare(String(a.date)));
 }
 
 function projectStats(state, project) {
