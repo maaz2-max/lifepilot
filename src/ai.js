@@ -462,6 +462,8 @@ Rules:
 - If the user asks about bills, use bills and show title, amount, dueDate, status, reminderBefore.
 - If user gives a bank/SMS transaction message, extract amount, debit/credit, merchant/title, date, time, account hint, and payment method. If any core field is uncertain, ask a short clarification before proposing actions.
 - For parsed bank debit/credit messages, ask whether to save it as daily expense, project expense, or bill tracker before final saving. You can propose a draft action after destination is clear.
+- Use the transaction date or due date written in the pasted message. Do not default to today when a date is present in formats like 06/06/2026, 06-Jun-26, 6 Jun 2026, Jun 6, or due on 10 June.
+- If the pasted message is a bill reminder, create/propose a bill action with dueDate from the message, status "Unpaid", amount from amount due/minimum/total due, and reminderBefore "1 day" unless the user says otherwise.
 - Use Indian Rupees only for money.
 - Convert natural dates like today/tomorrow into YYYY-MM-DD using the current app date.
 - Convert times like 6pm into HH:mm.

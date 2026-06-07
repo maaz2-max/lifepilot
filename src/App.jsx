@@ -2290,7 +2290,7 @@ function AiAssistant({ state, setState, upsert, setToast, close }) {
         </div>
 
         <form className="ai-input" onSubmit={send}>
-          <input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Add task Homework today at 6pm" />
+          <textarea value={input} onChange={(e) => setInput(e.target.value)} placeholder="Paste bank SMS, bill reminder, or ask LifePilot AI" rows={2} />
           <button className="primary tactile" type="submit" disabled={loading}><SendHorizontal size={18} /></button>
         </form>
         <button className="secondary tactile clear-chat" onClick={clearChat} type="button">Clear recent chat</button>
@@ -2387,7 +2387,7 @@ function AiActionCard({ messageId, actionIndex, state, setState, action, upsert,
 function BankParseCard({ state, setState, parsed, setToast }) {
   const [saved, setSaved] = useState(false);
   const [form, setForm] = useState(() => ({
-    destination: parsed.type === "Credit" ? "daily" : "daily",
+    destination: parsed.destination || "daily",
     projectId: state.projects[0]?.id || "",
     title: parsed.title || "",
     amount: parsed.amount || "",
@@ -2398,8 +2398,8 @@ function BankParseCard({ state, setState, parsed, setToast }) {
     paymentMethod: parsed.paymentMethod || "Bank",
     paidBy: "",
     notes: parsed.notes || "",
-    billStatus: parsed.type === "Debit" ? "Paid" : "Unpaid",
-    reminderBefore: "1 day"
+    billStatus: parsed.billStatus || (parsed.destination === "bill" ? "Unpaid" : "Paid"),
+    reminderBefore: parsed.reminderBefore || "1 day"
   }));
   const selectedProject = state.projects.find((project) => project.id === form.projectId);
   const projectParticipants = selectedProject?.participants || [];
@@ -2475,7 +2475,7 @@ function BankParseCard({ state, setState, parsed, setToast }) {
         <label>Type<Select value={form.type} onChange={(value) => set("type", value)} options={["Debit", "Credit"]} /></label>
         <label>Amount<input type="number" min="0" value={form.amount} onChange={(e) => set("amount", e.target.value)} /></label>
         <label className="wide">Title<input value={form.title} onChange={(e) => set("title", e.target.value)} /></label>
-        <label>Date<input value={form.date} onChange={(e) => set("date", e.target.value)} placeholder="YYYY-MM-DD" /></label>
+        <label>{form.destination === "bill" ? "Due date" : "Transaction date"}<input value={form.date} onChange={(e) => set("date", e.target.value)} placeholder="YYYY-MM-DD" /></label>
         <label>Time<input type="time" value={form.time} onChange={(e) => set("time", e.target.value)} /></label>
         <label>Category<Select value={form.category} onChange={(value) => set("category", value)} options={[["", "Select category"], ...state.categories.map((category) => [category.name, category.name])]} /></label>
         <label>Payment<input value={form.paymentMethod} onChange={(e) => set("paymentMethod", e.target.value)} /></label>
@@ -2626,46 +2626,99 @@ function getCredentialIntent(text, credentials) {
 function parseBankMessage(text) {
   const raw = String(text || "").trim();
   const lower = raw.toLowerCase();
-  const bankWords = /(debited|credited|debit|credit|spent|withdrawn|received|deposited|transaction|upi|imps|neft|rtgs|a\/c|acct|account|card|available balance|avl bal|inr|rs\.?|\u20b9)/i;
+  const bankWords = /(bill|due|statement|minimum amount|min amt|payment reminder|debited|credited|debit|credit|spent|withdrawn|received|deposited|transaction|upi|imps|neft|rtgs|a\/c|acct|account|card|available balance|avl bal|inr|rs\.?|\u20b9)/i;
   if (!bankWords.test(raw)) return null;
   const amountMatch = raw.match(/(?:inr|rs\.?|\u20b9)\s*([\d,]+(?:\.\d{1,2})?)/i) || raw.match(/([\d,]+(?:\.\d{1,2})?)\s*(?:inr|rs\.?|\u20b9)/i);
   if (!amountMatch) return null;
   const amountValue = Number(String(amountMatch[1]).replace(/,/g, ""));
   if (!amountValue || Number.isNaN(amountValue)) return null;
+  const isBillReminder = /(bill|due date|due on|pay by|payment due|minimum amount|min amt|statement|outstanding|total amount due|amount due)/i.test(lower);
   const debit = /(debited|debit|spent|paid|withdrawn|purchase|\bdr\b|sent)/i.test(lower);
   const credit = /(credited|received|deposited|refund|\bcr\b)/i.test(lower);
-  const merchantMatch = raw.match(/\b(?:to|at|for|towards|from|by)\s+([A-Z0-9][A-Z0-9 ._&-]{2,40})/i);
+  const merchantMatch = raw.match(/\b(?:to|at|for|towards|from|by|biller|merchant)\s+([A-Z0-9][A-Z0-9 ._&-]{2,40})/i);
   const accountMatch = raw.match(/(?:a\/c|acct|account|card)\s*(?:xx|x+|\*)?(\d{3,6})/i);
-  const dateMatch = raw.match(/\b(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})\b/);
+  const extractedDate = extractMessageDate(raw, isBillReminder ? "due" : "transaction");
   const timeMatch = raw.match(/\b(\d{1,2}):(\d{2})(?:\s?([ap]m))?\b/i);
-  const parsedDate = dateMatch ? normalizeSmsDate(dateMatch) : todayISO();
+  const parsedDate = extractedDate || todayISO();
   const parsedTime = timeMatch ? normalizeSmsTime(timeMatch) : nowTime();
   const paymentMethod = /(upi)/i.test(raw) ? "UPI" : /(card)/i.test(raw) ? "Card" : /(imps|neft|rtgs)/i.test(raw) ? "Bank transfer" : "Bank";
-  const type = debit && !credit ? "Debit" : credit && !debit ? "Credit" : "";
-  const titleBase = merchantMatch?.[1]?.replace(/\s+(on|dt|ref|utr).*$/i, "").trim();
+  const type = isBillReminder ? "Debit" : debit && !credit ? "Debit" : credit && !debit ? "Credit" : "";
+  const titleBase = merchantMatch?.[1]?.replace(/\s+(on|dt|date|ref|utr|a\/c|acct|account|card|rs|inr).*$/i, "").trim();
   const questions = [];
   if (!type) questions.push("Debit or credit");
-  if (!titleBase) questions.push("merchant/title");
+  if (!titleBase && !isBillReminder) questions.push("merchant/title");
+  if (!extractedDate) questions.push(isBillReminder ? "due date" : "transaction date");
   return {
     amount: amountValue,
     type: type || "Debit",
-    title: titleBase || (type === "Credit" ? "Bank credit" : "Bank transaction"),
+    title: titleBase || (isBillReminder ? "Bill reminder" : type === "Credit" ? "Bank credit" : "Bank transaction"),
     date: parsedDate,
     time: parsedTime,
+    destination: isBillReminder ? "bill" : "daily",
+    billStatus: isBillReminder ? "Unpaid" : "Paid",
+    reminderBefore: isBillReminder ? "1 day" : "None",
     paymentMethod,
-    confidence: type && titleBase ? "High" : "Review needed",
-    needsReview: !type || !titleBase,
+    confidence: type && (titleBase || isBillReminder) && extractedDate ? "High" : "Review needed",
+    needsReview: !type || (!titleBase && !isBillReminder) || !extractedDate,
     questions,
-    notes: [`Parsed from bank message`, accountMatch ? `Account/card ending ${accountMatch[1]}` : "", raw].filter(Boolean).join("\n")
+    notes: [`Parsed from ${isBillReminder ? "bill reminder" : "bank message"}`, accountMatch ? `Account/card ending ${accountMatch[1]}` : "", raw].filter(Boolean).join("\n")
   };
 }
 
-function normalizeSmsDate(match) {
-  const day = String(match[1]).padStart(2, "0");
-  const month = String(match[2]).padStart(2, "0");
-  const yearRaw = String(match[3]);
+function extractMessageDate(text, mode = "transaction") {
+  const source = String(text || "");
+  const clean = source.replace(/[,]/g, " ");
+  const preferred = mode === "due"
+    ? clean.match(/(?:due(?:\s+date)?|pay\s+by|before|on\s+or\s+before)\D{0,20}(\d{1,2}(?:st|nd|rd|th)?[\s-/]*(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*[\s-/]*\d{2,4}?|\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|\d{4}[-/]\d{1,2}[-/]\d{1,2})/i)
+    : clean.match(/(?:on|dt|date|txn\s+date|transaction\s+date)\D{0,14}(\d{1,2}(?:st|nd|rd|th)?[\s-/]*(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*[\s-/]*\d{2,4}?|\d{1,2}[-/]\d{1,2}[-/]\d{2,4}|\d{4}[-/]\d{1,2}[-/]\d{1,2})/i);
+  const preferredDate = preferred ? parseDateToken(preferred[1]) : "";
+  if (preferredDate) return preferredDate;
+  const patterns = [
+    /\b(\d{4})[-/](\d{1,2})[-/](\d{1,2})\b/,
+    /\b(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})\b/,
+    /\b(\d{1,2})(?:st|nd|rd|th)?[\s-]+(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*[\s-]*(\d{2,4})?\b/i,
+    /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*[\s-]+(\d{1,2})(?:st|nd|rd|th)?[\s-]*(\d{2,4})?\b/i
+  ];
+  for (const pattern of patterns) {
+    const match = clean.match(pattern);
+    const parsed = match ? parseDateToken(match[0]) : "";
+    if (parsed) return parsed;
+  }
+  return "";
+}
+
+function parseDateToken(token) {
+  const value = String(token || "").replace(/,/g, " ").trim();
+  let match = value.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (match) return formatIsoParts(match[1], match[2], match[3]);
+  match = value.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})$/);
+  if (match) return normalizeSmsDate(match[1], match[2], match[3]);
+  match = value.match(/^(\d{1,2})(?:st|nd|rd|th)?[\s-]+([a-z]+)[\s-]*(\d{2,4})?$/i);
+  if (match) return normalizeSmsDate(match[1], monthNumber(match[2]), match[3] || String(new Date().getFullYear()));
+  match = value.match(/^([a-z]+)[\s-]+(\d{1,2})(?:st|nd|rd|th)?[\s-]*(\d{2,4})?$/i);
+  if (match) return normalizeSmsDate(match[2], monthNumber(match[1]), match[3] || String(new Date().getFullYear()));
+  return "";
+}
+
+function normalizeSmsDate(dayValue, monthValue, yearValue) {
+  if (!monthValue) return "";
+  const day = String(dayValue).padStart(2, "0");
+  const month = String(monthValue).padStart(2, "0");
+  const yearRaw = String(yearValue || new Date().getFullYear());
   const year = yearRaw.length === 2 ? `20${yearRaw}` : yearRaw;
+  return formatIsoParts(year, month, day);
+}
+
+function formatIsoParts(year, month, day) {
+  const date = new Date(`${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return "";
+  if (date.getFullYear() !== Number(year) || date.getMonth() + 1 !== Number(month) || date.getDate() !== Number(day)) return "";
   return `${year}-${month}-${day}`;
+}
+
+function monthNumber(name) {
+  const key = String(name || "").slice(0, 3).toLowerCase();
+  return { jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06", jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12" }[key] || "";
 }
 
 function normalizeSmsTime(match) {

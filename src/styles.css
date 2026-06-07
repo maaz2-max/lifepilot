@@ -1766,8 +1766,15 @@ button:disabled {
   background: #c7c8f4;
 }
 
-.ai-input input {
+.ai-input input,
+.ai-input textarea {
   min-height: 48px;
+}
+
+.ai-input textarea {
+  max-height: 108px;
+  resize: none;
+  overflow: auto;
 }
 
 .ai-input .primary {
