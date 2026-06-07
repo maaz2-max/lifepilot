@@ -28,6 +28,7 @@ import {
   Settings,
   ShieldCheck,
   Sparkles,
+  Share2,
   Tag,
   Trash2,
   Upload,
@@ -855,6 +856,7 @@ export default function App() {
             remove={remove}
             upsert={upsert}
             requestConfirm={requestConfirm}
+            setToast={setToast}
           />
         )}
         {active === "vault" && (
@@ -1649,7 +1651,7 @@ function WorkList({ type, state, openAdd, setModal, remove, upsert }) {
   );
 }
 
-function ExpenseView({ state, expenseTab, setExpenseTab, selectedSalary, setSelectedSalary, selectedProject, setSelectedProject, openAdd, setModal, remove, upsert, requestConfirm }) {
+function ExpenseView({ state, expenseTab, setExpenseTab, selectedSalary, setSelectedSalary, selectedProject, setSelectedProject, openAdd, setModal, remove, upsert, requestConfirm, setToast }) {
   const tabs = [["command", "Command"], ["daily", "Daily"], ["bills", "Bills"], ["salary", "Salary"], ["projects", "Projects"], ["analytics", "Analytics"]];
   return (
     <section className="panel">
@@ -1658,7 +1660,7 @@ function ExpenseView({ state, expenseTab, setExpenseTab, selectedSalary, setSele
       {expenseTab === "daily" && <DailyExpenses state={state} openAdd={openAdd} setModal={setModal} remove={remove} />}
       {expenseTab === "bills" && <BillsView state={state} openAdd={openAdd} setModal={setModal} remove={remove} upsert={upsert} />}
       {expenseTab === "salary" && <SalaryView state={state} selectedSalary={selectedSalary} setSelectedSalary={setSelectedSalary} openAdd={openAdd} setModal={setModal} remove={remove} />}
-      {expenseTab === "projects" && <ProjectsView state={state} selectedProject={selectedProject} setSelectedProject={setSelectedProject} openAdd={openAdd} setModal={setModal} remove={remove} upsert={upsert} requestConfirm={requestConfirm} />}
+      {expenseTab === "projects" && <ProjectsView state={state} selectedProject={selectedProject} setSelectedProject={setSelectedProject} openAdd={openAdd} setModal={setModal} remove={remove} upsert={upsert} requestConfirm={requestConfirm} setToast={setToast} />}
       {expenseTab === "analytics" && <Analytics state={state} />}
     </section>
   );
@@ -1786,10 +1788,36 @@ function SalaryView({ state, selectedSalary, setSelectedSalary, openAdd, setModa
   );
 }
 
-function ProjectsView({ state, selectedProject, setSelectedProject, openAdd, setModal, remove, upsert }) {
+function ProjectsView({ state, selectedProject, setSelectedProject, openAdd, setModal, remove, upsert, setToast }) {
   const active = state.projects.find((project) => project.id === selectedProject) || state.projects[0];
   const transactions = active ? state.projectTransactions.filter((item) => item.projectId === active.id).sort(sortByDateDesc) : [];
   const [projectTab, setProjectTab] = useState("transactions");
+  const shareText = active ? buildProjectShareText(active, transactions) : "";
+  const copyShare = async () => {
+    if (!shareText) return;
+    try {
+      await navigator.clipboard.writeText(shareText);
+      setToast("Project share copied");
+    } catch {
+      setToast("Copy failed");
+    }
+  };
+  const nativeShare = async () => {
+    if (!shareText) return;
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: `${active.name} project summary`, text: shareText });
+        return;
+      } catch {
+        // User cancellation or blocked share falls back to copy.
+      }
+    }
+    await copyShare();
+  };
+  const shareWhatsApp = () => {
+    if (!shareText) return;
+    window.open(`https://wa.me/?text=${encodeURIComponent(shareText)}`, "_blank", "noopener,noreferrer");
+  };
   return (
     <div className="split-view">
       <div>
@@ -1806,8 +1834,19 @@ function ProjectsView({ state, selectedProject, setSelectedProject, openAdd, set
             <div className="cluster spaced">
               <button className="primary tactile" onClick={() => openAdd("projectTransaction", { projectId: active.id })}>Add Transaction</button>
               <button className="secondary tactile" onClick={() => setModal({ kind: "participants", item: active })}>Participants</button>
-              {active.status === "Paused" ? <button className="secondary tactile" onClick={() => upsert("projects", { ...active, status: "Active" }, "project")}>Continue</button> : <button className="secondary tactile" onClick={() => upsert("projects", { ...active, status: "Paused" }, "project")}>Pause</button>}
-              <button className="secondary tactile" onClick={() => upsert("projects", { ...active, status: "Completed" }, "project")}>End</button>
+              {active.status === "Completed" ? (
+                <button className="secondary tactile" onClick={() => upsert("projects", { ...active, status: "Active" }, "project")}>Restart</button>
+              ) : (
+                <>
+                  {active.status === "Paused" ? <button className="secondary tactile" onClick={() => upsert("projects", { ...active, status: "Active" }, "project")}>Continue</button> : <button className="secondary tactile" onClick={() => upsert("projects", { ...active, status: "Paused" }, "project")}>Pause</button>}
+                  <button className="secondary tactile" onClick={() => upsert("projects", { ...active, status: "Completed" }, "project")}>End</button>
+                </>
+              )}
+            </div>
+            <div className="cluster project-share-actions">
+              <button className="secondary tactile" onClick={nativeShare}><Share2 size={17} />Share</button>
+              <button className="secondary tactile" onClick={shareWhatsApp}>WhatsApp</button>
+              <button className="secondary tactile" onClick={copyShare}><Copy size={17} />Copy</button>
             </div>
             <ProjectParticipantBreakdown project={active} transactions={transactions} />
             <Segmented value={projectTab} onChange={setProjectTab} options={[["transactions", "Transactions"], ["split", "Split"]]} />
@@ -1843,6 +1882,7 @@ function Analytics({ state }) {
   const [source, setSource] = useState("All");
   const [projectId, setProjectId] = useState("All");
   const [chartMode, setChartMode] = useState("Category");
+  const [chartType, setChartType] = useState("bar");
   const sourceOptions = ["All", "Daily Expense", "Bill Tracker", "Salary", "Salary-Linked Expense", "Project Expense"];
   const projectOptions = [["All", "All projects"], ...state.projects.map((project) => [project.id, project.name])];
   const transactions = allTransactions(state)
@@ -1855,26 +1895,38 @@ function Analytics({ state }) {
   const byPayment = groupAmounts(transactions.filter((item) => item.type === "Debit"), "paymentMethod");
   const byProject = groupAmounts(transactions.filter((item) => item.type === "Debit" && item.projectId).map((item) => ({ ...item, projectName: state.projects.find((project) => project.id === item.projectId)?.name || "Project" })), "projectName");
   const byBillTimeline = groupByDate((state.bills || []).filter((bill) => bill.status !== "Paid"));
+  const byDay = groupByDate(transactions.filter((item) => item.type === "Debit"));
   const byParticipant = groupParticipantBalances(state, projectId);
-  const chartData = { Category: byCategory, Month: byMonth, Source: bySource, Payment: byPayment, Project: byProject, Bills: byBillTimeline, Participants: byParticipant }[chartMode] || byCategory;
+  const chartData = { Category: byCategory, Daily: byDay, Month: byMonth, Source: bySource, Payment: byPayment, Project: byProject, Bills: byBillTimeline, Participants: byParticipant }[chartMode] || byCategory;
   const totalCredit = sum(transactions, (item) => item.type === "Credit");
   const totalDebit = sum(transactions, (item) => item.type === "Debit");
+  const totalBills = sum(state.bills || [], (bill) => bill.status !== "Paid");
+  const netBalance = totalCredit - totalDebit;
   return (
     <div className="analytics-grid">
-      <section className="sub-panel span-2">
-        <SectionHeader title="Analytics Filters" />
+      <section className="sub-panel span-2 analytics-dashboard-head">
+        <SectionHeader title="Analytics Dashboard" />
         <div className="filter-grid">
           <label>Range<Select value={range} onChange={setRange} options={rangeOptions()} /></label>
           <label>Source<Select value={source} onChange={setSource} options={sourceOptions} /></label>
           <label>Project<Select value={projectId} onChange={setProjectId} options={projectOptions} /></label>
-          <label>Chart<Select value={chartMode} onChange={setChartMode} options={["Category", "Month", "Source", "Payment", "Project", "Bills", "Participants"]} /></label>
+          <label>Dataset<Select value={chartMode} onChange={setChartMode} options={["Category", "Daily", "Month", "Source", "Payment", "Project", "Bills", "Participants"]} /></label>
+          <label>Visual<Select value={chartType} onChange={setChartType} options={[["bar", "Bar"], ["line", "Line"], ["pie", "Pie"]]}/></label>
+        </div>
+        <div className="insight-grid">
+          <article className="insight-card good"><span>Credit</span><strong>{rupee.format(totalCredit)}</strong><small>Filtered money in</small></article>
+          <article className="insight-card warn"><span>Debit</span><strong>{rupee.format(totalDebit)}</strong><small>Filtered money out</small></article>
+          <article className={`insight-card ${netBalance < 0 ? "warn" : "good"}`}><span>Balance</span><strong>{rupee.format(netBalance)}</strong><small>Credit minus debit</small></article>
+          <article className="insight-card"><span>Unpaid bills</span><strong>{rupee.format(totalBills)}</strong><small>Open bill timeline</small></article>
         </div>
       </section>
-      <MetricGrid metrics={[["Filtered credit", totalCredit], ["Filtered debit", totalDebit], ["Filtered balance", totalCredit - totalDebit], ["Highest category", highestLabel(byCategory)]]} />
-      <Chart title={`${chartMode}-wise Spending`} data={chartData} />
-      <Chart title="Monthly Spending Trend" data={byMonth} />
-      <Chart title="Bill Due Timeline" data={byBillTimeline} />
-      <Chart title="Participant Balances" data={byParticipant} />
+      <MetricGrid metrics={[["Highest category", highestLabel(byCategory)], ["Highest project", highestLabel(byProject)], ["Payment leader", highestLabel(byPayment)], ["Participant balance", highestLabel(byParticipant)]]} />
+      <Chart title={`${chartMode} Dashboard`} data={chartData} type={chartType} />
+      <Chart title="Daily Expense Trend" data={byDay} type="line" />
+      <Chart title="Category Spend" data={byCategory} type="pie" />
+      <Chart title="Project Spending" data={byProject} type="bar" />
+      <Chart title="Bill Due Timeline" data={byBillTimeline} type="line" />
+      <Chart title="Participant Balances" data={byParticipant} type="bar" />
       <section className="sub-panel">
         <SectionHeader title="Credit vs Debit" />
         <BarPair credit={totalCredit} debit={totalDebit} />
@@ -3574,6 +3626,89 @@ function buildSettlements(stats) {
   return settlements;
 }
 
+function markdownTable(headers, rows) {
+  if (!rows.length) return "";
+  const clean = (value) => String(value ?? "").replace(/\|/g, "/").replace(/\n/g, " ");
+  return [
+    `| ${headers.map(clean).join(" | ")} |`,
+    `| ${headers.map(() => "---").join(" | ")} |`,
+    ...rows.map((row) => `| ${row.map(clean).join(" | ")} |`)
+  ].join("\n");
+}
+
+function buildProjectShareText(project, transactions) {
+  const stats = projectStats({ projects: [project], projectTransactions: transactions }, project);
+  const split = projectSplitSummary(project, transactions);
+  const header = [
+    `LifePilot Expense Project: ${project.name}`,
+    `Status: ${project.status}`,
+    `Type: ${project.type}`,
+    `Dates: ${formatDate(project.startDate)} to ${formatDate(project.endDate)}`,
+    `Budget: INR ${amount(project.budget)}`,
+    `Total debit: INR ${stats.debit}`,
+    `Total credit: INR ${stats.credit}`,
+    `Remaining: INR ${stats.remaining}`,
+    `Overspent: INR ${stats.overspent}`,
+    `Participants: ${(project.participants || []).join(", ") || "None"}`
+  ];
+  const transactionRows = transactions
+    .slice()
+    .sort(sortByDateDesc)
+    .map((item) => [
+      formatDate(item.date),
+      item.title,
+      item.type,
+      `INR ${amount(item.amount)}`,
+      item.category || "",
+      item.paymentMethod || "",
+      item.paidBy || "",
+      splitModeOf(item),
+      splitModeOf(item) === "Direct owed" ? item.owedBy || "" : (item.participants || []).join(", "),
+      item.notes || ""
+    ]);
+  const participantRows = split.stats.map((item) => [
+    item.name,
+    `INR ${Math.round(item.paid)}`,
+    `INR ${Math.round(item.share)}`,
+    item.balance >= 0 ? "Gets" : "Owes",
+    `INR ${Math.round(Math.abs(item.balance))}`
+  ]);
+  const settlementRows = split.settlements.map((item) => [item.from, item.to, `INR ${item.amount}`]);
+  const equalRows = split.equalSplits.flatMap((expense) =>
+    expense.rows.map((row) => [expense.title, row.from, row.to, `INR ${row.amount}`])
+  );
+  const directRows = split.directOwedSplits.flatMap((expense) =>
+    expense.rows.map((row) => [expense.title, row.from, row.to, `INR ${row.amount}`])
+  );
+  const paidRows = split.paidSettlements.map((item) => [
+    item.from,
+    item.to,
+    `INR ${amount(item.amount)}`,
+    item.paidAt ? new Date(item.paidAt).toLocaleString("en-IN") : ""
+  ]);
+  return [
+    header.join("\n"),
+    "",
+    "Transactions",
+    markdownTable(["Date", "Title", "Type", "Amount", "Category", "Payment", "Paid by", "Split", "Participants/Owed by", "Notes"], transactionRows) || "No transactions.",
+    "",
+    "Participant Balances",
+    markdownTable(["Participant", "Paid", "Share", "Status", "Balance"], participantRows) || "No participant balances.",
+    "",
+    "Who Pays Whom",
+    markdownTable(["From", "To", "Amount"], settlementRows) || "No pending settlements.",
+    "",
+    "Expense-wise Equal Split",
+    markdownTable(["Expense", "From", "To", "Amount"], equalRows) || "No equal splits.",
+    "",
+    "Direct Owed",
+    markdownTable(["Expense", "From", "To", "Amount"], directRows) || "No direct owed entries.",
+    "",
+    "Paid Settlements",
+    markdownTable(["From", "To", "Amount", "Paid at"], paidRows) || "No paid settlements."
+  ].join("\n");
+}
+
 function ProjectCard({ state, project, active, onClick }) {
   const stats = projectStats(state, project);
   return (
@@ -3626,19 +3761,55 @@ function BarPair({ credit, debit }) {
   );
 }
 
-function Chart({ title, data }) {
-  const entries = Object.entries(data).sort((a, b) => b[1] - a[1]);
+function Chart({ title, data, type = "bar" }) {
+  const rawEntries = Object.entries(data).filter(([, value]) => amount(value) > 0);
+  const entries = type === "line" ? rawEntries.sort((a, b) => String(a[0]).localeCompare(String(b[0]))) : rawEntries.sort((a, b) => b[1] - a[1]);
   const max = Math.max(...entries.map(([, value]) => value), 1);
+  const total = entries.reduce((value, [, amountValue]) => value + amount(amountValue), 0);
+  const colors = ["#d8ff8f", "#c5c8ff", "#ffe09a", "#ff9d92", "#f2e9ff", "#9dd6aa", "#ffd995"];
+  const pieGradient = entries.reduce((parts, [, value], index) => {
+    const start = parts.cursor;
+    const size = total ? (amount(value) / total) * 100 : 0;
+    const end = start + size;
+    parts.segments.push(`${colors[index % colors.length]} ${start}% ${end}%`);
+    parts.cursor = end;
+    return parts;
+  }, { cursor: 0, segments: [] }).segments.join(", ");
+  const linePoints = entries.map(([, value], index) => {
+    const x = entries.length === 1 ? 50 : (index / (entries.length - 1)) * 100;
+    const y = 100 - (amount(value) / max) * 88 - 6;
+    return `${x},${y}`;
+  }).join(" ");
   return (
-    <section className="sub-panel">
-      <SectionHeader title={title} />
-      {entries.length ? entries.map(([label, value]) => (
+    <section className={`sub-panel chart-card chart-${type}`}>
+      <SectionHeader title={title} action={<span className="chart-badge">{type}</span>} />
+      {!entries.length ? <EmptyState text="Charts appear when you add real records." /> : type === "pie" ? (
+        <div className="pie-chart-layout">
+          <div className="pie-chart" style={{ background: `conic-gradient(${pieGradient})` }}>
+            <span>{rupee.format(total)}</span>
+          </div>
+          <div className="chart-legend">
+            {entries.map(([label, value], index) => (
+              <p key={label}><i style={{ background: colors[index % colors.length] }} /> <span>{label}</span><strong>{rupee.format(value)}</strong></p>
+            ))}
+          </div>
+        </div>
+      ) : type === "line" ? (
+        <div className="line-chart">
+          <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+            <polyline points={linePoints} />
+          </svg>
+          <div className="chart-legend compact">
+            {entries.map(([label, value]) => <p key={label}><span>{label}</span><strong>{rupee.format(value)}</strong></p>)}
+          </div>
+        </div>
+      ) : entries.map(([label, value]) => (
         <div className="chart-row" key={label}>
           <span>{label}</span>
           <i style={{ width: `${(value / max) * 100}%` }} />
           <strong>{rupee.format(value)}</strong>
         </div>
-      )) : <EmptyState text="Charts appear when you add real records." />}
+      ))}
     </section>
   );
 }
@@ -4094,8 +4265,8 @@ function groupParticipantBalances(state, projectId = "All") {
     .reduce((acc, project) => {
       const transactions = state.projectTransactions.filter((item) => item.projectId === project.id);
       const { stats } = projectSplitSummary(project, transactions);
-      Object.entries(stats).forEach(([name, row]) => {
-        acc[`${project.name}: ${name}`] = Math.round(Math.abs(row.balance || 0));
+      stats.forEach((row) => {
+        acc[`${project.name}: ${row.name}`] = Math.round(Math.abs(row.balance || 0));
       });
       return acc;
     }, {});

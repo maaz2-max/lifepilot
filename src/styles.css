@@ -1072,10 +1072,32 @@ input[type="datetime-local"] {
   border-bottom: 1px solid var(--line);
 }
 
+.analytics-dashboard-head {
+  display: grid;
+  gap: 0.9rem;
+}
+
 .bar-pair,
 .chart-row {
   display: grid;
   gap: 0.65rem;
+}
+
+.chart-card {
+  min-height: 260px;
+}
+
+.chart-badge {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  padding: 0.35rem 0.65rem;
+  border-radius: 999px;
+  background: #111111;
+  color: #ffffff;
+  font-size: 0.76rem;
+  font-weight: 950;
+  text-transform: uppercase;
 }
 
 .bar-pair div,
@@ -1093,6 +1115,89 @@ input[type="datetime-local"] {
   border-radius: 999px;
   background: linear-gradient(90deg, var(--blue), var(--lavender));
   min-width: 3px;
+}
+
+.pie-chart-layout {
+  display: grid;
+  grid-template-columns: minmax(150px, 220px) minmax(0, 1fr);
+  align-items: center;
+  gap: 1rem;
+}
+
+.pie-chart {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  border: 2px solid #111111;
+  border-radius: 50%;
+  box-shadow: var(--shadow);
+}
+
+.pie-chart span {
+  display: grid;
+  place-items: center;
+  width: 58%;
+  aspect-ratio: 1;
+  border: 2px solid #111111;
+  border-radius: 50%;
+  background: #fffdf5;
+  text-align: center;
+  font-weight: 950;
+}
+
+.line-chart {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.line-chart svg {
+  width: 100%;
+  height: 170px;
+  border: 2px solid #111111;
+  border-radius: 16px;
+  background:
+    linear-gradient(#d8d8e8 1px, transparent 1px) 0 0 / 100% 25%,
+    #f7f5fb;
+  box-shadow: var(--shadow-inset);
+}
+
+.line-chart polyline {
+  fill: none;
+  stroke: #111111;
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.chart-legend {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.chart-legend p {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  font-weight: 850;
+}
+
+.chart-legend.compact {
+  max-height: 132px;
+  overflow: auto;
+}
+
+.chart-legend i {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #111111;
+  border-radius: 50%;
+}
+
+.project-share-actions {
+  margin-bottom: 0.85rem;
 }
 
 .profile-large {
@@ -2797,6 +2902,15 @@ label {
   .settlement-row span,
   .settlement-row span:nth-of-type(2) {
     text-align: left;
+  }
+
+  .pie-chart-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .pie-chart {
+    width: min(100%, 220px);
+    margin-inline: auto;
   }
 
   .metric-card {
