@@ -117,6 +117,12 @@
   pointer-events: auto;
 }
 
+.hero-panel .lumi-popover,
+.app-shell.theme-night .hero-panel .lumi-popover {
+  background: rgba(255, 250, 241, 0.98);
+  color: #111111;
+}
+
 .lumi-popover::after {
   content: "";
   position: absolute;
@@ -131,6 +137,7 @@
 }
 
 .lumi-popover strong {
+  color: #111111;
   font-size: 1rem;
   font-weight: 950;
 }
@@ -141,6 +148,17 @@
   font-size: 0.86rem;
   font-weight: 800;
   line-height: 1.35;
+}
+
+.app-shell.theme-night .hero-panel .lumi-popover strong,
+.app-shell.theme-night .hero-panel .lumi-popover p,
+.app-shell.theme-cloud .hero-panel .lumi-popover strong,
+.app-shell.theme-cloud .hero-panel .lumi-popover p,
+.app-shell.theme-rain .hero-panel .lumi-popover strong,
+.app-shell.theme-rain .hero-panel .lumi-popover p,
+.app-shell.theme-storm .hero-panel .lumi-popover strong,
+.app-shell.theme-storm .hero-panel .lumi-popover p {
+  color: #111111;
 }
 
 .lumi-popover .primary {
