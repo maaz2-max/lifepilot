@@ -1959,10 +1959,10 @@ function ExpenseView({ state, expenseTab, setExpenseTab, selectedSalary, setSele
     <section className="panel">
       <SectionHeader
         title="Money Command Center"
-        action={<div className="cluster expense-head-actions"><Segmented className="money-tabs" value={expenseTab} onChange={setExpenseTab} options={tabs} /><button className="secondary tactile" type="button" onClick={downloadReport}><Download size={17} />PDF</button></div>}
+        action={<div className="money-tabs-wrap"><Segmented className="money-tabs" value={expenseTab} onChange={setExpenseTab} options={tabs} /><button className="icon-button tactile pdf-tab-icon" type="button" title="Download money PDF" aria-label="Download money PDF" onClick={downloadReport}><Download size={16} /></button></div>}
       />
       {expenseTab === "command" && <MoneyCommand state={state} openAdd={openAdd} />}
-      {expenseTab === "daily" && <DailyExpenses state={state} openAdd={openAdd} setModal={setModal} remove={remove} />}
+      {expenseTab === "daily" && <DailyExpenses state={state} openAdd={openAdd} setModal={setModal} remove={remove} setToast={setToast} />}
       {expenseTab === "bills" && <BillsView state={state} openAdd={openAdd} setModal={setModal} remove={remove} upsert={upsert} />}
       {expenseTab === "salary" && <SalaryView state={state} selectedSalary={selectedSalary} setSelectedSalary={setSelectedSalary} openAdd={openAdd} setModal={setModal} remove={remove} />}
       {expenseTab === "projects" && <ProjectsView state={state} selectedProject={selectedProject} setSelectedProject={setSelectedProject} openAdd={openAdd} setModal={setModal} remove={remove} upsert={upsert} requestConfirm={requestConfirm} setToast={setToast} />}
@@ -2013,16 +2013,23 @@ function MoneyCommand({ state, openAdd }) {
   );
 }
 
-function DailyExpenses({ state, openAdd, setModal, remove }) {
+function DailyExpenses({ state, openAdd, setModal, remove, setToast }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("This month");
   const list = state.expenses.filter((item) => matchesQuery(item, query)).filter((item) => matchesMoneyFilter(item, filter));
   const dailySplit = dailySplitSummary(list);
+  const downloadDailyReport = () => {
+    openExpensePdfReport(state, { mode: "daily", title: "LifePilot Daily Transactions Report", transactions: list });
+    setToast("Daily PDF report opened");
+  };
   return (
     <div>
       <Toolbar query={query} setQuery={setQuery} filter={filter} setFilter={setFilter} options={["All", "Today", "This week", "This month", "Last month", "Credit", "Debit"]} />
       <MetricGrid metrics={[["Daily Credit", sum(list, (e) => e.type === "Credit")], ["Daily Debit", sum(list, (e) => e.type === "Debit")], ["Balance", sum(list, (e) => e.type === "Credit") - sum(list, (e) => e.type === "Debit")], ["Today's Spending", sum(state.expenses, (e) => e.date === todayISO() && e.type === "Debit")]]} />
-      <button className="primary tactile spaced" onClick={() => openAdd("expense")}><Plus size={18} />Add Entry</button>
+      <div className="money-action-row spaced">
+        <button className="primary tactile" onClick={() => openAdd("expense")}><Plus size={18} />Add Entry</button>
+        <button className="icon-button tactile pdf-tab-icon" type="button" title="Download daily PDF" aria-label="Download daily PDF" onClick={downloadDailyReport}><Download size={16} /></button>
+      </div>
       <RecordTable list={list} type="expense" setModal={setModal} remove={(id) => remove("expenses", id, "daily expense")} />
       <section className="sub-panel daily-split-panel">
         <SectionHeader title="Daily Split and Owes" />
@@ -2105,10 +2112,15 @@ function SalaryView({ state, selectedSalary, setSelectedSalary, openAdd, setModa
 }
 
 function ProjectsView({ state, selectedProject, setSelectedProject, openAdd, setModal, remove, upsert, setToast }) {
-  const active = state.projects.find((project) => project.id === selectedProject) || state.projects[0];
+  const active = state.projects.find((project) => project.id === selectedProject) || null;
   const transactions = active ? state.projectTransactions.filter((item) => item.projectId === active.id).sort(sortByDateDesc) : [];
   const [projectTab, setProjectTab] = useState("transactions");
   const shareText = active ? buildProjectShareText(active, transactions) : "";
+  const downloadProjectReport = () => {
+    if (!active) return;
+    openExpensePdfReport(state, { mode: "project", title: `${active.name} Expense Project Report`, project: active });
+    setToast("Project PDF report opened");
+  };
   const copyShare = async () => {
     if (!shareText) return;
     try {
@@ -2138,8 +2150,8 @@ function ProjectsView({ state, selectedProject, setSelectedProject, openAdd, set
     <div className="split-view">
       <div>
         <button className="primary tactile spaced" onClick={() => openAdd("project")}><Plus size={18} />Create Project</button>
-        <div className="list-grid">
-          {state.projects.length ? state.projects.map((project) => <ProjectCard key={project.id} state={state} project={project} active={active?.id === project.id} onClick={() => setSelectedProject(project.id)} />) : <EmptyState text="No active expense projects. Create a trip, renovation, or custom project." />}
+        <div className="list-grid project-card-grid">
+          {state.projects.length ? state.projects.map((project) => <ProjectCard key={project.id} state={state} project={project} active={active?.id === project.id} onClick={() => setSelectedProject(active?.id === project.id ? "" : project.id)} />) : <EmptyState text="No active expense projects. Create a trip, renovation, or custom project." />}
         </div>
       </div>
       <div className="sub-panel">
@@ -2160,6 +2172,7 @@ function ProjectsView({ state, selectedProject, setSelectedProject, openAdd, set
               )}
             </div>
             <div className="cluster project-share-actions">
+              <button className="icon-button tactile pdf-tab-icon" type="button" title="Download project PDF" aria-label="Download project PDF" onClick={downloadProjectReport}><Download size={16} /></button>
               <button className="secondary tactile" onClick={nativeShare}><Share2 size={17} />Share</button>
               <button className="secondary tactile" onClick={shareWhatsApp}>WhatsApp</button>
               <button className="secondary tactile" onClick={copyShare}><Copy size={17} />Copy</button>
@@ -2187,7 +2200,7 @@ function ProjectsView({ state, selectedProject, setSelectedProject, openAdd, set
               Delete Project
             </button>
           </>
-        ) : <EmptyState text="Select or create a project." />}
+        ) : <EmptyState text="Select a project card to open its transactions, split, PDF, and share options." />}
       </div>
     </div>
   );
@@ -3394,26 +3407,41 @@ function ensureLocalTableReply(prompt, reply, state) {
   return buildLocalExpenseAnswer(prompt, state, { force: true });
 }
 
+function normalizeAiQuery(text) {
+  return String(text || "")
+    .toLowerCase()
+    .replace(/\banalsyze\b/g, "analyze")
+    .replace(/\banalyse\b/g, "analyze")
+    .replace(/\banlysis\b/g, "analysis")
+    .replace(/\banalytics?\b/g, "analysis")
+    .replace(/\bexpn?se?s?\b/g, "expense")
+    .replace(/\bexps?ne?s?\b/g, "expense")
+    .replace(/\btrs?nactions?\b/g, "transaction")
+    .replace(/\btranactions?\b/g, "transaction")
+    .replace(/\bspilt\b/g, "split")
+    .replace(/\bremi?ai?nders?\b/g, "reminder");
+}
+
 function isLocalExpenseTablePrompt(text) {
-  const normalized = String(text || "").toLowerCase();
-  const wantsMoney = /\b(expense|expenses|transaction|transactions|spend|spending|money|debit|credit|payment|payments|bill|bills)\b/.test(normalized);
-  const wantsAnalysis = /\b(analyze|analyse|analysis|insight|insights|dashboard|report)\b/.test(normalized);
-  const wantsPeriodAnalysis = wantsAnalysis && /\b(month|week|today|daily|project|salary|bill|cashflow)\b/.test(normalized);
-  const wantsTable = /\b(show|list|find|tell|give|table|summary|month|today|yesterday|week|highest|where|what|how|total|all|records?|available|details?|analyze|analyse|analysis|insights?|report)\b/.test(normalized);
-  return (wantsMoney || wantsPeriodAnalysis) && (wantsTable || /^all\s+(expense|expenses|transaction|transactions)\b/.test(normalized) || /^(expense|expenses|transaction|transactions)\??$/.test(normalized.trim()));
+  const normalized = normalizeAiQuery(text);
+  const wantsMoney = /\b(expenses?|transactions?|spend|spending|money|debit|credit|payment|payments|bills?|salary|cashflow|projects?)\b/.test(normalized);
+  const wantsAnalysis = /\b(analyze|analysis|insights?|dashboard|reports?|summary|summaries)\b/.test(normalized);
+  const wantsPeriodAnalysis = wantsAnalysis && /\b(months?|weeks?|today|daily|projects?|salary|bills?|cashflow|all time)\b/.test(normalized);
+  const wantsTable = /\b(show|list|find|tell|give|table|summary|months?|today|yesterday|weeks?|highest|where|what|how|total|all|records?|available|details?|analyze|analysis|insights?|reports?)\b/.test(normalized);
+  return (wantsMoney || wantsPeriodAnalysis) && (wantsTable || /^all\s+(expenses?|transactions?)\b/.test(normalized) || /^(expenses?|transactions?)\??$/.test(normalized.trim()));
 }
 
 function buildLocalExpenseAnswer(text, state, options = {}) {
-  const normalized = text.toLowerCase();
+  const normalized = normalizeAiQuery(text);
   if (!options.force && !isLocalExpenseTablePrompt(normalized)) return "";
   const scope = localDateScope(normalized);
   const wantsCredit = /\bcredit|income|salary\b/.test(normalized);
-  const wantsDebit = /\bexpense|expenses|spend|spending|debit|paid|spent\b/.test(normalized);
+  const wantsDebit = /\bexpenses?|spend|spending|debit|paid|spent\b/.test(normalized);
   let rows = allTransactions(state).filter((item) => item.date);
   if (scope.filter) rows = rows.filter(scope.filter);
   if (wantsCredit && !wantsDebit) rows = rows.filter((item) => item.type === "Credit");
-  else if (wantsDebit || /\bexpense|expenses|spend|spending\b/.test(normalized)) rows = rows.filter((item) => item.type !== "Credit");
-  if (/\bproject\b/.test(normalized)) rows = rows.filter((item) => /project/i.test(item.source || ""));
+  else if (wantsDebit || /\bexpenses?|spend|spending\b/.test(normalized)) rows = rows.filter((item) => item.type !== "Credit");
+  if (/\bprojects?\b/.test(normalized)) rows = rows.filter((item) => /project/i.test(item.source || ""));
   if (/\bdaily\b/.test(normalized)) rows = rows.filter((item) => item.source === "Daily Expense");
   if (/\bbill|bills\b/.test(normalized)) rows = rows.filter((item) => item.source === "Bill Tracker");
   rows = rows.slice().sort(sortByDateDesc);
@@ -3423,7 +3451,7 @@ function buildLocalExpenseAnswer(text, state, options = {}) {
     .sort((a, b) => b[1] - a[1])
     .map(([source, value]) => [source, rupee.format(value)]);
   const tableRows = rows.length
-    ? rows.slice(0, 40).map((item) => [
+    ? rows.map((item) => [
         formatDate(item.date),
         item.source || "",
         item.title || item.name || "",
@@ -3473,9 +3501,9 @@ function buildLocalTodoAnswer(text, state) {
   ].join("\n\n");
 }
 
-function openExpensePdfReport(state) {
-  const html = buildExpenseReportHtml(state);
-  const reportWindow = window.open("", "_blank", "noopener,noreferrer");
+function openExpensePdfReport(state, options = {}) {
+  const html = buildExpenseReportHtml(state, options);
+  const reportWindow = window.open("", "_blank");
   if (!reportWindow) {
     const blob = new Blob([html], { type: "text/html" });
     const url = URL.createObjectURL(blob);
@@ -3493,8 +3521,16 @@ function openExpensePdfReport(state) {
   setTimeout(() => reportWindow.print(), 350);
 }
 
-function buildExpenseReportHtml(state) {
-  const transactions = allTransactions(state).sort(sortByDateDesc);
+function buildExpenseReportHtml(state, options = {}) {
+  const mode = options.mode || "all";
+  const project = options.project || null;
+  const reportTitle = options.title || "LifePilot Expense Report";
+  const baseTransactions = mode === "daily"
+    ? (options.transactions || state.expenses).map((item) => ({ ...item, source: "Daily Expense" }))
+    : mode === "project" && project
+      ? state.projectTransactions.filter((item) => item.projectId === project.id).map((item) => ({ ...item, source: `${project.name} Project` }))
+      : allTransactions(state);
+  const transactions = baseTransactions.sort(sortByDateDesc);
   const money = {
     credit: sum(transactions, (item) => item.type === "Credit"),
     debit: sum(transactions, (item) => item.type !== "Credit"),
@@ -3506,15 +3542,16 @@ function buildExpenseReportHtml(state) {
     acc[key].push(item);
     return acc;
   }, {});
-  const dailySplit = dailySplitSummary(state.expenses);
-  const projectSections = state.projects.map((project) => {
-    const projectTransactions = state.projectTransactions.filter((item) => item.projectId === project.id).sort(sortByDateDesc);
-    const stats = projectStats(state, project);
-    const split = projectSplitSummary(project, projectTransactions);
+  const dailySplit = mode === "project" ? { stats: [], settlements: [] } : dailySplitSummary(mode === "daily" ? (options.transactions || state.expenses) : state.expenses);
+  const projectsForReport = mode === "daily" ? [] : project ? [project] : state.projects;
+  const projectSections = projectsForReport.map((projectItem) => {
+    const projectTransactions = state.projectTransactions.filter((item) => item.projectId === projectItem.id).sort(sortByDateDesc);
+    const stats = projectStats(state, projectItem);
+    const split = projectSplitSummary(projectItem, projectTransactions);
     return `
       <section>
-        <h2>${escapeHtml(project.name)}</h2>
-        ${reportTable(["Budget", "Debit", "Credit", "Remaining", "Overspent", "Status"], [[rupee.format(amount(project.budget)), rupee.format(stats.debit), rupee.format(stats.credit), rupee.format(stats.remaining), rupee.format(stats.overspent), project.status || ""]])}
+        <h2>${escapeHtml(projectItem.name)}</h2>
+        ${reportTable(["Budget", "Debit", "Credit", "Remaining", "Overspent", "Status"], [[rupee.format(amount(projectItem.budget)), rupee.format(stats.debit), rupee.format(stats.credit), rupee.format(stats.remaining), rupee.format(stats.overspent), projectItem.status || ""]])}
         <h3>Transactions</h3>
         ${reportTable(["Date", "Title", "Type", "Amount", "Paid By", "Split", "Category"], projectTransactions.map((item) => [formatDate(item.date), item.title, item.type, rupee.format(amount(item.amount)), item.paidBy || "", splitModeOf(item), item.category || ""]))}
         <h3>Owes</h3>
@@ -3527,7 +3564,7 @@ function buildExpenseReportHtml(state) {
   return `<!doctype html>
   <html>
     <head>
-      <title>LifePilot Expense Report</title>
+      <title>${escapeHtml(reportTitle)}</title>
       <style>
         @page { margin: 16mm; }
         body { margin: 0; color: #111; font-family: Inter, Arial, sans-serif; background: #fbf7e8; }
@@ -3559,8 +3596,8 @@ function buildExpenseReportHtml(state) {
         <header>
           <img src="/icons/icon.svg" alt="" />
           <div>
-            <h1>LifePilot Expense Report</h1>
-            <div class="meta">Generated ${new Date().toLocaleString("en-IN")} • ${transactions.length} records</div>
+            <h1>${escapeHtml(reportTitle)}</h1>
+            <div class="meta">Generated ${new Date().toLocaleString("en-IN")} - ${transactions.length} records</div>
           </div>
         </header>
         <img class="watermark-logo" src="/icons/icon.svg" alt="" />
@@ -3582,12 +3619,12 @@ function buildExpenseReportHtml(state) {
             ${reportTable(["Source", "Title", "Type", "Amount", "Category", "Payment"], byDate[date].map((item) => [item.source || "", item.title || item.name || "", item.type || "", rupee.format(amount(item.amount)), item.category || "", item.paymentMethod || ""]))}
           `).join("")}
         </section>
-        <section>
+        ${mode === "project" ? "" : `<section>
           <h2>Daily Transaction Splits</h2>
           ${reportTable(["Participant", "Paid", "Share", "Balance"], dailySplit.stats.map((item) => [item.name, rupee.format(item.paid), rupee.format(item.share), `${item.balance >= 0 ? "Gets" : "Owes"} ${rupee.format(Math.abs(item.balance))}`]))}
           <h3>Daily Owes</h3>
           ${reportTable(["From", "To", "Amount"], dailySplit.settlements.map((item) => [item.from, item.to, rupee.format(item.amount)]))}
-        </section>
+        </section>`}
         <section>
           <h2>Expense Projects, Splits and Owes</h2>
           ${projectSections || "<p>No expense projects yet.</p>"}
@@ -3615,11 +3652,11 @@ function localDateScope(normalizedText) {
     return { label: "yesterday", filter: (item) => item.date === date || item.dueDate === date };
   }
   if (/\btoday\b/.test(normalizedText)) return { label: "today", filter: (item) => item.date === today || item.dueDate === today };
-  if (/\bweek\b/.test(normalizedText)) return { label: "this week", filter: (item) => inRange(item.date || item.dueDate, "week") };
+  if (/\bweeks?\b/.test(normalizedText)) return { label: "this week", filter: (item) => inRange(item.date || item.dueDate, "week") };
   if (/\blast month\b/.test(normalizedText)) return { label: "last month", filter: (item) => inRange(item.date || item.dueDate, "lastMonth") };
   const namedMonth = namedMonthScope(normalizedText);
   if (namedMonth) return namedMonth;
-  if (/\bmonth|monthly|january|february|march|april|may|june|july|august|september|october|november|december\b/.test(normalizedText)) {
+  if (/\bmonths?\b|\bmonthly\b|\bjanuary\b|\bfebruary\b|\bmarch\b|\bapril\b|\bmay\b|\bjune\b|\bjuly\b|\baugust\b|\bseptember\b|\boctober\b|\bnovember\b|\bdecember\b/.test(normalizedText)) {
     return { label: "this month", filter: (item) => inRange(item.date || item.dueDate, "month") };
   }
   return { label: "all time", filter: null };

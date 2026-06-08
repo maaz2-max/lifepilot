@@ -174,8 +174,39 @@
   background: linear-gradient(145deg, #a9d7f5, #d8ff8f);
 }
 
-.expense-head-actions {
+.expense-head-actions,
+.money-tabs-wrap {
   justify-content: flex-end;
+}
+
+.money-tabs-wrap {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 52px;
+  align-items: stretch;
+  gap: 0.55rem;
+  width: 100%;
+}
+
+.pdf-tab-icon {
+  min-width: 48px;
+  min-height: 48px;
+  padding: 0;
+}
+
+.money-action-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 52px;
+  gap: 0.65rem;
+  align-items: stretch;
+}
+
+.money-action-row .primary {
+  width: 100%;
+  justify-content: center;
+}
+
+.project-card-grid {
+  align-items: start;
 }
 
 .daily-split-panel {
@@ -215,13 +246,13 @@
     height: 32px;
   }
 
-  .expense-head-actions {
+  .expense-head-actions,
+  .money-tabs-wrap {
     width: 100%;
   }
 
-  .expense-head-actions .secondary {
-    width: 100%;
-    justify-content: center;
+  .money-tabs-wrap {
+    grid-template-columns: minmax(0, 1fr) 50px;
   }
 }
 
@@ -3072,7 +3103,8 @@ label {
 }
 
 .section-header > .segmented,
-.section-header > .cluster {
+.section-header > .cluster,
+.section-header > .money-tabs-wrap {
   width: 100%;
 }
 
