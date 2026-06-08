@@ -122,6 +122,12 @@ const emptyState = {
     telegramLastSyncAt: "",
     telegramLastStatus: "",
     telegramLastError: "",
+    whatsappNotifications: false,
+    whatsappPhoneNumber: "",
+    whatsappSessionId: "default",
+    whatsappLastSyncAt: "",
+    whatsappLastStatus: "",
+    whatsappLastError: "",
     weatherEnabled: false,
     weatherLocation: ""
   }
@@ -514,6 +520,35 @@ async function testTelegramNotifications() {
   return data;
 }
 
+async function syncWhatsappNotifications(state) {
+  const payload = buildTelegramNotificationPayload(state);
+  const response = await fetch("/api/notifications/sync-whatsapp", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ...payload,
+      categories: {
+        tasks: state.settings.taskNotifications,
+        reminders: state.settings.reminderNotifications,
+        events: state.settings.eventNotifications,
+        bills: true,
+        budgets: state.settings.budgetAlerts,
+        birthdays: state.settings.birthdayNotification
+      }
+    })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || "WhatsApp sync failed");
+  return data;
+}
+
+async function testWhatsappNotifications() {
+  const response = await fetch("/api/notifications/test-whatsapp", { method: "POST" });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || "WhatsApp test failed");
+  return data;
+}
+
 function nextRepeatDate(date, repeat) {
   const next = new Date(`${date || todayISO()}T12:00:00`);
   if (repeat === "Daily") next.setDate(next.getDate() + 1);
@@ -767,6 +802,7 @@ export default function App() {
   const installPrompt = useInstallPrompt();
   const notified = useRef(new Set());
   const telegramSyncSignature = useRef("");
+  const whatsappSyncSignature = useRef("");
 
   useEffect(() => {
     const timer = setTimeout(() => setPinBooting(false), 900);
@@ -882,6 +918,47 @@ export default function App() {
               ...current.settings,
               telegramLastStatus: "Sync failed",
               telegramLastError: error.message || "Telegram sync failed"
+            }
+          }));
+        });
+    }, 900);
+    return () => clearTimeout(timer);
+  }, [state, setState, storageReady]);
+
+  useEffect(() => {
+    if (!storageReady || !state.settings.whatsappNotifications) return;
+    const payload = buildTelegramNotificationPayload(state);
+    const signature = JSON.stringify(payload.items.map((item) => [
+      item.localId,
+      item.type,
+      item.title,
+      item.dueAt,
+      item.repeat,
+      item.status,
+      item.updatedAt
+    ]));
+    if (signature === whatsappSyncSignature.current) return;
+    whatsappSyncSignature.current = signature;
+    const timer = setTimeout(() => {
+      syncWhatsappNotifications(state)
+        .then((result) => {
+          setState((current) => ({
+            ...current,
+            settings: {
+              ...current.settings,
+              whatsappLastSyncAt: new Date().toISOString(),
+              whatsappLastStatus: `${result.synced || 0} reminders synced`,
+              whatsappLastError: ""
+            }
+          }));
+        })
+        .catch((error) => {
+          setState((current) => ({
+            ...current,
+            settings: {
+              ...current.settings,
+              whatsappLastStatus: "Sync failed",
+              whatsappLastError: error.message || "WhatsApp sync failed"
             }
           }));
         });
@@ -2369,6 +2446,55 @@ function SettingsView({ state, setState, setToast, requestNotifications, setModa
       setToast(error.message || "Telegram sync failed");
     }
   };
+  const testWhatsapp = async () => {
+    try {
+      await testWhatsappNotifications();
+      setState((current) => ({
+        ...current,
+        settings: {
+          ...current.settings,
+          whatsappLastStatus: "WhatsApp test sent",
+          whatsappLastError: ""
+        }
+      }));
+      setToast("WhatsApp test sent");
+    } catch (error) {
+      setState((current) => ({
+        ...current,
+        settings: {
+          ...current.settings,
+          whatsappLastStatus: "WhatsApp test failed",
+          whatsappLastError: error.message || "WhatsApp test failed"
+        }
+      }));
+      setToast(error.message || "WhatsApp test failed");
+    }
+  };
+  const syncWhatsappNow = async () => {
+    try {
+      const result = await syncWhatsappNotifications(state);
+      setState((current) => ({
+        ...current,
+        settings: {
+          ...current.settings,
+          whatsappLastSyncAt: new Date().toISOString(),
+          whatsappLastStatus: `${result.synced || 0} reminders synced`,
+          whatsappLastError: ""
+        }
+      }));
+      setToast("WhatsApp reminders synced");
+    } catch (error) {
+      setState((current) => ({
+        ...current,
+        settings: {
+          ...current.settings,
+          whatsappLastStatus: "Sync failed",
+          whatsappLastError: error.message || "WhatsApp sync failed"
+        }
+      }));
+      setToast(error.message || "WhatsApp sync failed");
+    }
+  };
   const useCurrentWeatherLocation = () => {
     if (!navigator.geolocation) {
       setToast("Location permission is not supported");
@@ -2440,9 +2566,9 @@ function SettingsView({ state, setState, setToast, requestNotifications, setModa
           ["salaryReminder", "Salary reminder"],
           ["dailyExpenseReminder", "Daily expense reminder"],
           ["birthdayNotification", "Birthday notification"],
-          ["telegramNotifications", "Telegram bot notifications"]
-        ].map(([key, label]) => <Toggle key={key} label={label} checked={state.settings[key]} onChange={(value) => setSetting(key, value)} />)}
-        <label>Repeated notification frequency<input type="number" min="2" max="3" value={state.settings.repeatHours} onChange={(e) => setSetting("repeatHours", e.target.value)} /></label>
+          ["telegramNotifications", "Telegram bot notifications"],
+          ["whatsappNotifications", "WhatsApp bot notifications"]
+        ].map(([key, label]) => <Toggle key={key} label={label} checked={state.settings[key]} onChange={(value) => setSetting(key, value)} />)}<label>Repeated notification frequency<input type="number" min="2" max="3" value={state.settings.repeatHours} onChange={(e) => setSetting("repeatHours", e.target.value)} /></label>
       </div>
 
       <div className="panel">
@@ -2463,6 +2589,40 @@ function SettingsView({ state, setState, setToast, requestNotifications, setModa
         </div>
         {state.settings.telegramLastError && <p className="warning">{state.settings.telegramLastError}</p>}
         <p className="helper-text">Telegram works while the app is closed after Supabase tables and Vercel env vars are configured.</p>
+      </div>
+
+      <div className="panel">
+        <SectionHeader
+          title="WhatsApp Bot"
+          action={<div className="cluster"><button className="secondary tactile" type="button" onClick={syncWhatsappNow}>Sync now</button><button className="secondary tactile" type="button" onClick={testWhatsapp}>Test</button></div>}
+        />
+        <Toggle label="Send reminders through WhatsApp when app is closed" checked={state.settings.whatsappNotifications} onChange={(value) => setSetting("whatsappNotifications", value)} />
+        <label>WhatsApp Phone Number
+          <input
+            value={state.settings.whatsappPhoneNumber || ""}
+            onChange={(e) => setSetting("whatsappPhoneNumber", e.target.value)}
+            placeholder="e.g. 919876543210 (with country code, no +)"
+          />
+        </label>
+        <label>OpenWA Session ID
+          <input
+            value={state.settings.whatsappSessionId || "default"}
+            onChange={(e) => setSetting("whatsappSessionId", e.target.value)}
+            placeholder="default"
+          />
+        </label>
+        <div className="storage-status">
+          <div>
+            <span>Backend sync</span>
+            <strong>{state.settings.whatsappLastStatus || "Not synced yet"}</strong>
+          </div>
+          <div>
+            <span>Last sync</span>
+            <strong>{state.settings.whatsappLastSyncAt ? new Date(state.settings.whatsappLastSyncAt).toLocaleString("en-IN") : "Waiting"}</strong>
+          </div>
+        </div>
+        {state.settings.whatsappLastError && <p className="warning">{state.settings.whatsappLastError}</p>}
+        <p className="helper-text">WhatsApp works while the app is closed after your OpenWA service, Supabase table, and env vars are configured.</p>
       </div>
 
       <div className="panel">
@@ -3334,6 +3494,67 @@ function CredentialChatCard({ state, query, setToast }) {
   );
 }
 
+function renderMarkdownContent(rawText) {
+  const lines = String(rawText || "").split("\n");
+  const blocks = [];
+  let currentList = null;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const isBullet = /^[*-]\s+(.*)/.test(line.trim());
+
+    if (isBullet) {
+      const content = line.trim().replace(/^[*-]\s+/, "");
+      if (!currentList) {
+        currentList = [];
+      }
+      currentList.push(content);
+    } else {
+      if (currentList) {
+        blocks.push({ type: "list", items: currentList });
+        currentList = null;
+      }
+      if (line.trim() !== "") {
+        if (blocks.length > 0 && blocks[blocks.length - 1].type === "paragraph" && lines[i - 1]?.trim() !== "") {
+          blocks[blocks.length - 1].text += " " + line.trim();
+        } else {
+          blocks.push({ type: "paragraph", text: line.trim() });
+        }
+      }
+    }
+  }
+  if (currentList) {
+    blocks.push({ type: "list", items: currentList });
+  }
+
+  const formatText = (str) => {
+    const parts = str.split(/(\*\*.*?\*\*)/);
+    return parts.map((part, idx) => {
+      if (part.startsWith("**") && part.endsWith("**")) {
+        return <strong key={idx}>{part.slice(2, -2)}</strong>;
+      }
+      return part;
+    });
+  };
+
+  return blocks.map((block, idx) => {
+    if (block.type === "list") {
+      return (
+        <ul key={idx} className="ai-list">
+          {block.items.map((item, itemIdx) => (
+            <li key={itemIdx}>{formatText(item)}</li>
+          ))}
+        </ul>
+      );
+    }
+    return (
+      <p key={idx} className="ai-paragraph">
+        {formatText(block.text)}
+      </p>
+    );
+  });
+}
+
 function MessageBody({ text }) {
   const parsed = splitMarkdownTable(text);
   const money = extractMoneyHighlights(text);
@@ -3341,13 +3562,13 @@ function MessageBody({ text }) {
     return (
       <div className={money.length ? "ai-rich-text money" : "ai-rich-text"}>
         {money.length ? <MoneyHighlights values={money} /> : null}
-        <p>{text}</p>
+        {renderMarkdownContent(text)}
       </div>
     );
   }
   return (
     <div className="ai-rich-text">
-      {parsed.before && <p>{parsed.before}</p>}
+      {parsed.before && renderMarkdownContent(parsed.before)}
       {money.length ? <MoneyHighlights values={money} /> : null}
       <div className="ai-table-wrap premium">
       <table className="ai-table">
@@ -3361,7 +3582,7 @@ function MessageBody({ text }) {
         </tbody>
       </table>
       </div>
-      {parsed.after && <p>{parsed.after}</p>}
+      {parsed.after && renderMarkdownContent(parsed.after)}
     </div>
   );
 }

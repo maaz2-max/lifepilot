@@ -41,3 +41,16 @@ create table if not exists public.telegram_settings (
   last_sync_at timestamptz,
   updated_at timestamptz default now()
 );
+
+create table if not exists public.whatsapp_settings (
+  user_key text primary key default 'default',
+  phone_number text,
+  session_id text default 'default',
+  enabled boolean default false,
+  categories jsonb default '{}'::jsonb,
+  quiet_hours jsonb default '{}'::jsonb,
+  timezone text default 'Asia/Kolkata',
+  last_sync_at timestamptz,
+  updated_at timestamptz default now()
+);
+

@@ -2333,6 +2333,30 @@ button:disabled {
   background: rgba(255, 255, 255, 0.36);
 }
 
+.ai-list {
+  margin: 0.25rem 0;
+  padding-left: 1.25rem;
+  list-style-type: disc;
+}
+
+.ai-list li {
+  margin-bottom: 0.25rem;
+  line-height: 1.45;
+  color: #22222c;
+  font-weight: 750;
+}
+
+.ai-paragraph {
+  margin: 0 0 0.55rem 0;
+  line-height: 1.45;
+  color: #22222c;
+  font-weight: 750;
+}
+
+.ai-paragraph:last-child {
+  margin-bottom: 0;
+}
+
 .ai-money-strip {
   display: flex;
   flex-wrap: wrap;

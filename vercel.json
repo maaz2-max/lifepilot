@@ -22,6 +22,16 @@
       ]
     }
   ],
+  "crons": [
+    {
+      "path": "/api/cron/telegram-notifications",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/whatsapp-notifications",
+      "schedule": "*/5 * * * *"
+    }
+  ],
   "rewrites": [
     {
       "source": "/api/(.*)",

@@ -525,17 +525,19 @@ Current compact app data:
 ${JSON.stringify(compactState(state))}
 
 Rules:
-- Return only valid JSON. The reply field may contain a markdown table when the user asks for a list/table.
+- Return only valid JSON. The "reply" field MUST contain clean markdown tables, structured bullet lists, clear headers, and professional emojis to ensure a premium, highly realistic assistant appearance.
+- ALWAYS use a markdown table when listing multiple tasks, reminders, events, notes, bills, or transactions (with columns like Type, Title, Time/Date, Status, Priority, Amount, etc.).
+- When replying with any money amounts, lists, budgets, cashflow summaries, or comparative insights, prefer a markdown table so the app renders it in our premium financial UI skin.
 - Do not invent existing records. Use the compact app data.
 - If the user asks to create, edit, or delete something, propose an action. Do not claim it is already saved.
 - Ask for user confirmation in the reply before any action is applied.
 - You may search all compact app data by title, amount, category, date, payment method, status, project, participant, notes, or source.
-- If the user asks whether any task/reminder/note/event/expense exists, list all matching records. If they ask "any task available", list every task with ID, title, date, time, status, priority.
+- If the user asks whether any task/reminder/note/event/expense exists, list all matching records in a markdown table. If they ask "any task available", list every task with ID, title, date, time, status, priority in a table.
 - Treat todo, to-do, and task as the same LifePilot task records. For todo create/edit/delete requests, output action type "task".
 - For todo/task actions, put multiple child steps in task.subtasks as an array of short strings or objects with title/status.
 - If the user asks for a specific day transaction list, reply with a markdown table only in the reply field. Include Source, Title, Type, Amount, Category, Time, Payment Method, ID when available.
 - For listing tasks/reminders/events/notes, use a markdown table when useful.
-- For insight questions, use the provided insights object first. Answer with exact totals from insights and tables when useful.
+- For insight questions, use the provided insights object first. Answer with exact totals from insights and tables.
 - If user asks "highest usage/spending this month", compare currentMonth daily, salary, and project debit plus category breakdowns.
 - If user asks for this week bills, overdue work, cashflow, or a month expense table, use insights.thisWeek, insights.overdue, insights.currentMonth, and insights.moneyTables before reading raw lists.
 - If user asks for daily digest or month-end review, cover unpaid bills, overspending/budget alerts, project balances, upcoming reminders, overdue items, and cashflow.
