@@ -2855,7 +2855,9 @@ function AiAssistant({ state, setState, upsert, setToast, close }) {
         settings: { ...current.settings, aiEnabled: true, aiModel: model }
       }));
       const result = await askGeminiAssistant({ state: { ...state, __today: todayISO() }, model, message: text });
-      addMessage({ role: "ai", text: result.reply, actions: normalizeAiActions(result) });
+      const modelActions = normalizeAiActions(result);
+      const guaranteedReply = ensureLocalTableReply(text, result.reply, state);
+      addMessage({ role: "ai", text: guaranteedReply || result.reply, actions: guaranteedReply ? [] : modelActions });
     } catch (error) {
       addMessage({ role: "ai", text: error.busy ? "Server busy. Please try after some time." : "AI is unavailable right now. Please try again later.", actions: [] });
     } finally {
@@ -3337,11 +3339,23 @@ function buildLocalAiAnswer(text, state) {
   return buildLocalExpenseAnswer(text, state) || buildLocalTodoAnswer(text, state);
 }
 
-function buildLocalExpenseAnswer(text, state) {
+function ensureLocalTableReply(prompt, reply, state) {
+  if (!isLocalExpenseTablePrompt(prompt)) return "";
+  if (parseMarkdownTable(reply)) return "";
+  if (!/\b(here|found|below|list|table|record|expense|transaction|spend|spending)\b/i.test(reply || "")) return "";
+  return buildLocalExpenseAnswer(prompt, state, { force: true });
+}
+
+function isLocalExpenseTablePrompt(text) {
+  const normalized = String(text || "").toLowerCase();
+  const wantsMoney = /\b(expense|expenses|transaction|transactions|spend|spending|money|debit|credit|payment|payments|bill|bills)\b/.test(normalized);
+  const wantsTable = /\b(show|list|find|tell|give|table|summary|month|today|yesterday|week|highest|where|what|how|total|all|records?|available|details?)\b/.test(normalized);
+  return wantsMoney && (wantsTable || /^all\s+(expense|expenses|transaction|transactions)\b/.test(normalized) || /^(expense|expenses|transaction|transactions)\??$/.test(normalized.trim()));
+}
+
+function buildLocalExpenseAnswer(text, state, options = {}) {
   const normalized = text.toLowerCase();
-  const wantsMoney = /\b(expense|expenses|transaction|transactions|spend|spending|money|debit|credit)\b/.test(normalized);
-  const wantsList = /\b(show|list|find|tell|give|table|summary|month|today|yesterday|week|highest|where|what|how|total)\b/.test(normalized);
-  if (!wantsMoney || !wantsList) return "";
+  if (!options.force && !isLocalExpenseTablePrompt(normalized)) return "";
   const scope = localDateScope(normalized);
   const wantsCredit = /\bcredit|income|salary\b/.test(normalized);
   const wantsDebit = /\bexpense|expenses|spend|spending|debit|paid|spent\b/.test(normalized);
@@ -3416,10 +3430,37 @@ function localDateScope(normalizedText) {
   if (/\btoday\b/.test(normalizedText)) return { label: "today", filter: (item) => item.date === today || item.dueDate === today };
   if (/\bweek\b/.test(normalizedText)) return { label: "this week", filter: (item) => inRange(item.date || item.dueDate, "week") };
   if (/\blast month\b/.test(normalizedText)) return { label: "last month", filter: (item) => inRange(item.date || item.dueDate, "lastMonth") };
+  const namedMonth = namedMonthScope(normalizedText);
+  if (namedMonth) return namedMonth;
   if (/\bmonth|monthly|january|february|march|april|may|june|july|august|september|october|november|december\b/.test(normalizedText)) {
     return { label: "this month", filter: (item) => inRange(item.date || item.dueDate, "month") };
   }
   return { label: "all time", filter: null };
+}
+
+function namedMonthScope(normalizedText) {
+  const months = [
+    ["january", "01"], ["jan", "01"],
+    ["february", "02"], ["feb", "02"],
+    ["march", "03"], ["mar", "03"],
+    ["april", "04"], ["apr", "04"],
+    ["may", "05"],
+    ["june", "06"], ["jun", "06"],
+    ["july", "07"], ["jul", "07"],
+    ["august", "08"], ["aug", "08"],
+    ["september", "09"], ["sep", "09"],
+    ["october", "10"], ["oct", "10"],
+    ["november", "11"], ["nov", "11"],
+    ["december", "12"], ["dec", "12"]
+  ];
+  const found = months.find(([name]) => new RegExp(`\\b${name}\\b`).test(normalizedText));
+  if (!found) return null;
+  const year = normalizedText.match(/\b(20\d{2})\b/)?.[1] || todayISO().slice(0, 4);
+  const month = `${year}-${found[1]}`;
+  return {
+    label: new Date(`${month}-01T12:00:00`).toLocaleDateString("en-IN", { month: "long", year: "numeric" }),
+    filter: (item) => String(item.date || item.dueDate || "").startsWith(month)
+  };
 }
 
 function normalizeAiActions(parsed) {
