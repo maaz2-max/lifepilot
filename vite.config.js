@@ -8,12 +8,7 @@ import {
   handleTelegramWebhook,
   handleTelegramCron
 } from "./server/telegramNotifications.js";
-import {
-  handleNotificationSync as handleWhatsappSync,
-  handleWhatsappTest,
-  handleWhatsappWebhook,
-  handleWhatsappCron
-} from "./server/whatsappNotifications.js";
+
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
@@ -49,19 +44,6 @@ export default defineConfig(({ mode }) => {
             await handleTelegramCron(req, res, env);
           });
 
-          // WhatsApp
-          server.middlewares.use("/api/notifications/sync-whatsapp", async (req, res) => {
-            await handleWhatsappSync(req, res, env);
-          });
-          server.middlewares.use("/api/notifications/test-whatsapp", async (req, res) => {
-            await handleWhatsappTest(req, res, env);
-          });
-          server.middlewares.use("/api/bot/whatsapp-webhook", async (req, res) => {
-            await handleWhatsappWebhook(req, res, env);
-          });
-          server.middlewares.use("/api/cron/whatsapp-notifications", async (req, res) => {
-            await handleWhatsappCron(req, res, env);
-          });
         }
       }
     ]

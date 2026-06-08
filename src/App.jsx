@@ -122,12 +122,6 @@ const emptyState = {
     telegramLastSyncAt: "",
     telegramLastStatus: "",
     telegramLastError: "",
-    whatsappNotifications: false,
-    whatsappPhoneNumber: "",
-    whatsappSessionId: "default",
-    whatsappLastSyncAt: "",
-    whatsappLastStatus: "",
-    whatsappLastError: "",
     weatherEnabled: false,
     weatherLocation: ""
   }
@@ -520,34 +514,6 @@ async function testTelegramNotifications() {
   return data;
 }
 
-async function syncWhatsappNotifications(state) {
-  const payload = buildTelegramNotificationPayload(state);
-  const response = await fetch("/api/notifications/sync-whatsapp", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      ...payload,
-      categories: {
-        tasks: state.settings.taskNotifications,
-        reminders: state.settings.reminderNotifications,
-        events: state.settings.eventNotifications,
-        bills: true,
-        budgets: state.settings.budgetAlerts,
-        birthdays: state.settings.birthdayNotification
-      }
-    })
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || "WhatsApp sync failed");
-  return data;
-}
-
-async function testWhatsappNotifications() {
-  const response = await fetch("/api/notifications/test-whatsapp", { method: "POST" });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || "WhatsApp test failed");
-  return data;
-}
 
 function nextRepeatDate(date, repeat) {
   const next = new Date(`${date || todayISO()}T12:00:00`);
@@ -802,7 +768,6 @@ export default function App() {
   const installPrompt = useInstallPrompt();
   const notified = useRef(new Set());
   const telegramSyncSignature = useRef("");
-  const whatsappSyncSignature = useRef("");
 
   useEffect(() => {
     const timer = setTimeout(() => setPinBooting(false), 900);
@@ -925,46 +890,6 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [state, setState, storageReady]);
 
-  useEffect(() => {
-    if (!storageReady || !state.settings.whatsappNotifications) return;
-    const payload = buildTelegramNotificationPayload(state);
-    const signature = JSON.stringify(payload.items.map((item) => [
-      item.localId,
-      item.type,
-      item.title,
-      item.dueAt,
-      item.repeat,
-      item.status,
-      item.updatedAt
-    ]));
-    if (signature === whatsappSyncSignature.current) return;
-    whatsappSyncSignature.current = signature;
-    const timer = setTimeout(() => {
-      syncWhatsappNotifications(state)
-        .then((result) => {
-          setState((current) => ({
-            ...current,
-            settings: {
-              ...current.settings,
-              whatsappLastSyncAt: new Date().toISOString(),
-              whatsappLastStatus: `${result.synced || 0} reminders synced`,
-              whatsappLastError: ""
-            }
-          }));
-        })
-        .catch((error) => {
-          setState((current) => ({
-            ...current,
-            settings: {
-              ...current.settings,
-              whatsappLastStatus: "Sync failed",
-              whatsappLastError: error.message || "WhatsApp sync failed"
-            }
-          }));
-        });
-    }, 900);
-    return () => clearTimeout(timer);
-  }, [state, setState, storageReady]);
 
   const updateState = (recipe, message = "Saved") => {
     setState((current) => {
@@ -2234,10 +2159,7 @@ function ProjectsView({ state, selectedProject, setSelectedProject, openAdd, set
     }
     await copyShare();
   };
-  const shareWhatsApp = () => {
-    if (!shareText) return;
-    window.open(`https://wa.me/?text=${encodeURIComponent(shareText)}`, "_blank", "noopener,noreferrer");
-  };
+
   return (
     <div className="split-view">
       <div>
@@ -2266,7 +2188,6 @@ function ProjectsView({ state, selectedProject, setSelectedProject, openAdd, set
             <div className="cluster project-share-actions">
               <button className="icon-button tactile pdf-tab-icon" type="button" title="Download project PDF" aria-label="Download project PDF" onClick={downloadProjectReport}><Download size={16} /></button>
               <button className="secondary tactile" onClick={nativeShare}><Share2 size={17} />Share</button>
-              <button className="secondary tactile" onClick={shareWhatsApp}>WhatsApp</button>
               <button className="secondary tactile" onClick={copyShare}><Copy size={17} />Copy</button>
             </div>
             <ProjectParticipantBreakdown project={active} transactions={transactions} />
@@ -2446,55 +2367,7 @@ function SettingsView({ state, setState, setToast, requestNotifications, setModa
       setToast(error.message || "Telegram sync failed");
     }
   };
-  const testWhatsapp = async () => {
-    try {
-      await testWhatsappNotifications();
-      setState((current) => ({
-        ...current,
-        settings: {
-          ...current.settings,
-          whatsappLastStatus: "WhatsApp test sent",
-          whatsappLastError: ""
-        }
-      }));
-      setToast("WhatsApp test sent");
-    } catch (error) {
-      setState((current) => ({
-        ...current,
-        settings: {
-          ...current.settings,
-          whatsappLastStatus: "WhatsApp test failed",
-          whatsappLastError: error.message || "WhatsApp test failed"
-        }
-      }));
-      setToast(error.message || "WhatsApp test failed");
-    }
-  };
-  const syncWhatsappNow = async () => {
-    try {
-      const result = await syncWhatsappNotifications(state);
-      setState((current) => ({
-        ...current,
-        settings: {
-          ...current.settings,
-          whatsappLastSyncAt: new Date().toISOString(),
-          whatsappLastStatus: `${result.synced || 0} reminders synced`,
-          whatsappLastError: ""
-        }
-      }));
-      setToast("WhatsApp reminders synced");
-    } catch (error) {
-      setState((current) => ({
-        ...current,
-        settings: {
-          ...current.settings,
-          whatsappLastStatus: "Sync failed",
-          whatsappLastError: error.message || "WhatsApp sync failed"
-        }
-      }));
-      setToast(error.message || "WhatsApp sync failed");
-    }
-  };
+
   const useCurrentWeatherLocation = () => {
     if (!navigator.geolocation) {
       setToast("Location permission is not supported");
@@ -2566,8 +2439,7 @@ function SettingsView({ state, setState, setToast, requestNotifications, setModa
           ["salaryReminder", "Salary reminder"],
           ["dailyExpenseReminder", "Daily expense reminder"],
           ["birthdayNotification", "Birthday notification"],
-          ["telegramNotifications", "Telegram bot notifications"],
-          ["whatsappNotifications", "WhatsApp bot notifications"]
+          ["telegramNotifications", "Telegram bot notifications"]
         ].map(([key, label]) => <Toggle key={key} label={label} checked={state.settings[key]} onChange={(value) => setSetting(key, value)} />)}<label>Repeated notification frequency<input type="number" min="2" max="3" value={state.settings.repeatHours} onChange={(e) => setSetting("repeatHours", e.target.value)} /></label>
       </div>
 
@@ -2591,39 +2463,7 @@ function SettingsView({ state, setState, setToast, requestNotifications, setModa
         <p className="helper-text">Telegram works while the app is closed after Supabase tables and Vercel env vars are configured.</p>
       </div>
 
-      <div className="panel">
-        <SectionHeader
-          title="WhatsApp Bot"
-          action={<div className="cluster"><button className="secondary tactile" type="button" onClick={syncWhatsappNow}>Sync now</button><button className="secondary tactile" type="button" onClick={testWhatsapp}>Test</button></div>}
-        />
-        <Toggle label="Send reminders through WhatsApp when app is closed" checked={state.settings.whatsappNotifications} onChange={(value) => setSetting("whatsappNotifications", value)} />
-        <label>WhatsApp Phone Number
-          <input
-            value={state.settings.whatsappPhoneNumber || ""}
-            onChange={(e) => setSetting("whatsappPhoneNumber", e.target.value)}
-            placeholder="e.g. 919876543210 (with country code, no +)"
-          />
-        </label>
-        <label>OpenWA Session ID
-          <input
-            value={state.settings.whatsappSessionId || "default"}
-            onChange={(e) => setSetting("whatsappSessionId", e.target.value)}
-            placeholder="default"
-          />
-        </label>
-        <div className="storage-status">
-          <div>
-            <span>Backend sync</span>
-            <strong>{state.settings.whatsappLastStatus || "Not synced yet"}</strong>
-          </div>
-          <div>
-            <span>Last sync</span>
-            <strong>{state.settings.whatsappLastSyncAt ? new Date(state.settings.whatsappLastSyncAt).toLocaleString("en-IN") : "Waiting"}</strong>
-          </div>
-        </div>
-        {state.settings.whatsappLastError && <p className="warning">{state.settings.whatsappLastError}</p>}
-        <p className="helper-text">WhatsApp works while the app is closed after your OpenWA service, Supabase table, and env vars are configured.</p>
-      </div>
+
 
       <div className="panel">
         <SectionHeader title="Preferences" />
