@@ -1392,14 +1392,29 @@ function appThemeClass(state) {
   return time.getHours() < 11 ? "theme-morning" : "theme-day";
 }
 
-function PilotCompanion({ mood = "day" }) {
+function LumiCompanion({ userName = "there", setAiOpen }) {
+  const [open, setOpen] = useState(false);
   return (
-    <div className={`pilot-companion ${mood}`} aria-hidden="true">
-      <span className="pilot-head" />
-      <span className="pilot-body" />
-      <span className="pilot-wing left" />
-      <span className="pilot-wing right" />
-      <span className="pilot-shadow" />
+    <div className={`lumi-companion ${open ? "open" : ""}`}>
+      <button className="lumi-character tactile" type="button" onClick={() => setOpen((value) => !value)} aria-label="Open Lumi helper">
+        <img src="/characters/lumi.png" alt="Lumi AI helper" />
+      </button>
+      {open && (
+        <div className="lumi-popover raised">
+          <strong>Hello, {userName || "there"}</strong>
+          <p>I am Lumi. Need any help? Open the AI box and ask me. I am happy to help you.</p>
+          <button
+            className="primary tactile"
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              setAiOpen(true);
+            }}
+          >
+            <Bot size={17} />Open AI Assistant
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -1481,7 +1496,7 @@ function HomeView({ state, setState, openAdd, setActive, setAiOpen }) {
     <section className="page-grid">
       <div className="hero-panel raised">
         <WeatherScene weather={state.weather} enabled={state.settings.weatherEnabled} />
-        <PilotCompanion mood={appThemeClass(state).replace("theme-", "")} />
+        <LumiCompanion userName={state.profile?.name} setAiOpen={setAiOpen} />
         <div>
           <p className="eyebrow">Good {new Date().getHours() < 12 ? "morning" : new Date().getHours() < 17 ? "afternoon" : "evening"}</p>
           <h2>{state.profile?.name}, your day is ready.</h2>
@@ -2111,7 +2126,7 @@ function SalaryView({ state, selectedSalary, setSelectedSalary, openAdd, setModa
   );
 }
 
-function ProjectsView({ state, selectedProject, setSelectedProject, openAdd, setModal, remove, upsert, setToast }) {
+function ProjectsView({ state, selectedProject, setSelectedProject, openAdd, setModal, remove, upsert, requestConfirm, setToast }) {
   const active = state.projects.find((project) => project.id === selectedProject) || null;
   const transactions = active ? state.projectTransactions.filter((item) => item.projectId === active.id).sort(sortByDateDesc) : [];
   const [projectTab, setProjectTab] = useState("transactions");
@@ -2182,7 +2197,7 @@ function ProjectsView({ state, selectedProject, setSelectedProject, openAdd, set
             {projectTab === "transactions" ? (
               <DateGroupedRecordTable list={transactions} type="projectTransaction" setModal={setModal} remove={(id) => remove("projectTransactions", id, "project transaction")} />
             ) : (
-              <ProjectSplitView project={active} transactions={transactions} upsert={upsert} />
+              <ProjectSplitView project={active} transactions={transactions} upsert={upsert} requestConfirm={requestConfirm} />
             )}
             <button
               className="secondary danger tactile spaced"
@@ -3572,6 +3587,7 @@ function buildExpenseReportHtml(state, options = {}) {
         main { position: relative; z-index: 1; }
         header { display: flex; align-items: center; gap: 14px; border: 3px solid #111; border-radius: 22px; padding: 18px; background: #d8ff8f; box-shadow: 8px 8px 0 #111; }
         header img { width: 58px; height: 58px; }
+        .back-button { margin-left: auto; border: 2px solid #111; border-radius: 14px; background: #fff; color: #111; box-shadow: 4px 4px 0 #111; padding: 10px 14px; font-weight: 950; cursor: pointer; }
         h1, h2, h3 { margin: 0 0 10px; }
         h1 { font-size: 30px; }
         h2 { margin-top: 22px; font-size: 22px; }
@@ -3599,6 +3615,7 @@ function buildExpenseReportHtml(state, options = {}) {
             <h1>${escapeHtml(reportTitle)}</h1>
             <div class="meta">Generated ${new Date().toLocaleString("en-IN")} - ${transactions.length} records</div>
           </div>
+          <button class="back-button" type="button" onclick="if (window.opener) window.opener.focus(); window.close();">Back to app</button>
         </header>
         <img class="watermark-logo" src="/icons/icon.svg" alt="" />
         <div class="cards">
@@ -3899,6 +3916,7 @@ function markAiAction(current, messageId, actionIndex, status) {
 }
 
 function applyAiActionData(current, action, dataOverride = {}) {
+  if (action.type === "projectSettlement") return applyAiProjectSettlement(current, action, dataOverride);
   const collection = collectionForKind(action.type);
   if (!collection) return current;
   const operation = action.operation || "create";
@@ -3923,6 +3941,81 @@ function applyAiActionData(current, action, dataOverride = {}) {
     updatedAt: new Date().toISOString()
   };
   return { ...current, [collection]: [record, ...current[collection]] };
+}
+
+function applyAiProjectSettlement(current, action, dataOverride = {}) {
+  const operation = action.operation || "create";
+  const data = { ...(action.data || {}), ...(dataOverride || {}) };
+  const project = data.projectId
+    ? current.projects.find((entry) => entry.id === data.projectId)
+    : current.projects.find((entry) => entry.name?.toLowerCase() === String(data.projectName || "").toLowerCase());
+  const projectId = project?.id;
+  if (!projectId && operation !== "delete" && operation !== "edit") return current;
+
+  if (operation === "delete") {
+    return {
+      ...current,
+      projects: current.projects.map((entry) =>
+        (entry.paidSettlements || []).some((settlement) => settlement.id === action.id)
+          ? { ...entry, paidSettlements: (entry.paidSettlements || []).filter((settlement) => settlement.id !== action.id), updatedAt: new Date().toISOString() }
+          : entry
+      )
+    };
+  }
+
+  if (operation === "edit") {
+    return {
+      ...current,
+      projects: current.projects.map((entry) => {
+        const hasSettlement = (entry.paidSettlements || []).some((settlement) => settlement.id === action.id);
+        if (!hasSettlement) return entry;
+        return {
+          ...entry,
+          paidSettlements: (entry.paidSettlements || []).map((settlement) =>
+            settlement.id === action.id
+              ? (() => {
+                  const projectTransactions = current.projectTransactions.filter((item) => item.projectId === entry.id);
+                  const withoutThis = { ...entry, paidSettlements: (entry.paidSettlements || []).filter((item) => item.id !== settlement.id) };
+                  const originalPending = projectSplitSummary(withoutThis, projectTransactions).settlements.find((item) => item.from === settlement.from && item.to === settlement.to);
+                  const max = amount(originalPending?.amount || settlement.amount);
+                  const safeAmount = Math.min(Math.max(amount(data.amount ?? settlement.amount), 0), max);
+                  return {
+                    ...settlement,
+                    ...data,
+                    id: settlement.id,
+                    amount: safeAmount,
+                    paymentType: data.paymentType || (safeAmount >= max ? "Full" : "Custom"),
+                    updatedAt: new Date().toISOString()
+                  };
+                })()
+              : settlement
+          ),
+          updatedAt: new Date().toISOString()
+        };
+      })
+    };
+  }
+
+  if (!data.from || !data.to || amount(data.amount) <= 0) return current;
+  const projectTransactions = current.projectTransactions.filter((item) => item.projectId === projectId);
+  const pending = projectSplitSummary(project, projectTransactions).settlements.find((item) => item.from === data.from && item.to === data.to);
+  const safeAmount = Math.min(amount(data.amount), amount(pending?.amount || data.amount));
+  const paid = {
+    id: id("settlement"),
+    from: data.from,
+    to: data.to,
+    amount: safeAmount,
+    paymentType: data.paymentType || (pending && safeAmount >= amount(pending.amount) ? "Full" : "Custom"),
+    paidAt: data.paidAt || new Date().toISOString()
+  };
+  return {
+    ...current,
+    projects: current.projects.map((entry) =>
+      entry.id === projectId
+        ? { ...entry, paidSettlements: [paid, ...(entry.paidSettlements || [])], updatedAt: new Date().toISOString() }
+        : entry
+    )
+  };
 }
 
 function resolveLinkedAiData(current, type, data) {
@@ -4164,20 +4257,62 @@ function ProjectParticipantBreakdown({ project, transactions }) {
   );
 }
 
-function ProjectSplitView({ project, transactions, upsert }) {
+function ProjectSplitView({ project, transactions, upsert, requestConfirm }) {
   const { stats, settlements, splitTransactions, equalSplits, directOwedSplits, paidSettlements } = projectSplitSummary(project, transactions);
-  const markSettlementPaid = (item) => {
+  const [customSettlementKey, setCustomSettlementKey] = useState("");
+  const [customAmount, setCustomAmount] = useState("");
+  const [editingSettlementId, setEditingSettlementId] = useState("");
+  const [editingAmount, setEditingAmount] = useState("");
+  const settlementKey = (item) => `${item.from}__${item.to}`;
+  const markSettlementPaid = (item, paidAmount = item.amount, paymentType = "Full") => {
+    const safeAmount = Math.min(Math.max(amount(paidAmount), 0), amount(item.amount));
+    if (safeAmount <= 0) return;
     const paid = {
       id: id("settlement"),
       from: item.from,
       to: item.to,
-      amount: item.amount,
+      amount: Math.round(safeAmount),
+      paymentType,
       paidAt: new Date().toISOString()
     };
     upsert("projects", { ...project, paidSettlements: [paid, ...(project.paidSettlements || [])] }, "project");
+    setCustomSettlementKey("");
+    setCustomAmount("");
   };
-  const undoSettlementPaid = (settlementId) => {
-    upsert("projects", { ...project, paidSettlements: (project.paidSettlements || []).filter((item) => item.id !== settlementId) }, "project");
+  const deleteSettlementPaid = (settlement) => {
+    const applyDelete = () => {
+      upsert("projects", { ...project, paidSettlements: (project.paidSettlements || []).filter((item) => item.id !== settlement.id) }, "project");
+    };
+    if (requestConfirm) {
+      requestConfirm({
+        title: "Delete settlement payment?",
+        message: `${settlement.from} paid ${rupee.format(settlement.amount)} to ${settlement.to}. Deleting this will add the amount back to pending owes.`,
+        confirmLabel: "Delete Payment",
+        onConfirm: applyDelete
+      });
+      return;
+    }
+    applyDelete();
+  };
+  const editableMax = (settlement) => {
+    const withoutThis = { ...project, paidSettlements: (project.paidSettlements || []).filter((item) => item.id !== settlement.id) };
+    const originalPending = projectSplitSummary(withoutThis, transactions).settlements.find((item) => item.from === settlement.from && item.to === settlement.to);
+    return amount(originalPending?.amount || settlement.amount);
+  };
+  const saveSettlementEdit = (settlement) => {
+    const max = editableMax(settlement);
+    const safeAmount = Math.min(Math.max(amount(editingAmount), 0), max);
+    if (safeAmount <= 0) return;
+    upsert("projects", {
+      ...project,
+      paidSettlements: (project.paidSettlements || []).map((item) =>
+        item.id === settlement.id
+          ? { ...item, amount: Math.round(safeAmount), paymentType: safeAmount >= max ? "Full" : "Custom", updatedAt: new Date().toISOString() }
+          : item
+      )
+    }, "project");
+    setEditingSettlementId("");
+    setEditingAmount("");
   };
   return (
     <section className="split-ledger">
@@ -4195,22 +4330,71 @@ function ProjectSplitView({ project, transactions, upsert }) {
       <section className="date-money-group">
         <SectionHeader title="Who Pays Whom" />
         {settlements.length ? settlements.map((item, index) => (
-          <div className="settlement-row" key={`${item.from}-${item.to}-${index}`}>
-            <span>{item.from}</span>
-            <strong>pays {rupee.format(item.amount)}</strong>
-            <span>{item.to}</span>
-            <button className="secondary tactile" type="button" onClick={() => markSettlementPaid(item)}>Mark Paid</button>
+          <div className="settlement-card" key={`${item.from}-${item.to}-${index}`}>
+            <div className="settlement-row">
+              <span>{item.from}</span>
+              <strong>pays {rupee.format(item.amount)}</strong>
+              <span>{item.to}</span>
+              <div className="settlement-actions">
+                <button className="secondary tactile" type="button" onClick={() => markSettlementPaid(item, item.amount, "Full")}>Fully Paid</button>
+                <button className={`secondary tactile ${customSettlementKey === settlementKey(item) ? "active" : ""}`} type="button" onClick={() => {
+                  setCustomSettlementKey(customSettlementKey === settlementKey(item) ? "" : settlementKey(item));
+                  setCustomAmount("");
+                }}>Custom</button>
+              </div>
+            </div>
+            {customSettlementKey === settlementKey(item) && (
+              <div className="settlement-edit-row">
+                <label>Paid now
+                  <input
+                    value={customAmount}
+                    onChange={(event) => setCustomAmount(event.target.value)}
+                    type="number"
+                    min="1"
+                    max={Math.round(item.amount)}
+                    placeholder={`Max ${Math.round(item.amount)}`}
+                  />
+                </label>
+                <button className="primary tactile" type="button" onClick={() => markSettlementPaid(item, customAmount, "Custom")}>Save Payment</button>
+                <button className="secondary tactile" type="button" onClick={() => setCustomSettlementKey("")}>Cancel</button>
+              </div>
+            )}
           </div>
         )) : <EmptyState text="No one owes anything yet." small />}
       </section>
       <section className="date-money-group">
         <SectionHeader title="Paid Settlements" />
         {paidSettlements.length ? paidSettlements.map((item) => (
-          <div className="settlement-row paid" key={item.id}>
-            <span>{item.from}</span>
-            <strong>paid {rupee.format(item.amount)}</strong>
-            <span>{item.to}</span>
-            <button className="secondary tactile" type="button" onClick={() => undoSettlementPaid(item.id)}>Undo</button>
+          <div className="settlement-card" key={item.id}>
+            <div className="settlement-row paid">
+              <span>{item.from}</span>
+              <strong>{item.paymentType === "Custom" ? "custom paid" : "paid"} {rupee.format(item.amount)}</strong>
+              <span>{item.to}</span>
+              <div className="settlement-actions">
+                <button className="secondary tactile" type="button" onClick={() => {
+                  setEditingSettlementId(item.id);
+                  setEditingAmount(String(Math.round(amount(item.amount))));
+                }}>Edit</button>
+                <button className="secondary danger tactile" type="button" onClick={() => deleteSettlementPaid(item)}>Delete</button>
+              </div>
+            </div>
+            <small className="settlement-meta">{item.paidAt ? new Date(item.paidAt).toLocaleString("en-IN") : ""}{item.updatedAt ? ` - edited ${new Date(item.updatedAt).toLocaleString("en-IN")}` : ""}</small>
+            {editingSettlementId === item.id && (
+              <div className="settlement-edit-row">
+                <label>Edit paid amount
+                  <input
+                    value={editingAmount}
+                    onChange={(event) => setEditingAmount(event.target.value)}
+                    type="number"
+                    min="1"
+                    max={Math.round(editableMax(item))}
+                    placeholder={`Max ${Math.round(editableMax(item))}`}
+                  />
+                </label>
+                <button className="primary tactile" type="button" onClick={() => saveSettlementEdit(item)}>Save Edit</button>
+                <button className="secondary tactile" type="button" onClick={() => setEditingSettlementId("")}>Cancel</button>
+              </div>
+            )}
           </div>
         )) : <EmptyState text="Paid settlement history will appear here." small />}
       </section>
@@ -4873,6 +5057,7 @@ function collectionForKind(kind) {
     salaryExpense: "salaryExpenses",
     project: "projects",
     projectTransaction: "projectTransactions",
+    projectSettlement: "projects",
     category: "categories",
     credential: "credentials"
   }[kind];
@@ -4891,6 +5076,7 @@ function kindLabel(kind) {
     salaryExpense: "Salary-Linked Expense",
     project: "Expense Project",
     projectTransaction: "Project Transaction",
+    projectSettlement: "Project Settlement",
     category: "Category",
     credential: "Credential",
     profile: "Profile",

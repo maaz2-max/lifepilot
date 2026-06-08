@@ -19,6 +19,7 @@ const ACTION_TYPES = [
   "salaryExpense",
   "project",
   "projectTransaction",
+  "projectSettlement",
   "category"
 ];
 
@@ -252,7 +253,16 @@ function compactState(state) {
       status: project.status,
       startDate: project.startDate,
       endDate: project.endDate,
-      participants: project.participants
+      participants: project.participants,
+      paidSettlements: (project.paidSettlements || []).map((item) => ({
+        id: item.id,
+        from: item.from,
+        to: item.to,
+        amount: item.amount,
+        paymentType: item.paymentType,
+        paidAt: item.paidAt,
+        updatedAt: item.updatedAt
+      }))
     })),
     salaryExpenses: take(state.salaryExpenses, ["id", "salaryId", "title", "amount", "type", "category", "date", "paymentMethod"]),
     projectTransactions: take(state.projectTransactions, ["id", "projectId", "title", "amount", "type", "category", "date", "time", "paidBy", "owedBy", "splitMode", "participants", "paymentMethod"]),
@@ -532,6 +542,8 @@ Rules:
 - If user asks for a specific project summary, use insights.projects and include budget, debit, credit, remaining, overspent, highest category, and recent transactions.
 - If user asks about project splits, who owes whom, or participant balances, use insights.projects[].participantSpend and splitSettlements. Reply with a clear table showing payer, receiver, and amount.
 - If a project's settlementStatus is "settled" or splitSettlements is empty after paidSettlements, say the relevant people are settled/cleared and do not claim money is still owed.
+- If user says a project split/owe was paid, output type "projectSettlement". Use operation create for a new payment, edit for changing an existing paidSettlements id, and delete for removing a paid settlement. Use paymentType "Full" when the whole pending amount is paid and "Custom" for partial payments.
+- For partial project settlement payments, data.amount is only the amount paid now. The remaining owed amount is recalculated by the app from paidSettlements.
 - When replying with any money amounts, prefer a markdown table so the app can render a premium table.
 - For expense-specific split questions, use insights.projects[].expenseSplits. Each expense split is isolated to that transaction's selected participants only.
 - If user asks for daily expense summary, use only expenses, not salary/project transactions, unless they explicitly ask combined money.
@@ -583,6 +595,7 @@ salary: { title, amount, receivedDate, month, source, paymentMethod, notes, budg
 salaryExpense: { salaryId, title, amount, type, category, date, paymentMethod, notes }
 project: { name, type, description, startDate, endDate, budget, participants, status, notes }
 projectTransaction: { projectId, title, amount, type, category, date, time, paidBy, splitMode, owedBy, participants, paymentMethod, notes }
+projectSettlement: { projectId, projectName, from, to, amount, paymentType, paidAt }
 category: { name, type, color, icon }
 
 Output JSON shape:
