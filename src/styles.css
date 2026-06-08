@@ -914,6 +914,91 @@ input[type="datetime-local"] {
   background: #d8ff8f;
 }
 
+.todo-subtasks {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 0.9rem;
+  padding: 0.85rem;
+  border: 2px solid #111111;
+  border-radius: 18px;
+  background: rgba(255, 253, 245, 0.72);
+  box-shadow: 4px 5px 0 #111111;
+}
+
+.todo-progress {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.todo-progress span {
+  color: #3d3e4d;
+  font-size: 0.78rem;
+  font-weight: 950;
+}
+
+.subtask-row,
+.subtask-add {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.subtask-row {
+  position: relative;
+  min-height: 44px;
+  padding: 0.35rem;
+  border: 2px solid #111111;
+  border-radius: 15px;
+  background: #f8f7ff;
+}
+
+.subtask-row span {
+  position: relative;
+  color: #22222c;
+  font-weight: 900;
+  overflow-wrap: anywhere;
+}
+
+.subtask-row.done span::after {
+  content: "";
+  position: absolute;
+  left: -2px;
+  right: -2px;
+  top: 52%;
+  height: 8px;
+  border-radius: 999px;
+  background:
+    repeating-linear-gradient(105deg, #111111 0 8px, transparent 8px 12px),
+    #d8ff8f;
+  opacity: 0.72;
+  transform: rotate(-2deg) scaleX(0);
+  transform-origin: left center;
+  animation: scratchDone 320ms ease forwards;
+}
+
+.subtask-row.done span {
+  color: #626374;
+}
+
+.subtask-row input {
+  min-height: 38px;
+}
+
+.subtask-add {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.subtask-add .secondary {
+  min-height: 42px;
+}
+
+@keyframes scratchDone {
+  to {
+    transform: rotate(-2deg) scaleX(1);
+  }
+}
+
 .segmented {
   display: inline-flex;
   padding: 0.22rem;
@@ -2342,6 +2427,14 @@ button:disabled {
 
   .record-actions {
     justify-content: flex-start;
+  }
+
+  .subtask-row {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .subtask-row .danger {
+    grid-column: 3;
   }
 
   .segmented {

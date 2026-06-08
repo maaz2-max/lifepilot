@@ -41,6 +41,7 @@ export const AI_JSON_REFERENCE = `{
         "category": "",
         "status": "Pending",
         "reminder": true,
+        "subtasks": ["Read chapter", "Write answers"],
         "notes": ""
       }
     },
@@ -233,7 +234,7 @@ function compactState(state) {
       commonParticipants: state.aiMemory?.commonParticipants || [],
       frequentMerchants: state.aiMemory?.frequentMerchants || []
     },
-    tasks: take(state.tasks, ["id", "title", "dueDate", "startTime", "endTime", "dueTime", "todayOnly", "status", "priority", "category"]),
+    tasks: take(state.tasks, ["id", "title", "dueDate", "startTime", "endTime", "dueTime", "todayOnly", "status", "priority", "category", "subtasks"]),
     reminders: take(state.reminders, ["id", "title", "date", "time", "repeat", "status"]),
     notes: take(state.notes, ["id", "title", "date", "category", "pinned"]),
     events: take(state.events, ["id", "title", "startDate", "startTime", "endDate", "location"]),
@@ -517,6 +518,7 @@ Rules:
 - You may search all compact app data by title, amount, category, date, payment method, status, project, participant, notes, or source.
 - If the user asks whether any task/reminder/note/event/expense exists, list all matching records. If they ask "any task available", list every task with ID, title, date, time, status, priority.
 - Treat todo, to-do, and task as the same LifePilot task records. For todo create/edit/delete requests, output action type "task".
+- For todo/task actions, put multiple child steps in task.subtasks as an array of short strings or objects with title/status.
 - If the user asks for a specific day transaction list, reply with a markdown table only in the reply field. Include Source, Title, Type, Amount, Category, Time, Payment Method, ID when available.
 - For listing tasks/reminders/events/notes, use a markdown table when useful.
 - For insight questions, use the provided insights object first. Answer with exact totals from insights and tables when useful.
@@ -566,7 +568,7 @@ Allowed action types:
 ${ACTION_TYPES.join(", ")}
 
 Action data schemas:
-task: { title, description, dueDate, startTime, endTime, dueTime, todayOnly, priority, category, status, reminder, notes }
+task: { title, description, dueDate, startTime, endTime, dueTime, todayOnly, priority, category, status, reminder, subtasks, notes }
 reminder: { title, description, date, time, repeat, priority, notificationEnabled, status }
 note: { title, content, date, category, reminder, pinned }
 event: { title, description, startDate, startTime, endDate, endTime, location, category, reminderBefore, repeat, status }

@@ -1008,11 +1008,11 @@ export default function App() {
             setToast={setToast}
           />
         )}
-        {active === "todo" && <WorkList type="todo" state={state} openAdd={openAdd} setModal={setModal} remove={remove} upsert={upsert} />}
-        {active === "tasks" && <WorkList type="task" state={state} openAdd={openAdd} setModal={setModal} remove={remove} upsert={upsert} />}
-        {active === "reminders" && <WorkList type="reminder" state={state} openAdd={openAdd} setModal={setModal} remove={remove} upsert={upsert} />}
-        {active === "notes" && <WorkList type="note" state={state} openAdd={openAdd} setModal={setModal} remove={remove} upsert={upsert} />}
-        {active === "events" && <WorkList type="event" state={state} openAdd={openAdd} setModal={setModal} remove={remove} upsert={upsert} />}
+        {active === "todo" && <WorkList type="todo" state={state} openAdd={openAdd} setModal={setModal} remove={remove} upsert={upsert} requestConfirm={requestConfirm} />}
+        {active === "tasks" && <WorkList type="task" state={state} openAdd={openAdd} setModal={setModal} remove={remove} upsert={upsert} requestConfirm={requestConfirm} />}
+        {active === "reminders" && <WorkList type="reminder" state={state} openAdd={openAdd} setModal={setModal} remove={remove} upsert={upsert} requestConfirm={requestConfirm} />}
+        {active === "notes" && <WorkList type="note" state={state} openAdd={openAdd} setModal={setModal} remove={remove} upsert={upsert} requestConfirm={requestConfirm} />}
+        {active === "events" && <WorkList type="event" state={state} openAdd={openAdd} setModal={setModal} remove={remove} upsert={upsert} requestConfirm={requestConfirm} />}
         {active === "expenses" && (
           <ExpenseView
             state={state}
@@ -1794,7 +1794,7 @@ function DateDetail({ state, selectedDate, items, openAdd, setModal }) {
   );
 }
 
-function WorkList({ type, state, openAdd, setModal, remove, upsert }) {
+function WorkList({ type, state, openAdd, setModal, remove, upsert, requestConfirm }) {
   const config = {
     todo: { collection: "tasks", title: "Todo List", add: "task", kind: "task", label: "todo", date: "dueDate", status: ["All", "Today", "Upcoming", "Past", "Overdue", "Completed", "Pending", "In Progress", "Cancelled"] },
     task: { collection: "tasks", title: "Tasks", add: "task", kind: "task", label: "task", date: "dueDate", status: ["All", "Today", "Upcoming", "Past", "Overdue", "Completed", "Pending", "In Progress", "Cancelled"] },
@@ -1806,9 +1806,47 @@ function WorkList({ type, state, openAdd, setModal, remove, upsert }) {
   config.label = config.label || type;
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("All");
+  const [subtaskDrafts, setSubtaskDrafts] = useState({});
+  const [editingSubtask, setEditingSubtask] = useState(null);
   const list = state[config.collection]
     .filter((item) => matchesQuery(item, query))
     .filter((item) => matchesListFilter(item, filter, config.date));
+  const updateSubtasks = (task, nextSubtasks) => {
+    upsert("tasks", { ...task, subtasks: nextSubtasks }, "task");
+  };
+  const addSubtask = (task) => {
+    const title = String(subtaskDrafts[task.id] || "").trim();
+    if (!title) return;
+    updateSubtasks(task, [...normalizeSubtasks(task.subtasks), { id: id("subtask"), title, status: "Pending" }]);
+    setSubtaskDrafts((current) => ({ ...current, [task.id]: "" }));
+  };
+  const toggleSubtask = (task, subtaskId) => {
+    updateSubtasks(task, normalizeSubtasks(task.subtasks).map((subtask) =>
+      subtask.id === subtaskId ? { ...subtask, status: subtask.status === "Completed" ? "Pending" : "Completed", updatedAt: new Date().toISOString() } : subtask
+    ));
+  };
+  const deleteSubtask = (task, subtask) => {
+    const applyDelete = () => updateSubtasks(task, normalizeSubtasks(task.subtasks).filter((entry) => entry.id !== subtask.id));
+    if (requestConfirm) {
+      requestConfirm({
+        title: "Delete subtask?",
+        message: `Delete "${subtask.title}" from this todo?`,
+        confirmLabel: "Delete",
+        tone: "danger",
+        onConfirm: applyDelete
+      });
+      return;
+    }
+    applyDelete();
+  };
+  const saveSubtaskEdit = (task, subtaskId, title) => {
+    const nextTitle = String(title || "").trim();
+    if (!nextTitle) return;
+    updateSubtasks(task, normalizeSubtasks(task.subtasks).map((subtask) =>
+      subtask.id === subtaskId ? { ...subtask, title: nextTitle, updatedAt: new Date().toISOString() } : subtask
+    ));
+    setEditingSubtask(null);
+  };
 
   return (
     <section className="panel">
@@ -1820,6 +1858,8 @@ function WorkList({ type, state, openAdd, setModal, remove, upsert }) {
           const displayTime = item.startTime || item.endTime
             ? [item.startTime, item.endTime].filter(Boolean).join(" - ")
             : item.time || item.dueTime || "";
+          const subtasks = normalizeSubtasks(item.subtasks);
+          const completedSubtasks = subtasks.filter((subtask) => subtask.status === "Completed").length;
           return (
           <article className={`record-card ${type} ${isDone ? "completed" : ""}`} key={item.id}>
             <div>
@@ -1827,9 +1867,42 @@ function WorkList({ type, state, openAdd, setModal, remove, upsert }) {
               <h3>{item.title}</h3>
               <p>{item.description || item.content || item.notes || "No extra notes."}</p>
               <small>{formatDate(item[config.date])} {displayTime}</small>
+              {type === "todo" && (
+                <div className="todo-subtasks">
+                  <div className="todo-progress">
+                    <span>{completedSubtasks}/{subtasks.length || 0} finished</span>
+                    <Progress value={subtasks.length ? (completedSubtasks / subtasks.length) * 100 : 0} />
+                  </div>
+                  {subtasks.length ? subtasks.map((subtask) => {
+                    const editKey = `${item.id}:${subtask.id}`;
+                    const isEditing = editingSubtask?.key === editKey;
+                    const isSubDone = subtask.status === "Completed";
+                    return (
+                      <div className={`subtask-row ${isSubDone ? "done" : ""}`} key={subtask.id}>
+                        <button className={`icon-button tactile ${isSubDone ? "active" : ""}`} type="button" title={isSubDone ? "Undo subtask" : "Complete subtask"} onClick={() => toggleSubtask(item, subtask.id)}>
+                          <CheckCircle2 size={15} />
+                        </button>
+                        {isEditing ? (
+                          <input value={editingSubtask.title} onChange={(event) => setEditingSubtask({ ...editingSubtask, title: event.target.value })} />
+                        ) : <span>{subtask.title}</span>}
+                        {isEditing ? (
+                          <button className="secondary tactile" type="button" onClick={() => saveSubtaskEdit(item, subtask.id, editingSubtask.title)}>Save</button>
+                        ) : (
+                          <button className="icon-button tactile" type="button" title="Edit subtask" onClick={() => setEditingSubtask({ key: editKey, title: subtask.title })}><Edit3 size={15} /></button>
+                        )}
+                        <button className="icon-button danger tactile" type="button" title="Delete subtask" onClick={() => deleteSubtask(item, subtask)}><Trash2 size={15} /></button>
+                      </div>
+                    );
+                  }) : <p className="empty-line">No subtasks yet. Add steps below.</p>}
+                  <div className="subtask-add">
+                    <input value={subtaskDrafts[item.id] || ""} onChange={(event) => setSubtaskDrafts((current) => ({ ...current, [item.id]: event.target.value }))} placeholder="Add subtask" />
+                    <button className="secondary tactile" type="button" onClick={() => addSubtask(item)}><Plus size={15} />Add</button>
+                  </div>
+                </div>
+              )}
             </div>
             <div className="record-actions">
-              {(type === "task" || type === "reminder") && (
+              {(type === "todo" || type === "task" || type === "reminder") && (
                 <button
                   className={`icon-button tactile ${isDone ? "active" : ""}`}
                   title={isDone ? "Undo completed" : "Mark completed"}
@@ -2768,6 +2841,12 @@ function AiAssistant({ state, setState, upsert, setToast, close }) {
       return;
     }
 
+    const localAnswer = buildLocalAiAnswer(text, state);
+    if (localAnswer) {
+      addMessage({ role: "ai", text: localAnswer, actions: [] });
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -3238,11 +3317,11 @@ function parseMarkdownTable(text) {
 }
 
 function hasMoney(text) {
-  return /(?:₹|inr|rs\.?)\s*[\d,]+(?:\.\d{1,2})?|[\d,]+(?:\.\d{1,2})?\s*(?:₹|inr|rs\.?)/i.test(String(text || ""));
+  return /(?:\u20b9|inr|rs\.?)\s*[\d,]+(?:\.\d{1,2})?|[\d,]+(?:\.\d{1,2})?\s*(?:\u20b9|inr|rs\.?)/i.test(String(text || ""));
 }
 
 function extractMoneyHighlights(text) {
-  const matches = String(text || "").match(/(?:₹|INR|Rs\.?)\s*[\d,]+(?:\.\d{1,2})?|[\d,]+(?:\.\d{1,2})?\s*(?:₹|INR|Rs\.?)/gi) || [];
+  const matches = String(text || "").match(/(?:\u20b9|INR|Rs\.?)\s*[\d,]+(?:\.\d{1,2})?|[\d,]+(?:\.\d{1,2})?\s*(?:\u20b9|INR|Rs\.?)/gi) || [];
   return [...new Set(matches.map((match) => match.trim()))].slice(0, 6);
 }
 
@@ -3252,6 +3331,95 @@ function MoneyHighlights({ values }) {
       {values.map((value) => <span key={value}>{value}</span>)}
     </div>
   );
+}
+
+function buildLocalAiAnswer(text, state) {
+  return buildLocalExpenseAnswer(text, state) || buildLocalTodoAnswer(text, state);
+}
+
+function buildLocalExpenseAnswer(text, state) {
+  const normalized = text.toLowerCase();
+  const wantsMoney = /\b(expense|expenses|transaction|transactions|spend|spending|money|debit|credit)\b/.test(normalized);
+  const wantsList = /\b(show|list|find|tell|give|table|summary|month|today|yesterday|week|highest|where|what|how|total)\b/.test(normalized);
+  if (!wantsMoney || !wantsList) return "";
+  const scope = localDateScope(normalized);
+  const wantsCredit = /\bcredit|income|salary\b/.test(normalized);
+  const wantsDebit = /\bexpense|expenses|spend|spending|debit|paid|spent\b/.test(normalized);
+  let rows = allTransactions(state).filter((item) => item.date);
+  if (scope.filter) rows = rows.filter(scope.filter);
+  if (wantsCredit && !wantsDebit) rows = rows.filter((item) => item.type === "Credit");
+  else if (wantsDebit || /\bexpense|expenses|spend|spending\b/.test(normalized)) rows = rows.filter((item) => item.type !== "Credit");
+  if (/\bproject\b/.test(normalized)) rows = rows.filter((item) => /project/i.test(item.source || ""));
+  if (/\bdaily\b/.test(normalized)) rows = rows.filter((item) => item.source === "Daily Expense");
+  if (/\bbill|bills\b/.test(normalized)) rows = rows.filter((item) => item.source === "Bill Tracker");
+  rows = rows.slice().sort(sortByDateDesc);
+  const totalDebit = sum(rows, (item) => item.type !== "Credit");
+  const totalCredit = sum(rows, (item) => item.type === "Credit");
+  const tableRows = rows.length
+    ? rows.slice(0, 40).map((item) => [
+        formatDate(item.date),
+        item.source || "",
+        item.title || item.name || "",
+        item.type || "",
+        rupee.format(amount(item.amount)),
+        item.category || "",
+        item.paymentMethod || "",
+        item.id || ""
+      ])
+    : [["No records", scope.label, "-", "-", rupee.format(0), "-", "-", "-"]];
+  return [
+    `I found ${rows.length} ${rows.length === 1 ? "record" : "records"} for ${scope.label}.`,
+    `Total debit: ${rupee.format(totalDebit)}. Total credit: ${rupee.format(totalCredit)}.`,
+    markdownTable(["Date", "Source", "Title", "Type", "Amount", "Category", "Payment", "ID"], tableRows)
+  ].join("\n\n");
+}
+
+function buildLocalTodoAnswer(text, state) {
+  const normalized = text.toLowerCase();
+  const wantsTodo = /\b(todo|to-do|task|tasks|subtask|subtasks)\b/.test(normalized);
+  const wantsList = /\b(show|list|find|tell|give|table|pending|completed|today|overdue)\b/.test(normalized);
+  if (!wantsTodo || !wantsList) return "";
+  const scope = localDateScope(normalized);
+  let tasks = state.tasks.slice();
+  if (scope.filter && /\b(today|yesterday|week|month|\d{4}-\d{2}-\d{2})\b/.test(normalized)) tasks = tasks.filter(scope.filter);
+  if (/\bcompleted|done|finished\b/.test(normalized)) tasks = tasks.filter((task) => task.status === "Completed");
+  if (/\bpending|open|active\b/.test(normalized)) tasks = tasks.filter((task) => !["Completed", "Cancelled"].includes(task.status));
+  if (/\boverdue\b/.test(normalized)) tasks = tasks.filter((task) => !["Completed", "Cancelled"].includes(task.status) && task.dueDate < todayISO());
+  const tableRows = tasks.length
+    ? tasks.slice(0, 40).map((task) => {
+        const subtasks = normalizeSubtasks(task.subtasks);
+        const done = subtasks.filter((subtask) => subtask.status === "Completed").length;
+        return [
+          task.title,
+          formatDate(task.dueDate),
+          [task.startTime, task.endTime || task.dueTime].filter(Boolean).join(" - "),
+          task.status,
+          `${done}/${subtasks.length}`,
+          task.id
+        ];
+      })
+    : [["No todos", scope.label, "-", "-", "0/0", "-"]];
+  return [
+    `I found ${tasks.length} todo ${tasks.length === 1 ? "item" : "items"} for ${scope.label}.`,
+    markdownTable(["Todo", "Date", "Time", "Status", "Subtasks", "ID"], tableRows)
+  ].join("\n\n");
+}
+
+function localDateScope(normalizedText) {
+  const today = todayISO();
+  const explicit = normalizedText.match(/\b(20\d{2}-\d{2}-\d{2})\b/);
+  if (explicit) return { label: formatDate(explicit[1]), filter: (item) => item.date === explicit[1] || item.dueDate === explicit[1] };
+  if (/\byesterday\b/.test(normalizedText)) {
+    const date = addDaysISO(today, -1);
+    return { label: "yesterday", filter: (item) => item.date === date || item.dueDate === date };
+  }
+  if (/\btoday\b/.test(normalizedText)) return { label: "today", filter: (item) => item.date === today || item.dueDate === today };
+  if (/\bweek\b/.test(normalizedText)) return { label: "this week", filter: (item) => inRange(item.date || item.dueDate, "week") };
+  if (/\blast month\b/.test(normalizedText)) return { label: "last month", filter: (item) => inRange(item.date || item.dueDate, "lastMonth") };
+  if (/\bmonth|monthly|january|february|march|april|may|june|july|august|september|october|november|december\b/.test(normalizedText)) {
+    return { label: "this month", filter: (item) => inRange(item.date || item.dueDate, "month") };
+  }
+  return { label: "all time", filter: null };
 }
 
 function normalizeAiActions(parsed) {
@@ -3524,6 +3692,10 @@ function actionDoneLabel(operation) {
 }
 
 function Field({ field, value, set }) {
+  if (field.type === "subtasks") {
+    const textValue = Array.isArray(value) ? normalizeSubtasks(value).map((item) => item.title).join("\n") : value || "";
+    return <label className={field.wide ? "wide" : ""}>{field.label}<textarea value={textValue} onChange={(e) => set(field.name, e.target.value)} /></label>;
+  }
   if (field.type === "textarea") return <label className={field.wide ? "wide" : ""}>{field.label}<textarea value={value || ""} onChange={(e) => set(field.name, e.target.value)} required={field.required} /></label>;
   if (field.type === "select") return <label className={field.wide ? "wide" : ""}>{field.label}<Select value={value || ""} onChange={(next) => set(field.name, next)} options={field.options} /></label>;
   if (field.type === "participantMulti") {
@@ -4114,7 +4286,7 @@ function Chart({ title, data, type = "bar" }) {
 function getInitialForm(kind, item, context = {}, state) {
   const baseDate = context.date || todayISO();
   const defaults = {
-    task: { title: "", description: "", dueDate: baseDate, startTime: "", endTime: "", dueTime: nowTime(), todayOnly: false, priority: state.settings.defaultTaskPriority, category: "", status: "Pending", reminder: false, notes: "" },
+    task: { title: "", description: "", dueDate: baseDate, startTime: "", endTime: "", dueTime: nowTime(), todayOnly: false, priority: state.settings.defaultTaskPriority, category: "", status: "Pending", reminder: false, notes: "", subtasks: [] },
     reminder: { title: "", description: "", date: baseDate, time: state.settings.defaultReminderTime, repeat: "No repeat", priority: "Medium", notificationEnabled: true, status: "Active" },
     note: { title: "", content: "", date: baseDate, category: "", reminder: false, pinned: false },
     event: { title: "", description: "", startDate: baseDate, startTime: nowTime(), endDate: baseDate, endTime: "", location: "", category: "", reminderBefore: "", repeat: "No repeat", imported: false, status: "Scheduled" },
@@ -4168,6 +4340,7 @@ function fieldsForKind(kind, state, form = {}) {
       { name: "category", label: "Category", type: "select", options: categoryOptions },
       { name: "status", label: "Status", type: "select", options: ["Pending", "In Progress", "Completed", "Cancelled", "Overdue"] },
       { name: "reminder", label: "Reminder option", type: "checkbox" },
+      { name: "subtasks", label: "Subtasks (one per line)", type: "subtasks", wide: true },
       { name: "notes", label: "Notes", type: "textarea", wide: true }
     ],
     reminder: [
@@ -4305,7 +4478,8 @@ function normalizeForm(kind, form) {
     return {
       ...form,
       dueDate: form.todayOnly ? todayISO() : form.dueDate,
-      dueTime: form.dueTime || form.endTime || form.startTime || ""
+      dueTime: form.dueTime || form.endTime || form.startTime || "",
+      subtasks: normalizeSubtasks(form.subtasks)
     };
   }
   if (kind === "project") {
@@ -4327,7 +4501,7 @@ function normalizeForm(kind, form) {
 function withAiDefaults(kind, data) {
   const date = todayISO();
   const defaults = {
-    task: { title: "Task", description: "", dueDate: date, startTime: "", endTime: "", dueTime: "", todayOnly: false, priority: "Medium", category: "", status: "Pending", reminder: false, notes: "" },
+    task: { title: "Task", description: "", dueDate: date, startTime: "", endTime: "", dueTime: "", todayOnly: false, priority: "Medium", category: "", status: "Pending", reminder: false, notes: "", subtasks: [] },
     reminder: { title: "Reminder", description: "", date, time: "", repeat: "No repeat", priority: "Medium", notificationEnabled: true, status: "Active" },
     note: { title: "Note", content: "", date, category: "", reminder: false, pinned: false },
     event: { title: "Event", description: "", startDate: date, startTime: "", endDate: date, endTime: "", location: "", category: "", reminderBefore: "", repeat: "No repeat", status: "Scheduled", imported: false },
@@ -4345,6 +4519,26 @@ function withAiDefaults(kind, data) {
 
 function splitParticipants(value) {
   return String(value || "").split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function normalizeSubtasks(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => typeof item === "string" ? { title: item } : item)
+      .filter((item) => String(item?.title || "").trim())
+      .map((item) => ({
+        id: item.id || id("subtask"),
+        title: String(item.title || "").trim(),
+        note: item.note || "",
+        status: item.status === "Completed" ? "Completed" : "Pending",
+        updatedAt: item.updatedAt || ""
+      }));
+  }
+  return String(value || "")
+    .split(/\r?\n|,/)
+    .map((title) => title.trim())
+    .filter(Boolean)
+    .map((title) => ({ id: id("subtask"), title, note: "", status: "Pending", updatedAt: "" }));
 }
 
 function uniqueList(items) {
