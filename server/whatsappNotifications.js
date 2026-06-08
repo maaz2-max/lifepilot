@@ -409,7 +409,19 @@ export async function handleWhatsappCron(req, res, env = process.env) {
 
   const now = new Date().toISOString();
   try {
-    const { userKey } = whatsappConfig(env);
+    const { userKey, apiUrl, apiKey, sessionId } = whatsappConfig(env);
+
+    // Keep OpenWA instance awake (prevents Render free tier from going to sleep)
+    if (apiUrl) {
+      const headers = {};
+      if (apiKey) {
+        headers["X-API-Key"] = apiKey;
+      }
+      fetch(`${apiUrl}/api/health`, { headers }).catch(() => {
+        // Ignore failures
+      });
+    }
+
     const items = await supabaseRequest(
       `notification_items?user_key=eq.${encodeURIComponent(userKey)}&enabled=eq.true&status=eq.active&due_at=lte.${encodeURIComponent(now)}&select=*`,
       {},
