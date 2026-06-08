@@ -975,7 +975,7 @@ export default function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${appThemeClass(state)}`}>
       <aside className="sidebar">
         <Brand />
         <nav className="nav-list">
@@ -1383,6 +1383,27 @@ function weatherCodeMeta(code = 0) {
   return { label: "Clear", theme: "clear" };
 }
 
+function appThemeClass(state) {
+  const weather = state.settings.weatherEnabled ? state.weather?.current : null;
+  const time = new Date();
+  const isNight = weather?.is_day === 0 || time.getHours() >= 19 || time.getHours() < 6;
+  if (isNight) return "theme-night";
+  if (weather) return `theme-${weatherCodeMeta(weather.weather_code).theme}`;
+  return time.getHours() < 11 ? "theme-morning" : "theme-day";
+}
+
+function PilotCompanion({ mood = "day" }) {
+  return (
+    <div className={`pilot-companion ${mood}`} aria-hidden="true">
+      <span className="pilot-head" />
+      <span className="pilot-body" />
+      <span className="pilot-wing left" />
+      <span className="pilot-wing right" />
+      <span className="pilot-shadow" />
+    </div>
+  );
+}
+
 function homeInsightCards(state) {
   const today = todayISO();
   const weekEnd = addDaysISO(today, 7);
@@ -1460,6 +1481,7 @@ function HomeView({ state, setState, openAdd, setActive, setAiOpen }) {
     <section className="page-grid">
       <div className="hero-panel raised">
         <WeatherScene weather={state.weather} enabled={state.settings.weatherEnabled} />
+        <PilotCompanion mood={appThemeClass(state).replace("theme-", "")} />
         <div>
           <p className="eyebrow">Good {new Date().getHours() < 12 ? "morning" : new Date().getHours() < 17 ? "afternoon" : "evening"}</p>
           <h2>{state.profile?.name}, your day is ready.</h2>
@@ -1929,9 +1951,16 @@ function WorkList({ type, state, openAdd, setModal, remove, upsert, requestConfi
 
 function ExpenseView({ state, expenseTab, setExpenseTab, selectedSalary, setSelectedSalary, selectedProject, setSelectedProject, openAdd, setModal, remove, upsert, requestConfirm, setToast }) {
   const tabs = [["command", "Command"], ["daily", "Daily"], ["bills", "Bills"], ["salary", "Salary"], ["projects", "Projects"], ["analytics", "Analytics"]];
+  const downloadReport = () => {
+    openExpensePdfReport(state);
+    setToast("PDF report opened");
+  };
   return (
     <section className="panel">
-      <SectionHeader title="Money Command Center" action={<Segmented className="money-tabs" value={expenseTab} onChange={setExpenseTab} options={tabs} />} />
+      <SectionHeader
+        title="Money Command Center"
+        action={<div className="cluster expense-head-actions"><Segmented className="money-tabs" value={expenseTab} onChange={setExpenseTab} options={tabs} /><button className="secondary tactile" type="button" onClick={downloadReport}><Download size={17} />PDF</button></div>}
+      />
       {expenseTab === "command" && <MoneyCommand state={state} openAdd={openAdd} />}
       {expenseTab === "daily" && <DailyExpenses state={state} openAdd={openAdd} setModal={setModal} remove={remove} />}
       {expenseTab === "bills" && <BillsView state={state} openAdd={openAdd} setModal={setModal} remove={remove} upsert={upsert} />}
@@ -1988,12 +2017,23 @@ function DailyExpenses({ state, openAdd, setModal, remove }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("This month");
   const list = state.expenses.filter((item) => matchesQuery(item, query)).filter((item) => matchesMoneyFilter(item, filter));
+  const dailySplit = dailySplitSummary(list);
   return (
     <div>
       <Toolbar query={query} setQuery={setQuery} filter={filter} setFilter={setFilter} options={["All", "Today", "This week", "This month", "Last month", "Credit", "Debit"]} />
       <MetricGrid metrics={[["Daily Credit", sum(list, (e) => e.type === "Credit")], ["Daily Debit", sum(list, (e) => e.type === "Debit")], ["Balance", sum(list, (e) => e.type === "Credit") - sum(list, (e) => e.type === "Debit")], ["Today's Spending", sum(state.expenses, (e) => e.date === todayISO() && e.type === "Debit")]]} />
       <button className="primary tactile spaced" onClick={() => openAdd("expense")}><Plus size={18} />Add Entry</button>
       <RecordTable list={list} type="expense" setModal={setModal} remove={(id) => remove("expenses", id, "daily expense")} />
+      <section className="sub-panel daily-split-panel">
+        <SectionHeader title="Daily Split and Owes" />
+        {dailySplit.settlements.length ? dailySplit.settlements.map((item, index) => (
+          <div className="settlement-row" key={`${item.from}-${item.to}-${index}`}>
+            <span>{item.from}</span>
+            <strong>pays {rupee.format(item.amount)}</strong>
+            <span>{item.to}</span>
+          </div>
+        )) : <EmptyState text="No daily split owes in this view." small />}
+      </section>
     </div>
   );
 }
@@ -2817,6 +2857,14 @@ function AiAssistant({ state, setState, upsert, setToast, close }) {
 
     const credentialIntent = getCredentialIntent(text, state.credentials || []);
     if (credentialIntent) {
+      if (model.startsWith("mlvoca:")) {
+        addMessage({
+          role: "ai",
+          text: "Public AI models are blocked from credential and vault answers for security. Switch to Gemini for non-secret credential guidance, or use the local Vault PIN reveal so secrets never leave this device.",
+          actions: []
+        });
+        return;
+      }
       addMessage({
         role: "ai",
         text: credentialIntent.mode === "view"
@@ -3349,8 +3397,10 @@ function ensureLocalTableReply(prompt, reply, state) {
 function isLocalExpenseTablePrompt(text) {
   const normalized = String(text || "").toLowerCase();
   const wantsMoney = /\b(expense|expenses|transaction|transactions|spend|spending|money|debit|credit|payment|payments|bill|bills)\b/.test(normalized);
-  const wantsTable = /\b(show|list|find|tell|give|table|summary|month|today|yesterday|week|highest|where|what|how|total|all|records?|available|details?)\b/.test(normalized);
-  return wantsMoney && (wantsTable || /^all\s+(expense|expenses|transaction|transactions)\b/.test(normalized) || /^(expense|expenses|transaction|transactions)\??$/.test(normalized.trim()));
+  const wantsAnalysis = /\b(analyze|analyse|analysis|insight|insights|dashboard|report)\b/.test(normalized);
+  const wantsPeriodAnalysis = wantsAnalysis && /\b(month|week|today|daily|project|salary|bill|cashflow)\b/.test(normalized);
+  const wantsTable = /\b(show|list|find|tell|give|table|summary|month|today|yesterday|week|highest|where|what|how|total|all|records?|available|details?|analyze|analyse|analysis|insights?|report)\b/.test(normalized);
+  return (wantsMoney || wantsPeriodAnalysis) && (wantsTable || /^all\s+(expense|expenses|transaction|transactions)\b/.test(normalized) || /^(expense|expenses|transaction|transactions)\??$/.test(normalized.trim()));
 }
 
 function buildLocalExpenseAnswer(text, state, options = {}) {
@@ -3369,6 +3419,9 @@ function buildLocalExpenseAnswer(text, state, options = {}) {
   rows = rows.slice().sort(sortByDateDesc);
   const totalDebit = sum(rows, (item) => item.type !== "Credit");
   const totalCredit = sum(rows, (item) => item.type === "Credit");
+  const bySourceRows = Object.entries(groupAmounts(rows, "source"))
+    .sort((a, b) => b[1] - a[1])
+    .map(([source, value]) => [source, rupee.format(value)]);
   const tableRows = rows.length
     ? rows.slice(0, 40).map((item) => [
         formatDate(item.date),
@@ -3384,6 +3437,7 @@ function buildLocalExpenseAnswer(text, state, options = {}) {
   return [
     `I found ${rows.length} ${rows.length === 1 ? "record" : "records"} for ${scope.label}.`,
     `Total debit: ${rupee.format(totalDebit)}. Total credit: ${rupee.format(totalCredit)}.`,
+    markdownTable(["Source", "Total"], bySourceRows.length ? bySourceRows : [["No source", rupee.format(0)]]),
     markdownTable(["Date", "Source", "Title", "Type", "Amount", "Category", "Payment", "ID"], tableRows)
   ].join("\n\n");
 }
@@ -3417,6 +3471,139 @@ function buildLocalTodoAnswer(text, state) {
     `I found ${tasks.length} todo ${tasks.length === 1 ? "item" : "items"} for ${scope.label}.`,
     markdownTable(["Todo", "Date", "Time", "Status", "Subtasks", "ID"], tableRows)
   ].join("\n\n");
+}
+
+function openExpensePdfReport(state) {
+  const html = buildExpenseReportHtml(state);
+  const reportWindow = window.open("", "_blank", "noopener,noreferrer");
+  if (!reportWindow) {
+    const blob = new Blob([html], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `lifepilot-expense-report-${todayISO()}.html`;
+    link.click();
+    URL.revokeObjectURL(url);
+    return;
+  }
+  reportWindow.document.open();
+  reportWindow.document.write(html);
+  reportWindow.document.close();
+  reportWindow.focus();
+  setTimeout(() => reportWindow.print(), 350);
+}
+
+function buildExpenseReportHtml(state) {
+  const transactions = allTransactions(state).sort(sortByDateDesc);
+  const money = {
+    credit: sum(transactions, (item) => item.type === "Credit"),
+    debit: sum(transactions, (item) => item.type !== "Credit"),
+    balance: sum(transactions, (item) => item.type === "Credit") - sum(transactions, (item) => item.type !== "Credit")
+  };
+  const byDate = transactions.reduce((acc, item) => {
+    const key = item.date || "No date";
+    acc[key] = acc[key] || [];
+    acc[key].push(item);
+    return acc;
+  }, {});
+  const dailySplit = dailySplitSummary(state.expenses);
+  const projectSections = state.projects.map((project) => {
+    const projectTransactions = state.projectTransactions.filter((item) => item.projectId === project.id).sort(sortByDateDesc);
+    const stats = projectStats(state, project);
+    const split = projectSplitSummary(project, projectTransactions);
+    return `
+      <section>
+        <h2>${escapeHtml(project.name)}</h2>
+        ${reportTable(["Budget", "Debit", "Credit", "Remaining", "Overspent", "Status"], [[rupee.format(amount(project.budget)), rupee.format(stats.debit), rupee.format(stats.credit), rupee.format(stats.remaining), rupee.format(stats.overspent), project.status || ""]])}
+        <h3>Transactions</h3>
+        ${reportTable(["Date", "Title", "Type", "Amount", "Paid By", "Split", "Category"], projectTransactions.map((item) => [formatDate(item.date), item.title, item.type, rupee.format(amount(item.amount)), item.paidBy || "", splitModeOf(item), item.category || ""]))}
+        <h3>Owes</h3>
+        ${reportTable(["From", "To", "Amount"], split.settlements.map((item) => [item.from, item.to, rupee.format(item.amount)]))}
+        <h3>Paid Settlements</h3>
+        ${reportTable(["From", "To", "Amount", "Paid At"], split.paidSettlements.map((item) => [item.from, item.to, rupee.format(amount(item.amount)), item.paidAt ? new Date(item.paidAt).toLocaleString("en-IN") : ""]))}
+      </section>
+    `;
+  }).join("");
+  return `<!doctype html>
+  <html>
+    <head>
+      <title>LifePilot Expense Report</title>
+      <style>
+        @page { margin: 16mm; }
+        body { margin: 0; color: #111; font-family: Inter, Arial, sans-serif; background: #fbf7e8; }
+        body::before { content: "LifePilot"; position: fixed; inset: 38% auto auto 8%; z-index: 0; color: rgba(17,17,17,.045); font-size: 96px; font-weight: 950; transform: rotate(-22deg); }
+        main { position: relative; z-index: 1; }
+        header { display: flex; align-items: center; gap: 14px; border: 3px solid #111; border-radius: 22px; padding: 18px; background: #d8ff8f; box-shadow: 8px 8px 0 #111; }
+        header img { width: 58px; height: 58px; }
+        h1, h2, h3 { margin: 0 0 10px; }
+        h1 { font-size: 30px; }
+        h2 { margin-top: 22px; font-size: 22px; }
+        h3 { margin-top: 16px; font-size: 16px; }
+        .meta { color: #4c4d5d; font-weight: 800; }
+        .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 18px 0; }
+        .card { border: 3px solid #111; border-radius: 18px; padding: 14px; background: #fffdf5; box-shadow: 5px 5px 0 #111; }
+        .card span { display: block; color: #5f6070; font-size: 12px; font-weight: 900; text-transform: uppercase; }
+        .card strong { display: block; margin-top: 8px; font-size: 22px; }
+        section { break-inside: avoid; margin: 18px 0; }
+        table { width: 100%; border-collapse: separate; border-spacing: 0; overflow: hidden; border: 2px solid #111; border-radius: 14px; background: #fff; margin-bottom: 12px; font-size: 12px; }
+        th, td { padding: 8px; border-right: 2px solid #111; border-bottom: 2px solid #111; text-align: left; vertical-align: top; }
+        th { background: #c5c8ff; font-weight: 950; }
+        tr:last-child td { border-bottom: 0; }
+        th:last-child, td:last-child { border-right: 0; }
+        .watermark-logo { position: fixed; right: 18mm; bottom: 16mm; width: 95px; opacity: .08; }
+        @media print { button { display: none; } body { background: #fff; } }
+      </style>
+    </head>
+    <body>
+      <main>
+        <header>
+          <img src="/icons/icon.svg" alt="" />
+          <div>
+            <h1>LifePilot Expense Report</h1>
+            <div class="meta">Generated ${new Date().toLocaleString("en-IN")} • ${transactions.length} records</div>
+          </div>
+        </header>
+        <img class="watermark-logo" src="/icons/icon.svg" alt="" />
+        <div class="cards">
+          <div class="card"><span>Total Credit</span><strong>${rupee.format(money.credit)}</strong></div>
+          <div class="card"><span>Total Debit</span><strong>${rupee.format(money.debit)}</strong></div>
+          <div class="card"><span>Balance</span><strong>${rupee.format(money.balance)}</strong></div>
+        </div>
+        <section>
+          <h2>Source Analytics</h2>
+          ${reportTable(["Source", "Total"], Object.entries(groupAmounts(transactions, "source")).sort((a, b) => b[1] - a[1]).map(([source, total]) => [source, rupee.format(total)]))}
+          <h2>Category Analytics</h2>
+          ${reportTable(["Category", "Total"], Object.entries(groupAmounts(transactions.filter((item) => item.type !== "Credit"), "category")).sort((a, b) => b[1] - a[1]).map(([category, total]) => [category, rupee.format(total)]))}
+        </section>
+        <section>
+          <h2>Date-wise Transactions</h2>
+          ${Object.keys(byDate).sort((a, b) => String(b).localeCompare(String(a))).map((date) => `
+            <h3>${date === "No date" ? "No date" : formatDate(date)}</h3>
+            ${reportTable(["Source", "Title", "Type", "Amount", "Category", "Payment"], byDate[date].map((item) => [item.source || "", item.title || item.name || "", item.type || "", rupee.format(amount(item.amount)), item.category || "", item.paymentMethod || ""]))}
+          `).join("")}
+        </section>
+        <section>
+          <h2>Daily Transaction Splits</h2>
+          ${reportTable(["Participant", "Paid", "Share", "Balance"], dailySplit.stats.map((item) => [item.name, rupee.format(item.paid), rupee.format(item.share), `${item.balance >= 0 ? "Gets" : "Owes"} ${rupee.format(Math.abs(item.balance))}`]))}
+          <h3>Daily Owes</h3>
+          ${reportTable(["From", "To", "Amount"], dailySplit.settlements.map((item) => [item.from, item.to, rupee.format(item.amount)]))}
+        </section>
+        <section>
+          <h2>Expense Projects, Splits and Owes</h2>
+          ${projectSections || "<p>No expense projects yet.</p>"}
+        </section>
+      </main>
+    </body>
+  </html>`;
+}
+
+function reportTable(headers, rows) {
+  const cleanRows = rows?.length ? rows : [headers.map(() => "-")];
+  return `<table><thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead><tbody>${cleanRows.map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[char]));
 }
 
 function localDateScope(normalizedText) {
@@ -4043,6 +4230,27 @@ function ProjectSplitView({ project, transactions, upsert }) {
   );
 }
 
+function dailySplitSummary(transactions) {
+  const names = uniqueList(transactions.flatMap((item) => [item.paidBy, item.owedBy, ...(item.participants || [])]));
+  const stats = names.map((name) => {
+    const paid = transactions.filter((item) => item.type === "Debit" && item.paidBy === name).reduce((total, item) => {
+      const mode = splitModeOf(item);
+      const hasEqualSplit = mode === "Equal split" && (item.participants || []).filter(Boolean).length > 0;
+      const hasDirectOwed = mode === "Direct owed" && item.owedBy;
+      return hasEqualSplit || hasDirectOwed ? total + amount(item.amount) : total;
+    }, 0);
+    const share = transactions.filter((item) => item.type === "Debit").reduce((total, item) => {
+      const mode = splitModeOf(item);
+      if (mode === "Direct owed") return item.owedBy === name ? total + amount(item.amount) : total;
+      if (mode !== "Equal split") return total;
+      const splitMembers = (item.participants || []).filter(Boolean);
+      return splitMembers.includes(name) ? total + amount(item.amount) / Math.max(splitMembers.length, 1) : total;
+    }, 0);
+    return { name, paid, share, credit: 0, balance: paid - share };
+  });
+  return { stats, settlements: buildSettlements(stats) };
+}
+
 function projectSplitSummary(project, transactions) {
   const names = uniqueList([...(project.participants || []), ...transactions.flatMap((item) => [item.paidBy, item.owedBy, ...(item.participants || [])])]);
   const debitTransactions = transactions.filter((item) => item.type === "Debit");
@@ -4331,7 +4539,7 @@ function getInitialForm(kind, item, context = {}, state) {
     reminder: { title: "", description: "", date: baseDate, time: state.settings.defaultReminderTime, repeat: "No repeat", priority: "Medium", notificationEnabled: true, status: "Active" },
     note: { title: "", content: "", date: baseDate, category: "", reminder: false, pinned: false },
     event: { title: "", description: "", startDate: baseDate, startTime: nowTime(), endDate: baseDate, endTime: "", location: "", category: "", reminderBefore: "", repeat: "No repeat", imported: false, status: "Scheduled" },
-    expense: { title: "", amount: "", type: "Debit", category: "", date: baseDate, time: nowTime(), paymentMethod: "UPI", notes: "", reminder: false },
+    expense: { title: "", amount: "", type: "Debit", category: "", date: baseDate, time: nowTime(), paymentMethod: "UPI", splitMode: "No split", paidBy: "", owedBy: "", participants: "", notes: "", reminder: false },
     bill: { title: "", amount: "", dueDate: baseDate, status: "Unpaid", reminderBefore: "1 day", category: "Bills", paymentMethod: "", notes: "" },
     salary: { title: "Salary", amount: "", receivedDate: baseDate, month: baseDate.slice(0, 7), source: "", paymentMethod: "Bank transfer", notes: "", budgetPlan: "" },
     salaryExpense: { salaryId: context.salaryId || "", title: "", amount: "", type: "Debit", category: "", date: baseDate, paymentMethod: "UPI", notes: "" },
@@ -4345,6 +4553,10 @@ function getInitialForm(kind, item, context = {}, state) {
   const merged = { ...defaults[kind], ...(item || {}) };
   if (kind === "project" && Array.isArray(merged.participants)) merged.participants = merged.participants.join(", ");
   if (kind === "projectTransaction") {
+    if (!item?.splitMode && Array.isArray(merged.participants) && merged.participants.length) merged.splitMode = "Equal split";
+    if (Array.isArray(merged.participants)) merged.participants = merged.participants.join(", ");
+  }
+  if (kind === "expense") {
     if (!item?.splitMode && Array.isArray(merged.participants) && merged.participants.length) merged.splitMode = "Equal split";
     if (Array.isArray(merged.participants)) merged.participants = merged.participants.join(", ");
   }
@@ -4415,7 +4627,21 @@ function fieldsForKind(kind, state, form = {}) {
       { name: "repeat", label: "Repeat", type: "select", options: ["No repeat", "Daily", "Weekly", "Monthly", "Yearly", "Custom"] },
       { name: "status", label: "Status", type: "select", options: ["Scheduled", "Completed", "Cancelled"] }
     ],
-    expense: [...commonMoney.slice(0, 4), { name: "date", label: "Date", type: "date", required: true }, { name: "time", label: "Time", type: "time" }, ...commonMoney.slice(4), { name: "reminder", label: "Optional reminder", type: "checkbox" }],
+    expense: [
+      ...commonMoney.slice(0, 4),
+      { name: "date", label: "Date", type: "date", required: true },
+      { name: "time", label: "Time", type: "time" },
+      { name: "splitMode", label: "Split mode", type: "select", options: ["No split", "Equal split", "Direct owed"] },
+      { name: "paidBy", label: form.splitMode === "Direct owed" ? "Receiver / paid by" : "Paid by", type: allParticipantOptions.length ? "select" : "text", options: [["", "Select participant"], ...allParticipantOptions] },
+      ...(form.splitMode === "Direct owed"
+        ? [{ name: "owedBy", label: "Owed by", type: allParticipantOptions.length ? "select" : "text", options: [["", "Select participant"], ...allParticipantOptions] }]
+        : []),
+      ...(form.splitMode === "Equal split"
+        ? [{ name: "participants", label: "Split between", type: "participantMultiCustom", options: allParticipantOptions, wide: true }]
+        : []),
+      ...commonMoney.slice(4),
+      { name: "reminder", label: "Optional reminder", type: "checkbox" }
+    ],
     bill: [
       { name: "title", label: "Bill name", required: true },
       { name: "amount", label: "Amount", type: "number", min: 0, required: true },
@@ -4508,6 +4734,8 @@ function validateForm(kind, form) {
   if (kind === "credential" && !form.title?.trim()) return "Credential name is required.";
   if (kind === "profile" && (!form.name?.trim() || !form.dob)) return "Name and date of birth are required.";
   if (["expense", "bill", "salary", "salaryExpense", "projectTransaction"].includes(kind) && amount(form.amount) <= 0) return "Amount must be greater than zero.";
+  if (kind === "expense" && form.type === "Debit" && form.splitMode === "Equal split" && !splitParticipants(form.participants).length) return "Select participants for equal split, or choose No split.";
+  if (kind === "expense" && form.type === "Debit" && form.splitMode === "Direct owed" && (!form.paidBy || !form.owedBy)) return "Select receiver and owed by participant.";
   if (kind === "projectTransaction" && form.type === "Debit" && form.splitMode === "Equal split" && !splitParticipants(form.participants).length) return "Select participants for equal split, or choose No split.";
   if (kind === "projectTransaction" && form.type === "Debit" && form.splitMode === "Direct owed" && (!form.paidBy || !form.owedBy)) return "Select receiver and owed by participant.";
   if (kind === "project" && amount(form.budget) < 0) return "Budget cannot be negative.";
@@ -4521,6 +4749,15 @@ function normalizeForm(kind, form) {
       dueDate: form.todayOnly ? todayISO() : form.dueDate,
       dueTime: form.dueTime || form.endTime || form.startTime || "",
       subtasks: normalizeSubtasks(form.subtasks)
+    };
+  }
+  if (kind === "expense") {
+    const mode = form.splitMode || (splitParticipants(form.participants).length ? "Equal split" : "No split");
+    return {
+      ...form,
+      splitMode: mode,
+      owedBy: mode === "Direct owed" ? form.owedBy : "",
+      participants: mode === "Equal split" ? splitParticipants(form.participants) : []
     };
   }
   if (kind === "project") {
@@ -4546,7 +4783,7 @@ function withAiDefaults(kind, data) {
     reminder: { title: "Reminder", description: "", date, time: "", repeat: "No repeat", priority: "Medium", notificationEnabled: true, status: "Active" },
     note: { title: "Note", content: "", date, category: "", reminder: false, pinned: false },
     event: { title: "Event", description: "", startDate: date, startTime: "", endDate: date, endTime: "", location: "", category: "", reminderBefore: "", repeat: "No repeat", status: "Scheduled", imported: false },
-    expense: { title: "Expense", amount: 0, type: "Debit", category: "", date, time: nowTime(), paymentMethod: "UPI", notes: "", reminder: false },
+    expense: { title: "Expense", amount: 0, type: "Debit", category: "", date, time: nowTime(), paymentMethod: "UPI", splitMode: "No split", paidBy: "", owedBy: "", participants: [], notes: "", reminder: false },
     bill: { title: "Bill", amount: 0, dueDate: date, status: "Unpaid", reminderBefore: "1 day", category: "Bills", paymentMethod: "", notes: "" },
     salary: { title: "Salary", amount: 0, receivedDate: date, month: date.slice(0, 7), source: "", paymentMethod: "Bank transfer", notes: "", budgetPlan: "" },
     salaryExpense: { salaryId: "", title: "Salary expense", amount: 0, type: "Debit", category: "", date, paymentMethod: "UPI", notes: "" },

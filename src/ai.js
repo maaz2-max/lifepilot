@@ -103,6 +103,10 @@ export const AI_JSON_REFERENCE = `{
         "date": "2026-06-06",
         "time": "20:00",
         "paymentMethod": "UPI",
+        "splitMode": "No split",
+        "paidBy": "",
+        "owedBy": "",
+        "participants": [],
         "notes": "",
         "reminder": false
       }
@@ -238,7 +242,7 @@ function compactState(state) {
     reminders: take(state.reminders, ["id", "title", "date", "time", "repeat", "status"]),
     notes: take(state.notes, ["id", "title", "date", "category", "pinned"]),
     events: take(state.events, ["id", "title", "startDate", "startTime", "endDate", "location"]),
-    expenses: take(state.expenses, ["id", "title", "amount", "type", "category", "date", "time", "paymentMethod", "notes"]),
+    expenses: take(state.expenses, ["id", "title", "amount", "type", "category", "date", "time", "paymentMethod", "splitMode", "paidBy", "owedBy", "participants", "notes"]),
     bills: take(state.bills || [], ["id", "title", "amount", "dueDate", "status", "reminderBefore", "category", "paymentMethod", "notes"]),
     salaries: take(state.salaries, ["id", "title", "amount", "receivedDate", "month", "source"]),
     projects: state.projects.map((project) => ({
@@ -542,6 +546,7 @@ Rules:
 - For task/todo actions, include startTime and endTime when the user gives a time range. If the user says "today only", set todayOnly true and use today's date.
 - Prefer compact app data preferences.defaultPaymentMethod, preferences.commonParticipants, and preferences.frequentMerchants as local defaults when the user does not specify payment method, participant, or merchant.
 - For daily expenses, output type "expense".
+- Daily expenses can also use splitMode, paidBy, owedBy, and participants just like project transactions when the user asks for normal daily split/owes.
 - For expenses inside a named project, find the exact project id by name and output type "projectTransaction".
 - For project transactions, always set paidBy to one participant from that project when clear and set participants to the involved participant names. If unclear, ask which project participants were involved.
 - For project split expenses, participants means the people sharing/splitting that payment, not only people present in the project.
@@ -572,7 +577,7 @@ task: { title, description, dueDate, startTime, endTime, dueTime, todayOnly, pri
 reminder: { title, description, date, time, repeat, priority, notificationEnabled, status }
 note: { title, content, date, category, reminder, pinned }
 event: { title, description, startDate, startTime, endDate, endTime, location, category, reminderBefore, repeat, status }
-expense: { title, amount, type, category, date, time, paymentMethod, notes, reminder }
+expense: { title, amount, type, category, date, time, paymentMethod, splitMode, paidBy, owedBy, participants, notes, reminder }
 bill: { title, amount, dueDate, status, reminderBefore, category, paymentMethod, notes }
 salary: { title, amount, receivedDate, month, source, paymentMethod, notes, budgetPlan }
 salaryExpense: { salaryId, title, amount, type, category, date, paymentMethod, notes }

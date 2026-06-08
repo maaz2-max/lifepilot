@@ -21,6 +21,210 @@
   --red: #ef9e95;
 }
 
+.app-shell.theme-night {
+  background:
+    linear-gradient(128deg, rgba(255, 255, 255, 0.08) 0 12%, transparent 12% 100%),
+    linear-gradient(145deg, #22243c 0%, #c7c8f4 62%, #fbf7e8 100%);
+}
+
+.app-shell.theme-night .sidebar,
+.app-shell.theme-night .bottom-nav,
+.app-shell.theme-night .panel,
+.app-shell.theme-night .sub-panel {
+  background: rgba(247, 245, 251, 0.92);
+}
+
+.app-shell.theme-night .hero-panel {
+  background:
+    linear-gradient(135deg, rgba(34, 36, 60, 0.9), rgba(197, 200, 255, 0.74)),
+    #c5c8ff;
+  color: #ffffff;
+}
+
+.app-shell.theme-night .hero-panel h2,
+.app-shell.theme-night .hero-panel p {
+  color: #ffffff;
+}
+
+.app-shell.theme-cloud {
+  background: linear-gradient(145deg, #d7d9e8 0%, #c7c8f4 48%, #f7f5fb 100%);
+}
+
+.app-shell.theme-cloud .panel,
+.app-shell.theme-cloud .sub-panel,
+.app-shell.theme-cloud .bottom-nav,
+.app-shell.theme-cloud .sidebar {
+  background: rgba(247, 245, 251, 0.94);
+}
+
+.app-shell.theme-rain,
+.app-shell.theme-storm {
+  background:
+    linear-gradient(164deg, rgba(255, 255, 255, 0.18) 0 20%, transparent 20% 100%),
+    linear-gradient(145deg, #bcd3ee 0%, #c7c8f4 54%, #fbf7e8 100%);
+}
+
+.app-shell.theme-morning {
+  background: linear-gradient(145deg, #f9efbd 0%, #d8ff8f 38%, #c7c8f4 100%);
+}
+
+.pilot-companion {
+  position: absolute;
+  right: clamp(1rem, 5vw, 4rem);
+  bottom: 0.35rem;
+  z-index: 1;
+  width: 132px;
+  height: 132px;
+  transform-style: preserve-3d;
+  perspective: 520px;
+  animation: pilotFloat 4.8s ease-in-out infinite;
+}
+
+.hero-panel > .pilot-companion {
+  position: absolute;
+  z-index: 1;
+}
+
+.pilot-head,
+.pilot-body,
+.pilot-wing,
+.pilot-shadow {
+  position: absolute;
+  display: block;
+}
+
+.pilot-head {
+  left: 40px;
+  top: 10px;
+  width: 52px;
+  height: 52px;
+  border: 3px solid #111111;
+  border-radius: 19px 19px 23px 23px;
+  background:
+    radial-gradient(circle at 35% 42%, #111111 0 4px, transparent 5px),
+    radial-gradient(circle at 67% 42%, #111111 0 4px, transparent 5px),
+    linear-gradient(145deg, #fffdf5, #ffe09a);
+  box-shadow: 7px 8px 0 #111111;
+}
+
+.pilot-head::after {
+  content: "";
+  position: absolute;
+  left: 18px;
+  bottom: 10px;
+  width: 16px;
+  height: 7px;
+  border-bottom: 3px solid #111111;
+  border-radius: 999px;
+}
+
+.pilot-body {
+  left: 30px;
+  top: 58px;
+  width: 72px;
+  height: 56px;
+  border: 3px solid #111111;
+  border-radius: 24px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.38) 0 32%, transparent 32% 100%),
+    linear-gradient(145deg, #d8ff8f, #c5c8ff);
+  box-shadow: 8px 9px 0 #111111;
+}
+
+.pilot-wing {
+  top: 68px;
+  width: 34px;
+  height: 42px;
+  border: 3px solid #111111;
+  border-radius: 17px;
+  background: #f8f7ff;
+  box-shadow: 5px 6px 0 #111111;
+}
+
+.pilot-wing.left {
+  left: 4px;
+  transform: rotate(-14deg);
+}
+
+.pilot-wing.right {
+  right: 4px;
+  transform: rotate(14deg);
+}
+
+.pilot-shadow {
+  left: 24px;
+  bottom: 0;
+  width: 86px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(17, 17, 17, 0.18);
+  filter: blur(2px);
+}
+
+.pilot-companion.night .pilot-body {
+  background: linear-gradient(145deg, #c5c8ff, #22243c);
+}
+
+.pilot-companion.cloud .pilot-body {
+  background: linear-gradient(145deg, #f8f7ff, #b7bacf);
+}
+
+.pilot-companion.rain .pilot-body,
+.pilot-companion.storm .pilot-body {
+  background: linear-gradient(145deg, #a9d7f5, #d8ff8f);
+}
+
+.expense-head-actions {
+  justify-content: flex-end;
+}
+
+.daily-split-panel {
+  margin-top: 1rem;
+}
+
+@keyframes pilotFloat {
+  0%, 100% { transform: translateY(0) rotateX(0deg) rotateZ(-1deg); }
+  50% { transform: translateY(-10px) rotateX(8deg) rotateZ(2deg); }
+}
+
+@media (max-width: 720px) {
+  .pilot-companion {
+    right: 0.7rem;
+    bottom: -0.1rem;
+    width: 98px;
+    height: 98px;
+    opacity: 0.82;
+  }
+
+  .pilot-head {
+    left: 31px;
+    width: 40px;
+    height: 40px;
+  }
+
+  .pilot-body {
+    left: 23px;
+    top: 47px;
+    width: 56px;
+    height: 44px;
+  }
+
+  .pilot-wing {
+    top: 53px;
+    width: 26px;
+    height: 32px;
+  }
+
+  .expense-head-actions {
+    width: 100%;
+  }
+
+  .expense-head-actions .secondary {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
 * {
   box-sizing: border-box;
 }
@@ -210,6 +414,9 @@ input[type="datetime-local"] {
   min-width: 0;
   width: 100%;
   overflow-x: clip;
+  max-height: 100dvh;
+  overflow-y: auto;
+  scrollbar-width: none;
 }
 
 .topbar {
