@@ -1213,6 +1213,7 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (!storageReady) return;
     if (window.location.hash) {
       const hash = window.location.hash.substring(1);
       const params = new URLSearchParams(hash);
@@ -1234,7 +1235,7 @@ export default function App() {
         window.history.replaceState(null, null, " ");
       }
     }
-  }, [setState]);
+  }, [storageReady, setState]);
 
   const connectGmail = () => {
     if (!state.settings.gmailClientId) {
