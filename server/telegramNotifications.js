@@ -384,3 +384,21 @@ export async function handleTelegramCron(req, res, env = process.env) {
     jsonResponse(res, 502, { error: error.message || "Telegram cron failed" });
   }
 }
+
+export async function handleTelegramSendCustom(req, res, env = process.env) {
+  if (req.method !== "POST") {
+    jsonResponse(res, 405, { error: "Method not allowed" });
+    return;
+  }
+  try {
+    const body = await readBody(req);
+    if (!body.text) {
+      jsonResponse(res, 400, { error: "Missing text" });
+      return;
+    }
+    await sendTelegramMessage(body.text, env);
+    jsonResponse(res, 200, { ok: true });
+  } catch (error) {
+    jsonResponse(res, 502, { error: error.message || "Telegram send failed" });
+  }
+}

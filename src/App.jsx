@@ -908,16 +908,58 @@ export default function App() {
   const [gmailSyncing, setGmailSyncing] = useState(false);
   const [gmailSyncStatus, setGmailSyncStatus] = useState("");
 
-  const fetchGmailTransactions = async () => {
+  const fetchGmailTransactions = async (isBackground = false) => {
     const token = state.settings.gmailAccessToken;
     const expiry = state.settings.gmailTokenExpiry;
     if (!token || (expiry && expiry < Date.now())) {
-      setToast("Gmail connection expired. Please reconnect.");
+      if (!isBackground) {
+        setToast("Gmail connection expired. Please reconnect.");
+      }
       return;
     }
 
-    setGmailSyncing(true);
-    setGmailSyncStatus("Querying Google Inbox...");
+    if (!isBackground) {
+      setGmailSyncing(true);
+      setGmailSyncStatus("Querying Google Inbox...");
+    }
+
+    const escapeHtml = (str) => String(str || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+    const sendTelegramSyncSummary = async (newRecords, error = null) => {
+      if (!state.settings.telegramNotifications) return;
+      
+      let text = `<b>📬 LifePilot Gmail Sync</b>\n`;
+      text += `Status: ${error ? "❌ Failed" : "✅ Success"}\n`;
+      text += `Time: ${new Date().toLocaleTimeString("en-IN")}\n`;
+      
+      if (error) {
+        text += `Error: ${escapeHtml(error.message || error)}\n`;
+      } else {
+        text += `New Extracted Actions: <b>${newRecords.length}</b>\n`;
+        if (newRecords.length > 0) {
+          text += `\n<b>Transactions Details:</b>\n`;
+          newRecords.forEach((r, idx) => {
+            text += `${idx + 1}. <b>${r.title}</b>\n`;
+            text += `   Amount: ${rupee.format(r.amount)}\n`;
+            text += `   Category: ${r.category}\n`;
+            text += `   Type: ${r.type}\n`;
+            if (r.paymentMethod) {
+              text += `   Payment: ${r.paymentMethod}${r.accountReference ? ` (${r.accountReference})` : ""}\n`;
+            }
+          });
+        }
+      }
+      
+      try {
+        await fetch("/api/notifications/send-custom", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text })
+        });
+      } catch (err) {
+        console.error("Failed to send Gmail sync summary to Telegram", err);
+      }
+    };
 
     try {
       const query = encodeURIComponent("label:INBOX (debit OR credit OR transaction OR payment OR spent OR UPI OR bank)");
@@ -926,15 +968,19 @@ export default function App() {
       });
 
       if (!listRes.ok) {
-        throw new Error("Failed to fetch message list from Gmail API");
+        const errText = await listRes.text();
+        throw new Error(`Gmail API returned ${listRes.status}: ${errText.includes("disabled") ? "Gmail API not enabled in Google Console" : listRes.statusText}`);
       }
 
       const listData = await listRes.json();
       const messages = listData.messages || [];
 
       if (!messages.length) {
-        setGmailSyncStatus("No new messages found matching transaction keywords.");
-        setTimeout(() => setGmailSyncing(false), 2000);
+        if (!isBackground) {
+          setGmailSyncStatus("No new messages found matching transaction keywords.");
+          setTimeout(() => setGmailSyncing(false), 2000);
+        }
+        await sendTelegramSyncSummary([]);
         return;
       }
 
@@ -946,17 +992,24 @@ export default function App() {
       const unprocessedMessages = messages.filter((msg) => !existingEmailIds.has(msg.id));
 
       if (!unprocessedMessages.length) {
-        setGmailSyncStatus("No new unprocessed transaction emails in Inbox.");
-        setTimeout(() => setGmailSyncing(false), 2000);
+        if (!isBackground) {
+          setGmailSyncStatus("No new unprocessed transaction emails in Inbox.");
+          setTimeout(() => setGmailSyncing(false), 2000);
+        }
+        await sendTelegramSyncSummary([]);
         return;
       }
 
-      setGmailSyncStatus(`Found ${unprocessedMessages.length} new message(s). Processing...`);
+      if (!isBackground) {
+        setGmailSyncStatus(`Found ${unprocessedMessages.length} new message(s). Processing...`);
+      }
       const newRecords = [];
 
       for (let i = 0; i < unprocessedMessages.length; i++) {
         const msg = unprocessedMessages[i];
-        setGmailSyncStatus(`Fetching email ${i + 1} of ${unprocessedMessages.length}...`);
+        if (!isBackground) {
+          setGmailSyncStatus(`Fetching email ${i + 1} of ${unprocessedMessages.length}...`);
+        }
 
         const msgRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=full`, {
           headers: { Authorization: `Bearer ${token}` }
@@ -975,7 +1028,9 @@ export default function App() {
         const snippet = msgData.snippet || "";
         const bodyText = getGmailMessageBody(payload) || snippet;
 
-        setGmailSyncStatus(`Analyzing email ${i + 1} with Gemini...`);
+        if (!isBackground) {
+          setGmailSyncStatus(`Analyzing email ${i + 1} with Gemini...`);
+        }
 
         try {
           const parsed = await parseEmailWithGemini({
@@ -1025,16 +1080,42 @@ export default function App() {
         }));
         setToast(`Fetched ${newRecords.length} transaction(s)!`);
       } else {
-        setToast("No new transaction records found in emails.");
+        if (!isBackground) {
+          setToast("No new transaction records found in emails.");
+        }
       }
+      await sendTelegramSyncSummary(newRecords);
     } catch (err) {
       console.error("Gmail sync failed", err);
-      setToast("Gmail synchronization failed.");
+      if (!isBackground) {
+        setToast(`Gmail sync failed: ${err.message}`);
+      }
+      await sendTelegramSyncSummary([], err);
     } finally {
-      setGmailSyncing(false);
-      setGmailSyncStatus("");
+      if (!isBackground) {
+        setGmailSyncing(false);
+        setGmailSyncStatus("");
+      }
     }
   };
+
+  useEffect(() => {
+    if (!storageReady) return;
+    const token = state.settings.gmailAccessToken;
+    const expiry = state.settings.gmailTokenExpiry;
+    if (token && (!expiry || expiry > Date.now())) {
+      const timer = setTimeout(() => {
+        fetchGmailTransactions(true);
+      }, 3000);
+      const interval = setInterval(() => {
+        fetchGmailTransactions(true);
+      }, 300000);
+      return () => {
+        clearTimeout(timer);
+        clearInterval(interval);
+      };
+    }
+  }, [storageReady, state.settings.gmailAccessToken, state.settings.gmailTokenExpiry]);
 
   useEffect(() => {
     const timer = setTimeout(() => setPinBooting(false), 900);

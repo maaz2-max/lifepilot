@@ -6,7 +6,8 @@ import {
   handleNotificationSync as handleTelegramSync,
   handleTelegramTest,
   handleTelegramWebhook,
-  handleTelegramCron
+  handleTelegramCron,
+  handleTelegramSendCustom
 } from "./server/telegramNotifications.js";
 
 
@@ -36,6 +37,9 @@ export default defineConfig(({ mode }) => {
           });
           server.middlewares.use("/api/notifications/test-telegram", async (req, res) => {
             await handleTelegramTest(req, res, env);
+          });
+          server.middlewares.use("/api/notifications/send-custom", async (req, res) => {
+            await handleTelegramSendCustom(req, res, env);
           });
           server.middlewares.use("/api/bot/telegram-webhook", async (req, res) => {
             await handleTelegramWebhook(req, res, env);
