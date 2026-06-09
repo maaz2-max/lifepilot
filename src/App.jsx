@@ -132,7 +132,8 @@ const emptyState = {
     gmailLastStatus: "",
     gmailLastError: "",
     weatherEnabled: false,
-    weatherLocation: ""
+    weatherLocation: "",
+    modernTheme: false
   }
 };
 
@@ -1847,6 +1848,7 @@ function weatherCodeMeta(code = 0) {
 }
 
 function appThemeClass(state) {
+  if (state.settings.modernTheme) return "theme-modern";
   const weather = state.settings.weatherEnabled ? state.weather?.current : null;
   const time = new Date();
   const isNight = weather?.is_day === 0 || time.getHours() >= 19 || time.getHours() < 6;
@@ -2896,6 +2898,15 @@ function SettingsView({ state, setState, setToast, requestNotifications, setModa
     <section className="settings-grid">
       <div className="panel">
         <SectionHeader title="Profile" action={<button className="secondary tactile" onClick={() => setModal({ kind: "profile", item: state.profile })}>Edit Profile</button>} />
+        <div className="panel modern-theme-toggle-panel">
+          <div className="modern-theme-banner">
+            <div>
+              <strong>✨ Modern Theme</strong>
+              <p>Switch to a sleek, dark-accent UI with glassmorphism cards and smooth animations.</p>
+            </div>
+            <Toggle label="" checked={!!state.settings.modernTheme} onChange={(value) => setSetting("modernTheme", value)} />
+          </div>
+        </div>
         <div className="profile-large">
           {state.profile?.image ? <img src={state.profile.image} alt="" /> : <UserRound size={42} />}
           <div>

@@ -1,0 +1,302 @@
+/* Modern Theme for LifePilot */
+/* Triggered when .theme-modern is applied to .app-shell */
+
+.app-shell.theme-modern {
+  --modern-bg: #0f1014;
+  --modern-panel: #181920;
+  --modern-card: #20222a;
+  --modern-text: #f0f0f5;
+  --modern-muted: #8b8d98;
+  --modern-border: rgba(255, 255, 255, 0.1);
+  --modern-accent-primary: #ff5f38; /* Vibrant Orange from ref */
+  --modern-accent-secondary: #00d9b5; /* Cyan/Mint from ref */
+  --modern-accent-tertiary: #6b4cff; /* Purple */
+  --modern-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  
+  background: var(--modern-bg);
+  color: var(--modern-text);
+  font-family: 'Inter', sans-serif;
+}
+
+/* Base Overrides for Modern Theme */
+.app-shell.theme-modern * {
+  border-color: var(--modern-border) !important;
+}
+
+.app-shell.theme-modern .sidebar,
+.app-shell.theme-modern .bottom-nav {
+  background: var(--modern-panel) !important;
+  border-right: 1px solid var(--modern-border);
+  border-top: 1px solid var(--modern-border);
+  backdrop-filter: blur(20px);
+}
+
+.app-shell.theme-modern .panel,
+.app-shell.theme-modern .sub-panel,
+.app-shell.theme-modern .onboarding-panel,
+.app-shell.theme-modern .modal {
+  background: var(--modern-panel) !important;
+  border: 1px solid var(--modern-border) !important;
+  box-shadow: var(--modern-shadow) !important;
+  border-radius: 24px !important;
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.app-shell.theme-modern .panel:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 15px 40px rgba(0, 0, 0, 0.6) !important;
+}
+
+.app-shell.theme-modern .hero-panel {
+  background: linear-gradient(135deg, #1f1b2e 0%, #15111a 100%) !important;
+  border: 1px solid rgba(107, 76, 255, 0.3) !important;
+  box-shadow: 0 0 40px rgba(107, 76, 255, 0.1) !important;
+  overflow: hidden;
+}
+
+.app-shell.theme-modern .hero-panel::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(circle, rgba(255, 95, 56, 0.15) 0%, transparent 50%);
+  animation: modernGlow 10s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes modernGlow {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.app-shell.theme-modern .hero-panel h2,
+.app-shell.theme-modern .hero-panel p,
+.app-shell.theme-modern h1,
+.app-shell.theme-modern h2,
+.app-shell.theme-modern h3 {
+  color: var(--modern-text) !important;
+  letter-spacing: -0.5px;
+}
+
+/* Nav Buttons */
+.app-shell.theme-modern .nav-button {
+  color: var(--modern-muted) !important;
+  border-radius: 12px;
+  transition: all 0.2s ease;
+}
+
+.app-shell.theme-modern .nav-button:hover {
+  background: rgba(255, 255, 255, 0.05) !important;
+  color: var(--modern-text) !important;
+}
+
+.app-shell.theme-modern .nav-button.active,
+.app-shell.theme-modern .bottom-nav button.active {
+  background: var(--modern-accent-primary) !important;
+  color: #fff !important;
+  box-shadow: 0 4px 15px rgba(255, 95, 56, 0.4) !important;
+  border-color: transparent !important;
+}
+
+/* Primary & Secondary Buttons */
+.app-shell.theme-modern .primary {
+  background: var(--modern-accent-primary) !important;
+  color: #fff !important;
+  border: none !important;
+  border-radius: 12px !important;
+  box-shadow: 0 4px 15px rgba(255, 95, 56, 0.3) !important;
+  transition: all 0.2s ease !important;
+}
+
+.app-shell.theme-modern .primary:hover {
+  background: #ff7654 !important;
+  box-shadow: 0 6px 20px rgba(255, 95, 56, 0.5) !important;
+  transform: translateY(-1px);
+}
+
+.app-shell.theme-modern .secondary,
+.app-shell.theme-modern .icon-button {
+  background: var(--modern-card) !important;
+  color: var(--modern-text) !important;
+  border: 1px solid var(--modern-border) !important;
+  border-radius: 12px !important;
+  box-shadow: none !important;
+  transition: all 0.2s ease !important;
+}
+
+.app-shell.theme-modern .secondary:hover,
+.app-shell.theme-modern .icon-button:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border-color: rgba(255, 255, 255, 0.2) !important;
+}
+
+/* Inputs & Forms */
+.app-shell.theme-modern input,
+.app-shell.theme-modern textarea,
+.app-shell.theme-modern select {
+  background: var(--modern-card) !important;
+  color: var(--modern-text) !important;
+  border: 1px solid var(--modern-border) !important;
+  border-radius: 12px !important;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2) !important;
+}
+
+.app-shell.theme-modern input:focus,
+.app-shell.theme-modern textarea:focus,
+.app-shell.theme-modern select:focus {
+  border-color: var(--modern-accent-primary) !important;
+  box-shadow: 0 0 0 2px rgba(255, 95, 56, 0.2) !important;
+}
+
+.app-shell.theme-modern label {
+  color: var(--modern-muted) !important;
+}
+
+/* Cards & Grid Items */
+.app-shell.theme-modern .quick-card,
+.app-shell.theme-modern .record-card,
+.app-shell.theme-modern .metric-card,
+.app-shell.theme-modern .insight-card {
+  background: var(--modern-card) !important;
+  border: 1px solid var(--modern-border) !important;
+  border-radius: 16px !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2) !important;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.app-shell.theme-modern .quick-card:hover,
+.app-shell.theme-modern .record-card:hover {
+  transform: translateY(-3px) scale(1.01);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.4) !important;
+  border-color: rgba(255, 255, 255, 0.15) !important;
+}
+
+.app-shell.theme-modern .record-card p,
+.app-shell.theme-modern .record-card small,
+.app-shell.theme-modern .metric-card span,
+.app-shell.theme-modern .insight-card span,
+.app-shell.theme-modern .insight-card small {
+  color: var(--modern-muted) !important;
+}
+
+/* Status Colors & Highlights */
+.app-shell.theme-modern .credit {
+  color: var(--modern-accent-secondary) !important;
+}
+
+.app-shell.theme-modern .debit,
+.app-shell.theme-modern .danger {
+  color: #ff4d4d !important;
+}
+
+.app-shell.theme-modern .insight-card.good {
+  background: rgba(0, 217, 181, 0.1) !important;
+  border-color: rgba(0, 217, 181, 0.3) !important;
+}
+
+.app-shell.theme-modern .insight-card.good strong {
+  color: var(--modern-accent-secondary) !important;
+}
+
+.app-shell.theme-modern .insight-card.warn {
+  background: rgba(255, 171, 0, 0.1) !important;
+  border-color: rgba(255, 171, 0, 0.3) !important;
+}
+
+/* Toggle Switches */
+.app-shell.theme-modern .toggle-row input {
+  background: var(--modern-card) !important;
+  border: 1px solid var(--modern-border) !important;
+}
+
+.app-shell.theme-modern .toggle-row input::after {
+  background: var(--modern-muted) !important;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.5) !important;
+}
+
+.app-shell.theme-modern .toggle-row input:checked {
+  background: var(--modern-accent-primary) !important;
+  border-color: var(--modern-accent-primary) !important;
+}
+
+.app-shell.theme-modern .toggle-row input:checked::after {
+  background: #fff !important;
+}
+
+/* AI Chat & Special Components */
+.app-shell.theme-modern .ai-chat-body {
+  background: var(--modern-bg) !important;
+}
+
+.app-shell.theme-modern .ai-message.user {
+  background: rgba(255, 95, 56, 0.1) !important;
+  border: 1px solid rgba(255, 95, 56, 0.2) !important;
+}
+
+.app-shell.theme-modern .ai-message.ai {
+  background: var(--modern-card) !important;
+  border: 1px solid var(--modern-border) !important;
+}
+
+.app-shell.theme-modern .ai-action-card {
+  background: var(--modern-panel) !important;
+  border-left: 3px solid var(--modern-accent-tertiary) !important;
+}
+
+/* Scrollbar styling for modern theme */
+.app-shell.theme-modern ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.app-shell.theme-modern ::-webkit-scrollbar-track {
+  background: transparent;
+}
+.app-shell.theme-modern ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+}
+.app-shell.theme-modern ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Calendar Date Cells */
+.app-shell.theme-modern .date-cell {
+  background: var(--modern-card) !important;
+  border: 1px solid var(--modern-border) !important;
+  box-shadow: none !important;
+}
+
+.app-shell.theme-modern .date-cell.selected {
+  outline: 2px solid var(--modern-accent-primary) !important;
+  background: rgba(255, 95, 56, 0.05) !important;
+}
+
+.app-shell.theme-modern .week-day {
+  background: var(--modern-card) !important;
+  border: 1px solid var(--modern-border) !important;
+  box-shadow: none !important;
+}
+
+.app-shell.theme-modern .week-day.selected {
+  outline: 2px solid var(--modern-accent-secondary) !important;
+  background: rgba(0, 217, 181, 0.05) !important;
+}
+
+.app-shell.theme-modern .brand strong,
+.app-shell.theme-modern .eyebrow,
+.app-shell.theme-modern .topbar p {
+  color: var(--modern-muted) !important;
+}
+
+/* Floating Animation for elements */
+@keyframes floatModern {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5px); }
+}
+
+.app-shell.theme-modern .lumi-companion {
+  animation: floatModern 6s ease-in-out infinite;
+  filter: drop-shadow(0 10px 20px rgba(0, 0, 0, 0.4));
+}
