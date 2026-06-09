@@ -538,7 +538,11 @@ async function testTelegramNotifications() {
 function decodeBase64Url(str) {
   if (!str) return "";
   try {
-    const base64 = str.replace(/-/g, '+').replace(/_/g, '/');
+    let base64 = str.replace(/-/g, '+').replace(/_/g, '/');
+    const pad = base64.length % 4;
+    if (pad) {
+      base64 += '='.repeat(4 - pad);
+    }
     const raw = atob(base64);
     const bytes = new Uint8Array(raw.length);
     for (let i = 0; i < raw.length; i++) {
@@ -1110,7 +1114,7 @@ export default function App() {
         settings: {
           ...current.settings,
           gmailLastStatus: "Sync failed",
-          gmailLastError: err.message || "Unknown error"
+          gmailLastError: err.stack || err.message || "Unknown error"
         }
       }));
       if (!isBackground) {
