@@ -158,12 +158,24 @@
 .app-shell.theme-modern .quick-card,
 .app-shell.theme-modern .record-card,
 .app-shell.theme-modern .metric-card,
-.app-shell.theme-modern .insight-card {
+.app-shell.theme-modern .insight-card,
+.app-shell.theme-modern .mini-list,
+.app-shell.theme-modern .item-row,
+.app-shell.theme-modern .project-row,
+.app-shell.theme-modern .transaction-row,
+.app-shell.theme-modern .subtask-row,
+.app-shell.theme-modern .subtask-add,
+.app-shell.theme-modern .todo-subtasks,
+.app-shell.theme-modern .digest-main,
+.app-shell.theme-modern .digest-side,
+.app-shell.theme-modern .alert-row,
+.app-shell.theme-modern .pie-chart span {
   background: var(--modern-card) !important;
   border: 1px solid var(--modern-border) !important;
   border-radius: 16px !important;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2) !important;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  color: var(--modern-text) !important;
 }
 
 .app-shell.theme-modern .quick-card:hover,
@@ -177,8 +189,25 @@
 .app-shell.theme-modern .record-card small,
 .app-shell.theme-modern .metric-card span,
 .app-shell.theme-modern .insight-card span,
-.app-shell.theme-modern .insight-card small {
+.app-shell.theme-modern .insight-card small,
+.app-shell.theme-modern .mini-list p,
+.app-shell.theme-modern .mini-list .empty-line,
+.app-shell.theme-modern .item-row small,
+.app-shell.theme-modern .item-row span,
+.app-shell.theme-modern .project-row small,
+.app-shell.theme-modern .transaction-row small,
+.app-shell.theme-modern .subtask-row span,
+.app-shell.theme-modern .digest-main p,
+.app-shell.theme-modern .digest-side small,
+.app-shell.theme-modern .alert-row span {
   color: var(--modern-muted) !important;
+}
+
+.app-shell.theme-modern .metric-card strong,
+.app-shell.theme-modern .insight-card strong,
+.app-shell.theme-modern .alert-row strong,
+.app-shell.theme-modern .mini-list h3 {
+  color: var(--modern-text) !important;
 }
 
 /* Status Colors & Highlights */
