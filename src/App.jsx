@@ -160,6 +160,17 @@ const quickActions = [
   { kind: "credential", label: "Add Secure Credential", icon: KeyRound }
 ];
 
+const dashboardNavigationItems = [
+  { key: "todo", label: "Todo List", icon: CheckCircle2 },
+  { key: "calendar", label: "Calendar", icon: CalendarDays },
+  { key: "expenses", label: "Money & Expenses", icon: WalletCards },
+  { key: "gmail", label: "Gmail Records", icon: Mail },
+  { key: "vault", label: "Secure Vault", icon: KeyRound },
+  { key: "tasks", label: "Tasks Manager", icon: ClipboardCheck },
+  { key: "reminders", label: "Reminders", icon: Bell },
+  { key: "notes", label: "Notes & Diary", icon: NotebookPen }
+];
+
 const aiQuickChips = [
   { label: "Add todo", prompt: "Add a todo task" },
   { label: "Add expense", prompt: "Add daily expense" },
@@ -1849,11 +1860,16 @@ function HomeView({ state, setState, openAdd, setActive, setAiOpen }) {
       </section>
 
       <section className="panel">
-        <SectionHeader title="Quick Add" action={<Select value={range} onChange={setRange} options={rangeOptions()} />} />
+        <SectionHeader title="Quick Open" action={<Select value={range} onChange={setRange} options={rangeOptions()} />} />
         <div className="quick-grid">
-          {quickActions.slice(0, 8).map((action) => {
-            const Icon = action.icon;
-            return <button className="quick-card tactile" key={`${action.kind}-${action.label}`} onClick={() => openAdd(action.kind)}><Icon size={22} />{action.label}</button>;
+          {dashboardNavigationItems.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button className="quick-card tactile" key={item.key} onClick={() => setActive(item.key)}>
+                <Icon size={22} />
+                {item.label}
+              </button>
+            );
           })}
         </div>
       </section>
