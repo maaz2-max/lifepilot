@@ -35,7 +35,8 @@ import {
   UserRound,
   Users,
   WalletCards,
-  X
+  X,
+  Mail
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -80,6 +81,7 @@ const emptyState = {
   projectTransactions: [],
   credentials: [],
   aiMessages: [],
+  gmailRecords: [],
   aiMemory: {
     defaultPaymentMethod: "",
     commonParticipants: [],
@@ -122,6 +124,10 @@ const emptyState = {
     telegramLastSyncAt: "",
     telegramLastStatus: "",
     telegramLastError: "",
+    gmailClientId: "",
+    gmailAccessToken: "",
+    gmailTokenExpiry: 0,
+    gmailProcessedEmailIds: [],
     weatherEnabled: false,
     weatherLocation: ""
   }
@@ -137,6 +143,7 @@ const navItems = [
   { key: "events", label: "Events", icon: Sparkles },
   { key: "expenses", label: "Expenses", icon: WalletCards },
   { key: "vault", label: "Vault", icon: KeyRound },
+  { key: "gmail", label: "Gmail Records", icon: Mail },
   { key: "settings", label: "Settings", icon: Settings }
 ];
 
@@ -514,6 +521,82 @@ async function testTelegramNotifications() {
   return data;
 }
 
+function decodeBase64Url(str) {
+  if (!str) return "";
+  try {
+    const base64 = str.replace(/-/g, '+').replace(/_/g, '/');
+    const raw = atob(base64);
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) {
+      bytes[i] = raw.charCodeAt(i);
+    }
+    return new TextDecoder().decode(bytes);
+  } catch (e) {
+    console.error("Base64Url decode failed", e);
+    return "";
+  }
+}
+
+function getGmailMessageBody(payload) {
+  if (payload.body && payload.body.data) {
+    return decodeBase64Url(payload.body.data);
+  }
+  if (payload.parts) {
+    for (const part of payload.parts) {
+      const body = getGmailMessageBody(part);
+      if (body) return body;
+    }
+  }
+  return "";
+}
+
+async function parseEmailWithGemini({ model, subject, from, date, body }) {
+  const selectedModel = model || "gemini-2.5-flash-lite";
+  const prompt = `You are a financial parsing assistant. Analyze this email and extract the transaction details if it represents a financial purchase, payment, debit, credit, refund, bill, or money transfer. 
+If it is NOT a financial transaction (e.g., promotional mail, password reset, login alert, shipping notice, newsletter), return a JSON object with "isTransaction": false.
+
+If it IS a financial transaction, return a JSON object with:
+{
+  "isTransaction": true,
+  "title": "Merchant or bank name (e.g. Amazon, Uber, HDFC Bank, Swiggy)",
+  "amount": number (numerical value of the amount, e.g. 299.00),
+  "type": "Debit" or "Credit",
+  "date": "YYYY-MM-DD",
+  "time": "HH:mm" (extract time if available, otherwise omit),
+  "category": "Suggested category (e.g., Food, Travel, Bills, Shopping, Income, Healthcare, Entertainment, Education, Others)",
+  "currency": "INR",
+  "notes": "Short summary of transaction description"
+}
+
+Email Subject: ${subject}
+Sender (From): ${from}
+Email Date: ${date}
+Email Snippet/Body:
+${body.substring(0, 1500)}
+
+Return ONLY the raw JSON object. Do not include markdown code block formatting (like \`\`\`json).`;
+
+  const response = await fetch("/api/ai", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: selectedModel,
+      prompt
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error("Gemini API call failed");
+  }
+
+  const result = await response.json();
+  const data = result.data || result;
+  const text = data.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("") || "{}";
+  const cleanText = text.replace(/```json/gi, "").replace(/```/g, "").trim();
+  return JSON.parse(cleanText);
+}
+
+
 
 function nextRepeatDate(date, repeat) {
   const next = new Date(`${date || todayISO()}T12:00:00`);
@@ -769,6 +852,135 @@ export default function App() {
   const notified = useRef(new Set());
   const telegramSyncSignature = useRef("");
 
+  const [gmailSyncing, setGmailSyncing] = useState(false);
+  const [gmailSyncStatus, setGmailSyncStatus] = useState("");
+
+  const fetchGmailTransactions = async () => {
+    const token = state.settings.gmailAccessToken;
+    const expiry = state.settings.gmailTokenExpiry;
+    if (!token || (expiry && expiry < Date.now())) {
+      setToast("Gmail connection expired. Please reconnect.");
+      return;
+    }
+
+    setGmailSyncing(true);
+    setGmailSyncStatus("Querying Google Inbox...");
+
+    try {
+      const query = encodeURIComponent("label:INBOX (debit OR credit OR transaction OR payment OR spent OR UPI OR bank)");
+      const listRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${query}&maxResults=10`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      if (!listRes.ok) {
+        throw new Error("Failed to fetch message list from Gmail API");
+      }
+
+      const listData = await listRes.json();
+      const messages = listData.messages || [];
+
+      if (!messages.length) {
+        setGmailSyncStatus("No new messages found matching transaction keywords.");
+        setTimeout(() => setGmailSyncing(false), 2000);
+        return;
+      }
+
+      const existingEmailIds = new Set([
+        ...(state.settings.gmailProcessedEmailIds || []),
+        ...(state.gmailRecords || []).map((r) => r.emailId)
+      ]);
+
+      const unprocessedMessages = messages.filter((msg) => !existingEmailIds.has(msg.id));
+
+      if (!unprocessedMessages.length) {
+        setGmailSyncStatus("No new unprocessed transaction emails in Inbox.");
+        setTimeout(() => setGmailSyncing(false), 2000);
+        return;
+      }
+
+      setGmailSyncStatus(`Found ${unprocessedMessages.length} new message(s). Processing...`);
+      const newRecords = [];
+
+      for (let i = 0; i < unprocessedMessages.length; i++) {
+        const msg = unprocessedMessages[i];
+        setGmailSyncStatus(`Fetching email ${i + 1} of ${unprocessedMessages.length}...`);
+
+        const msgRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=full`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+
+        if (!msgRes.ok) continue;
+
+        const msgData = await msgRes.json();
+        const payload = msgData.payload || {};
+        const headers = payload.headers || [];
+
+        const subject = headers.find((h) => h.name.toLowerCase() === "subject")?.value || "";
+        const from = headers.find((h) => h.name.toLowerCase() === "from")?.value || "";
+        const dateHeader = headers.find((h) => h.name.toLowerCase() === "date")?.value || "";
+
+        const snippet = msgData.snippet || "";
+        const bodyText = getGmailMessageBody(payload) || snippet;
+
+        setGmailSyncStatus(`Analyzing email ${i + 1} with Gemini...`);
+
+        try {
+          const parsed = await parseEmailWithGemini({
+            model: state.settings.aiModel,
+            subject,
+            from,
+            date: dateHeader,
+            body: bodyText
+          });
+
+          if (parsed && parsed.isTransaction) {
+            newRecords.push({
+              id: "gr-" + Math.random().toString(36).substring(2, 9),
+              emailId: msg.id,
+              title: parsed.title || "Unknown Merchant",
+              amount: parsed.amount || 0,
+              type: parsed.type || "Debit",
+              date: parsed.date || todayISO(),
+              time: parsed.time || "",
+              category: parsed.category || "Others",
+              currency: parsed.currency || "INR",
+              notes: parsed.notes || "",
+              subject,
+              sender: from,
+              emailDate: dateHeader
+            });
+          } else {
+            setState((current) => ({
+              ...current,
+              settings: {
+                ...current.settings,
+                gmailProcessedEmailIds: [...(current.settings.gmailProcessedEmailIds || []), msg.id]
+              }
+            }));
+          }
+        } catch (err) {
+          console.error(`Error parsing email ${msg.id} with Gemini`, err);
+        }
+      }
+
+      if (newRecords.length) {
+        setState((current) => ({
+          ...current,
+          gmailRecords: [...(current.gmailRecords || []), ...newRecords]
+        }));
+        setToast(`Fetched ${newRecords.length} transaction(s)!`);
+      } else {
+        setToast("No new transaction records found in emails.");
+      }
+    } catch (err) {
+      console.error("Gmail sync failed", err);
+      setToast("Gmail synchronization failed.");
+    } finally {
+      setGmailSyncing(false);
+      setGmailSyncStatus("");
+    }
+  };
+
   useEffect(() => {
     const timer = setTimeout(() => setPinBooting(false), 900);
     return () => clearTimeout(timer);
@@ -945,6 +1157,53 @@ export default function App() {
     setActive(key);
   };
 
+  useEffect(() => {
+    if (window.location.hash) {
+      const hash = window.location.hash.substring(1);
+      const params = new URLSearchParams(hash);
+      const accessToken = params.get("access_token");
+      const stateParam = params.get("state");
+      const expiresIn = params.get("expires_in");
+      
+      if (accessToken && stateParam === "gmail_auth") {
+        setState((current) => ({
+          ...current,
+          settings: {
+            ...current.settings,
+            gmailAccessToken: accessToken,
+            gmailTokenExpiry: Date.now() + Number(expiresIn || 3600) * 1000
+          }
+        }));
+        setToast("Gmail connected successfully!");
+        setActive("gmail");
+        window.history.replaceState(null, null, " ");
+      }
+    }
+  }, [setState]);
+
+  const connectGmail = () => {
+    if (!state.settings.gmailClientId) {
+      setToast("Please enter a Google Client ID in settings first.");
+      return;
+    }
+    const redirectUri = window.location.origin;
+    const scope = "https://www.googleapis.com/auth/gmail.readonly";
+    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(state.settings.gmailClientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=token&scope=${encodeURIComponent(scope)}&state=gmail_auth`;
+    window.location.href = authUrl;
+  };
+
+  const disconnectGmail = () => {
+    setState((current) => ({
+      ...current,
+      settings: {
+        ...current.settings,
+        gmailAccessToken: "",
+        gmailTokenExpiry: 0
+      }
+    }));
+    setToast("Disconnected from Gmail");
+  };
+
   const requestNotifications = async () => {
     if (!("Notification" in window)) {
       setToast("This browser does not support notifications");
@@ -1051,6 +1310,19 @@ export default function App() {
             remove={remove}
             upsert={upsert}
             requestConfirm={requestConfirm}
+            connectGmail={connectGmail}
+            disconnectGmail={disconnectGmail}
+          />
+        )}
+        {active === "gmail" && (
+          <GmailRecordsView
+            state={state}
+            setState={setState}
+            setToast={setToast}
+            fetchGmailTransactions={fetchGmailTransactions}
+            connectGmail={connectGmail}
+            gmailSyncing={gmailSyncing}
+            gmailSyncStatus={gmailSyncStatus}
           />
         )}
       </main>
@@ -1067,6 +1339,7 @@ export default function App() {
         <button className={active === "calendar" ? "active" : ""} onClick={() => showView("calendar")}><CalendarDays size={21} /><span>Calendar</span></button>
         <button className={`bottom-add ${quickOpen ? "open" : ""}`} onClick={() => setQuickOpen((value) => !value)}>{quickOpen ? <X size={24} /> : <Plus size={24} />}</button>
         <button className={active === "expenses" ? "active" : ""} onClick={() => showView("expenses")}><WalletCards size={21} /><span>Money</span></button>
+        <button className={active === "gmail" ? "active" : ""} onClick={() => showView("gmail")}><Mail size={21} /><span>Gmail</span></button>
         <button className={active === "vault" ? "active" : ""} onClick={() => showView("vault")}><KeyRound size={21} /><span>Vault</span></button>
       </nav>
 
@@ -2281,7 +2554,7 @@ function Analytics({ state }) {
   );
 }
 
-function SettingsView({ state, setState, setToast, requestNotifications, setModal, remove, upsert, requestConfirm }) {
+function SettingsView({ state, setState, setToast, requestNotifications, setModal, remove, upsert, requestConfirm, connectGmail, disconnectGmail }) {
   const [storageInfo, setStorageInfo] = useState(null);
 
   useEffect(() => {
@@ -2463,7 +2736,50 @@ function SettingsView({ state, setState, setToast, requestNotifications, setModa
         <p className="helper-text">Telegram works while the app is closed after Supabase tables and Vercel env vars are configured.</p>
       </div>
 
-
+      <div className="panel">
+        <SectionHeader title="Gmail Integration" />
+        <label>Google OAuth Client ID
+          <input
+            value={state.settings.gmailClientId || ""}
+            onChange={(e) => setSetting("gmailClientId", e.target.value)}
+            placeholder="GCP OAuth Client ID (Web Application)"
+          />
+        </label>
+        <div className="storage-status">
+          <div>
+            <span>OAuth Status</span>
+            <strong>{state.settings.gmailAccessToken ? "Connected" : "Disconnected"}</strong>
+          </div>
+          {state.settings.gmailAccessToken && (
+            <div>
+              <span>Expires</span>
+              <strong>
+                {state.settings.gmailTokenExpiry
+                  ? new Date(state.settings.gmailTokenExpiry).toLocaleTimeString()
+                  : "N/A"}
+              </strong>
+            </div>
+          )}
+        </div>
+        <p className="helper-text">Authorized Redirect URI to whitelist in Google Cloud Console: <code>{window.location.origin}</code></p>
+        <div className="cluster spaced">
+          {state.settings.gmailAccessToken ? (
+            <button className="secondary danger tactile" type="button" onClick={disconnectGmail}>Disconnect Gmail</button>
+          ) : (
+            <button className="primary tactile" type="button" onClick={connectGmail}>Connect Gmail</button>
+          )}
+          <button
+            className="secondary tactile"
+            type="button"
+            onClick={() => {
+              setSetting("gmailProcessedEmailIds", []);
+              setToast("Gmail sync history cleared");
+            }}
+          >
+            Reset Sync History
+          </button>
+        </div>
+      </div>
 
       <div className="panel">
         <SectionHeader title="Preferences" />
@@ -5350,3 +5666,340 @@ function sortByDateDesc(a, b) {
 function sortByTimeDesc(a, b) {
   return String(b.time || "").localeCompare(String(a.time || ""));
 }
+
+function GmailRecordsView({ state, setState, setToast, fetchGmailTransactions, connectGmail, gmailSyncing, gmailSyncStatus }) {
+  const [editingRecord, setEditingRecord] = useState(null);
+  const [confirmingRecord, setConfirmingRecord] = useState(null);
+  const [importDestination, setImportDestination] = useState("daily");
+  const [targetProjectId, setTargetProjectId] = useState("");
+  
+  const [editTitle, setEditTitle] = useState("");
+  const [editAmount, setEditAmount] = useState(0);
+  const [editType, setEditType] = useState("Debit");
+  const [editCategory, setEditCategory] = useState("Others");
+  const [editDate, setEditDate] = useState("");
+  const [editTime, setEditTime] = useState("");
+  const [editNotes, setEditNotes] = useState("");
+
+  const openEdit = (record) => {
+    setEditingRecord(record);
+    setEditTitle(record.title);
+    setEditAmount(record.amount);
+    setEditType(record.type);
+    setEditCategory(record.category);
+    setEditDate(record.date);
+    setEditTime(record.time);
+    setEditNotes(record.notes);
+  };
+
+  const saveEdit = () => {
+    setState((current) => ({
+      ...current,
+      gmailRecords: (current.gmailRecords || []).map((r) =>
+        r.id === editingRecord.id
+          ? {
+              ...r,
+              title: editTitle,
+              amount: Number(editAmount || 0),
+              type: editType,
+              category: editCategory,
+              date: editDate,
+              time: editTime,
+              notes: editNotes
+            }
+          : r
+      )
+    }));
+    setEditingRecord(null);
+    setToast("Record updated");
+  };
+
+  const deleteRecord = (record) => {
+    setState((current) => ({
+      ...current,
+      gmailRecords: (current.gmailRecords || []).filter((r) => r.id !== record.id),
+      settings: {
+        ...current.settings,
+        gmailProcessedEmailIds: [...(current.settings.gmailProcessedEmailIds || []), record.emailId]
+      }
+    }));
+    setToast("Record ignored");
+  };
+
+  const openConfirm = (record) => {
+    setConfirmingRecord(record);
+    if (state.projects && state.projects.length) {
+      setTargetProjectId(state.projects[0].id);
+    } else {
+      setImportDestination("daily");
+    }
+  };
+
+  const handleImport = () => {
+    const record = confirmingRecord;
+    const timestamp = new Date().toISOString();
+    
+    if (importDestination === "daily") {
+      const newExpense = {
+        id: "exp-" + Math.random().toString(36).substring(2, 9),
+        title: record.title,
+        amount: record.amount,
+        type: record.type,
+        category: record.category,
+        date: record.date,
+        time: record.time || "12:00",
+        paymentMethod: "UPI",
+        splitMode: "No split",
+        notes: record.notes || `Imported from Gmail: ${record.subject}`,
+        createdAt: timestamp,
+        updatedAt: timestamp
+      };
+
+      setState((current) => ({
+        ...current,
+        expenses: [...current.expenses, newExpense],
+        gmailRecords: (current.gmailRecords || []).filter((r) => r.id !== record.id),
+        settings: {
+          ...current.settings,
+          gmailProcessedEmailIds: [...(current.settings.gmailProcessedEmailIds || []), record.emailId]
+        }
+      }));
+      setToast("Imported to Daily Expenses");
+    } else {
+      if (!targetProjectId) {
+        setToast("Please select a project.");
+        return;
+      }
+      const newProjTx = {
+        id: "ptx-" + Math.random().toString(36).substring(2, 9),
+        projectId: targetProjectId,
+        title: record.title,
+        amount: record.amount,
+        type: record.type,
+        category: record.category,
+        date: record.date,
+        time: record.time || "12:00",
+        paidBy: state.profile?.name || "Me",
+        splitMode: "No split",
+        participants: [state.profile?.name || "Me"],
+        paymentMethod: "UPI",
+        notes: record.notes || `Imported from Gmail: ${record.subject}`,
+        createdAt: timestamp,
+        updatedAt: timestamp
+      };
+
+      setState((current) => ({
+        ...current,
+        projectTransactions: [...current.projectTransactions, newProjTx],
+        gmailRecords: (current.gmailRecords || []).filter((r) => r.id !== record.id),
+        settings: {
+          ...current.settings,
+          gmailProcessedEmailIds: [...(current.settings.gmailProcessedEmailIds || []), record.emailId]
+        }
+      }));
+      setToast("Imported to Project Expenses");
+    }
+
+    setConfirmingRecord(null);
+  };
+
+  const isConnected = state.settings.gmailAccessToken && (state.settings.gmailTokenExpiry > Date.now());
+
+  return (
+    <div className="gmail-records-container">
+      <section className="sub-panel gmail-records-header">
+        <SectionHeader 
+          title="Gmail Transaction Records" 
+          action={
+            isConnected && (
+              <button 
+                className={`primary tactile ${gmailSyncing ? "loading" : ""}`} 
+                type="button" 
+                onClick={fetchGmailTransactions}
+                disabled={gmailSyncing}
+              >
+                {gmailSyncing ? "Syncing..." : "Sync Gmail"}
+              </button>
+            )
+          }
+        />
+        
+        {!state.settings.gmailClientId ? (
+          <div className="gmail-onboarding-panel">
+            <p>Connect your Google Account to automatically scan your emails for transactions and bills.</p>
+            <div className="alert-box note">
+              <strong>Redirect URI whitelisting required:</strong>
+              <p>Go to Google Cloud Console and add this redirect URI: <code>{window.location.origin}</code></p>
+            </div>
+            <p className="helper-text">Configure your Client ID in Settings tab to start.</p>
+          </div>
+        ) : !isConnected ? (
+          <div className="gmail-connect-panel">
+            <p>Authorize LifePilot to securely scan transaction details from your inbox locally.</p>
+            <button className="primary tactile spaced" type="button" onClick={connectGmail}>
+              Authorize Google Gmail
+            </button>
+          </div>
+        ) : (
+          <div className="gmail-status-panel">
+            <div className="cluster spaced">
+              <div>
+                <span className="gmail-badge connected">Connected</span>
+                <span className="gmail-meta-text">Sync pulls recent emails matching: credit, debit, transaction, paid...</span>
+              </div>
+            </div>
+          </div>
+        )}
+      </section>
+
+      {gmailSyncing && (
+        <div className="gmail-syncing-overlay">
+          <div className="loading-orbit" />
+          <p>{gmailSyncStatus}</p>
+        </div>
+      )}
+
+      {isConnected && (
+        <section className="panel gmail-records-list-panel">
+          <SectionHeader title={`Extracted Pending Actions (${state.gmailRecords?.length || 0})`} />
+          {!(state.gmailRecords && state.gmailRecords.length) ? (
+            <EmptyState text="No pending transaction reviews. Click 'Sync Gmail' to scan your Inbox." />
+          ) : (
+            <div className="gmail-card-list">
+              {state.gmailRecords.map((record) => (
+                <div className="gmail-card" key={record.id}>
+                  <div className="gmail-card-body">
+                    <div className="cluster spaced">
+                      <span className="gmail-card-category">{record.category}</span>
+                      <span className="gmail-card-date">{record.date} {record.time}</span>
+                    </div>
+                    <h3 className="gmail-card-title">{record.title}</h3>
+                    <div className="gmail-card-details">
+                      <span className={`gmail-card-type ${record.type.toLowerCase()}`}>{record.type}</span>
+                      <strong className="gmail-card-amount">{rupee.format(record.amount)}</strong>
+                    </div>
+                    {record.notes && <p className="gmail-card-notes">{record.notes}</p>}
+                    <div className="gmail-source-badge">
+                      <span>From: {record.sender}</span>
+                      <span>Subject: {record.subject}</span>
+                    </div>
+                  </div>
+                  <div className="gmail-card-actions cluster">
+                    <button className="primary tactile" type="button" onClick={() => openConfirm(record)}>Move</button>
+                    <button className="secondary tactile" type="button" onClick={() => openEdit(record)}>Edit</button>
+                    <button className="secondary danger tactile" type="button" onClick={() => deleteRecord(record)}>Ignore</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* Edit Modal */}
+      {editingRecord && (
+        <div className="modal-backdrop">
+          <div className="modal-content gmail-editor-modal">
+            <div className="modal-header">
+              <h2>Edit Transaction Details</h2>
+              <button className="icon-button tactile" onClick={() => setEditingRecord(null)}><X size={20} /></button>
+            </div>
+            <div className="modal-body form-grid">
+              <label>Merchant / Title
+                <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} />
+              </label>
+              <label>Amount
+                <input type="number" step="any" value={editAmount} onChange={(e) => setEditAmount(e.target.value)} />
+              </label>
+              <label>Type
+                <Select value={editType} onChange={setEditType} options={[["Debit", "Debit"], ["Credit", "Credit"]]} />
+              </label>
+              <label>Category
+                <Select 
+                  value={editCategory} 
+                  onChange={setEditCategory} 
+                  options={state.categories.map((c) => [c.name, c.name])} 
+                />
+              </label>
+              <label>Date
+                <input type="date" value={editDate} onChange={(e) => setEditDate(e.target.value)} />
+              </label>
+              <label>Time
+                <input type="time" value={editTime} onChange={(e) => setEditTime(e.target.value)} />
+              </label>
+              <label className="span-2">Notes
+                <textarea value={editNotes} onChange={(e) => setEditNotes(e.target.value)} rows={2} />
+              </label>
+            </div>
+            <div className="modal-footer cluster spaced">
+              <button className="secondary tactile" onClick={() => setEditingRecord(null)}>Cancel</button>
+              <button className="primary tactile" onClick={saveEdit}>Save Changes</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirm Import Modal */}
+      {confirmingRecord && (
+        <div className="modal-backdrop">
+          <div className="modal-content gmail-confirm-modal">
+            <div className="modal-header">
+              <h2>Import to Expenses</h2>
+              <button className="icon-button tactile" onClick={() => setConfirmingRecord(null)}><X size={20} /></button>
+            </div>
+            <div className="modal-body form-grid">
+              <p>Move <strong>{confirmingRecord.title} ({rupee.format(confirmingRecord.amount)})</strong> to your money diary:</p>
+              
+              <div className="radio-group-panel">
+                <label className={`radio-label-card ${importDestination === "daily" ? "active" : ""}`}>
+                  <input 
+                    type="radio" 
+                    name="importDest" 
+                    value="daily" 
+                    checked={importDestination === "daily"} 
+                    onChange={() => setImportDestination("daily")} 
+                  />
+                  <div>
+                    <strong>Daily Expenses</strong>
+                    <small>Add to your standard personal diary</small>
+                  </div>
+                </label>
+
+                {state.projects && state.projects.length > 0 && (
+                  <label className={`radio-label-card ${importDestination === "project" ? "active" : ""}`}>
+                    <input 
+                      type="radio" 
+                      name="importDest" 
+                      value="project" 
+                      checked={importDestination === "project"} 
+                      onChange={() => setImportDestination("project")} 
+                    />
+                    <div>
+                      <strong>Expense Project</strong>
+                      <small>Add to a shared trip, event, or asset diary</small>
+                    </div>
+                  </label>
+                )}
+              </div>
+
+              {importDestination === "project" && state.projects && state.projects.length > 0 && (
+                <label>Select Project
+                  <Select 
+                    value={targetProjectId} 
+                    onChange={setTargetProjectId} 
+                    options={state.projects.map((p) => [p.id, p.name])} 
+                  />
+                </label>
+              )}
+            </div>
+            <div className="modal-footer cluster spaced">
+              <button className="secondary tactile" onClick={() => setConfirmingRecord(null)}>Cancel</button>
+              <button className="primary tactile" onClick={handleImport}>Confirm & Move</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+

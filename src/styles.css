@@ -3431,3 +3431,229 @@ label {
     min-height: 104px;
   }
 }
+
+/* Gmail Records Integration Styling */
+.gmail-records-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding-bottom: 2rem;
+}
+
+.gmail-onboarding-panel,
+.gmail-connect-panel,
+.gmail-status-panel {
+  padding: 1.25rem 0.5rem;
+}
+
+.gmail-badge {
+  display: inline-block;
+  padding: 0.25rem 0.65rem;
+  border-radius: 99px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--line);
+  color: var(--muted);
+}
+
+.gmail-badge.connected {
+  background: var(--mint);
+  color: #1e6b4d;
+}
+
+.gmail-meta-text {
+  font-size: 0.88rem;
+  color: var(--muted);
+  margin-left: 0.75rem;
+}
+
+.gmail-syncing-overlay {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  padding: 3rem;
+  background: var(--paper);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  border: 1px solid var(--line);
+  text-align: center;
+}
+
+.gmail-card-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 1.25rem;
+  margin-top: 1rem;
+}
+
+.gmail-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 4px 12px rgba(76, 61, 50, 0.05);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  overflow: hidden;
+}
+
+.gmail-card:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow);
+}
+
+.gmail-card-body {
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.gmail-card-category {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--muted);
+  letter-spacing: 0.05em;
+}
+
+.gmail-card-date {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.gmail-card-title {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--ink);
+  margin: 0;
+}
+
+.gmail-card-details {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  border-bottom: 1px dashed var(--line);
+  padding-bottom: 0.5rem;
+}
+
+.gmail-card-type {
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+}
+
+.gmail-card-type.debit {
+  background: rgba(239, 158, 149, 0.15);
+  color: #b5382b;
+}
+
+.gmail-card-type.credit {
+  background: rgba(157, 214, 170, 0.15);
+  color: #1e6b34;
+}
+
+.gmail-card-amount {
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: var(--ink);
+}
+
+.gmail-card-notes {
+  font-size: 0.85rem;
+  color: var(--muted);
+  line-height: 1.4;
+  margin: 0;
+}
+
+.gmail-source-badge {
+  background: rgba(125, 91, 63, 0.05);
+  border-radius: 6px;
+  padding: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  border-left: 3px solid var(--muted);
+}
+
+.gmail-source-badge span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gmail-card-actions {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.85rem 1.25rem;
+  background: rgba(125, 91, 63, 0.03);
+  border-top: 1px solid var(--line);
+}
+
+.gmail-card-actions button {
+  flex: 1;
+  padding: 0.5rem;
+  font-size: 0.85rem;
+}
+
+/* Radio Choice Card Panels for Destination */
+.radio-group-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.radio-label-card {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem;
+  background: var(--paper);
+  border: 2px solid var(--line);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.radio-label-card:hover {
+  background: rgba(125, 91, 63, 0.02);
+}
+
+.radio-label-card.active {
+  border-color: var(--ink);
+  background: rgba(125, 91, 63, 0.04);
+}
+
+.radio-label-card input[type="radio"] {
+  width: 1.2rem;
+  height: 1.2rem;
+  accent-color: var(--ink);
+  margin: 0;
+}
+
+.radio-label-card div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.radio-label-card strong {
+  font-size: 0.98rem;
+  color: var(--ink);
+}
+
+.radio-label-card small {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
