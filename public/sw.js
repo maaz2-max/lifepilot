@@ -44,12 +44,18 @@ self.addEventListener("fetch", (event) => {
       const fetched = fetch(event.request)
         .then((response) => {
           if (response && response.status === 200 && new URL(event.request.url).origin === self.location.origin) {
-            const copy = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+            // Only cache our own assets, not API responses or cross-origin images
+            if (!event.request.url.includes("/api/")) {
+              const copy = response.clone();
+              caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+            }
           }
           return response;
         })
-        .catch(() => cached || caches.match("/index.html"));
+        .catch((err) => {
+          if (cached) return cached;
+          throw err;
+        });
       return cached || fetched;
     })
   );

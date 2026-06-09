@@ -645,7 +645,13 @@ Return ONLY the raw JSON object. Do not include markdown code block formatting (
     throw new Error("All AI parsing models (including public fallbacks) failed");
   }
 
-  const result = await response.json();
+  const rawResult = await response.text();
+  let result;
+  try {
+    result = JSON.parse(rawResult);
+  } catch (err) {
+    throw new Error(`AI API returned invalid JSON. Preview: ${rawResult.substring(0, 150)}`);
+  }
   const data = result.data || result;
   const text = data.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("") || "{}";
   const cleanText = text.replace(/```json/gi, "").replace(/```/g, "").trim();
@@ -979,7 +985,13 @@ export default function App() {
         throw new Error(`Gmail API returned ${listRes.status}: ${errText.includes("disabled") ? "Gmail API not enabled in Google Console" : listRes.statusText}`);
       }
 
-      const listData = await listRes.json();
+      const listRawText = await listRes.text();
+      let listData;
+      try {
+        listData = JSON.parse(listRawText);
+      } catch (err) {
+        throw new Error(`Gmail Inbox API returned invalid JSON (Captive portal or network block?). Preview: ${listRawText.substring(0, 150)}`);
+      }
       const messages = listData.messages || [];
 
       if (!messages.length) {
@@ -1024,7 +1036,13 @@ export default function App() {
 
         if (!msgRes.ok) continue;
 
-        const msgData = await msgRes.json();
+        const msgRawText = await msgRes.text();
+        let msgData;
+        try {
+          msgData = JSON.parse(msgRawText);
+        } catch (err) {
+          throw new Error(`Gmail Message API returned invalid JSON. Preview: ${msgRawText.substring(0, 150)}`);
+        }
         const payload = msgData.payload || {};
         const headers = payload.headers || [];
 
