@@ -128,6 +128,9 @@ const emptyState = {
     gmailAccessToken: "",
     gmailTokenExpiry: 0,
     gmailProcessedEmailIds: [],
+    gmailLastSyncAt: "",
+    gmailLastStatus: "",
+    gmailLastError: "",
     weatherEnabled: false,
     weatherLocation: ""
   }
@@ -1076,10 +1079,25 @@ export default function App() {
       if (newRecords.length) {
         setState((current) => ({
           ...current,
-          gmailRecords: [...(current.gmailRecords || []), ...newRecords]
+          gmailRecords: [...(current.gmailRecords || []), ...newRecords],
+          settings: {
+            ...current.settings,
+            gmailLastSyncAt: new Date().toISOString(),
+            gmailLastStatus: `Synced ${newRecords.length} new records`,
+            gmailLastError: ""
+          }
         }));
         setToast(`Fetched ${newRecords.length} transaction(s)!`);
       } else {
+        setState((current) => ({
+          ...current,
+          settings: {
+            ...current.settings,
+            gmailLastSyncAt: new Date().toISOString(),
+            gmailLastStatus: "Synced, no new records",
+            gmailLastError: ""
+          }
+        }));
         if (!isBackground) {
           setToast("No new transaction records found in emails.");
         }
@@ -1087,6 +1105,14 @@ export default function App() {
       await sendTelegramSyncSummary(newRecords);
     } catch (err) {
       console.error("Gmail sync failed", err);
+      setState((current) => ({
+        ...current,
+        settings: {
+          ...current.settings,
+          gmailLastStatus: "Sync failed",
+          gmailLastError: err.message || "Unknown error"
+        }
+      }));
       if (!isBackground) {
         setToast(`Gmail sync failed: ${err.message}`);
       }
@@ -6006,6 +6032,19 @@ function GmailRecordsView({ state, setState, setToast, fetchGmailTransactions, c
                 <span className="gmail-meta-text">Sync pulls recent emails matching: credit, debit, transaction, paid...</span>
               </div>
             </div>
+            {(state.settings.gmailLastSyncAt || state.settings.gmailLastStatus || state.settings.gmailLastError) && (
+              <div style={{ marginTop: "0.85rem", padding: "0.75rem", borderRadius: "12px", background: "rgba(17, 17, 17, 0.05)", border: "1px solid rgba(17, 17, 17, 0.15)", fontSize: "0.85rem", display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+                {state.settings.gmailLastSyncAt && (
+                  <span>Last Checked: <strong>{new Date(state.settings.gmailLastSyncAt).toLocaleString("en-IN")}</strong></span>
+                )}
+                {state.settings.gmailLastStatus && (
+                  <span>Sync Status: <strong>{state.settings.gmailLastStatus}</strong></span>
+                )}
+                {state.settings.gmailLastError && (
+                  <span style={{ color: "#d93838" }}>Error: <strong style={{ textTransform: "none" }}>{state.settings.gmailLastError}</strong></span>
+                )}
+              </div>
+            )}
           </div>
         )}
       </section>
