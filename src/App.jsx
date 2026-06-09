@@ -1335,11 +1335,9 @@ export default function App() {
 
       <nav className="bottom-nav">
         <button className={active === "home" ? "active" : ""} onClick={() => showView("home")}><Home size={21} /><span>Home</span></button>
-        <button className={active === "todo" ? "active" : ""} onClick={() => showView("todo")}><CheckCircle2 size={21} /><span>Todo</span></button>
         <button className={active === "calendar" ? "active" : ""} onClick={() => showView("calendar")}><CalendarDays size={21} /><span>Calendar</span></button>
         <button className={`bottom-add ${quickOpen ? "open" : ""}`} onClick={() => setQuickOpen((value) => !value)}>{quickOpen ? <X size={24} /> : <Plus size={24} />}</button>
         <button className={active === "expenses" ? "active" : ""} onClick={() => showView("expenses")}><WalletCards size={21} /><span>Money</span></button>
-        <button className={active === "gmail" ? "active" : ""} onClick={() => showView("gmail")}><Mail size={21} /><span>Gmail</span></button>
         <button className={active === "vault" ? "active" : ""} onClick={() => showView("vault")}><KeyRound size={21} /><span>Vault</span></button>
       </nav>
 
@@ -1742,6 +1740,18 @@ function homeInsightCards(state) {
       value: rupee.format(sum(upcomingBills)),
       detail: `${upcomingBills.length} bill${upcomingBills.length === 1 ? "" : "s"} due this week`,
       target: "expenses"
+    },
+    {
+      title: "Todo List",
+      value: `${state.tasks.filter((t) => t.status !== "Completed" && t.status !== "Cancelled").length} items`,
+      detail: "Open todo and task list",
+      target: "todo"
+    },
+    {
+      title: "Gmail Records",
+      value: `${(state.gmailRecords || []).length} pending`,
+      detail: "Extracted email transaction queue",
+      target: "gmail"
     }
   ];
 }
