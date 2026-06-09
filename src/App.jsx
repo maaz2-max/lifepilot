@@ -576,7 +576,9 @@ If it IS a financial transaction, return a JSON object with:
   "time": "HH:mm" (extract time if available, otherwise omit),
   "category": "Suggested category (e.g., Food, Travel, Bills, Shopping, Income, Healthcare, Entertainment, Education, Others)",
   "currency": "INR",
-  "notes": "Short summary of transaction description"
+  "notes": "Short summary of transaction description",
+  "paymentMethod": "Payment method used (e.g., UPI, Credit Card, Debit Card, Net Banking, Wallet)",
+  "accountReference": "Account or Card Reference (e.g. Card ending 1234, HDFC Bank, SBI Account)"
 }
 
 Email Subject: ${subject}
@@ -587,24 +589,64 @@ ${body.substring(0, 1500)}
 
 Return ONLY the raw JSON object. Do not include markdown code block formatting (like \`\`\`json).`;
 
-  const response = await fetch("/api/ai", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: selectedModel,
-      prompt
-    })
-  });
+  let response;
+  let usedModel = selectedModel;
+  let isFallback = false;
+
+  try {
+    response = await fetch("/api/ai", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: selectedModel,
+        prompt
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Primary AI request failed: ${response.status}`);
+    }
+  } catch (err) {
+    console.warn("Primary AI parsing failed, attempting fallback to public model (DeepSeek R1)...", err);
+    usedModel = "mlvoca:deepseek-r1:1.5b";
+    isFallback = true;
+    try {
+      response = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: usedModel,
+          prompt
+        })
+      });
+      if (!response.ok) throw new Error(`Fallback model DeepSeek failed: ${response.status}`);
+    } catch (fallbackErr) {
+      console.warn("DeepSeek R1 fallback failed, trying secondary fallback (TinyLlama)...", fallbackErr);
+      usedModel = "mlvoca:tinyllama";
+      response = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: usedModel,
+          prompt
+        })
+      });
+    }
+  }
 
   if (!response.ok) {
-    throw new Error("Gemini API call failed");
+    throw new Error("All AI parsing models (including public fallbacks) failed");
   }
 
   const result = await response.json();
   const data = result.data || result;
   const text = data.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("") || "{}";
   const cleanText = text.replace(/```json/gi, "").replace(/```/g, "").trim();
-  return JSON.parse(cleanText);
+  const parsed = JSON.parse(cleanText);
+  return {
+    ...parsed,
+    _usedModel: usedModel
+  };
 }
 
 
@@ -956,6 +998,8 @@ export default function App() {
               category: parsed.category || "Others",
               currency: parsed.currency || "INR",
               notes: parsed.notes || "",
+              paymentMethod: parsed.paymentMethod || "UPI",
+              accountReference: parsed.accountReference || "",
               subject,
               sender: from,
               emailDate: dateHeader
@@ -5706,6 +5750,8 @@ function GmailRecordsView({ state, setState, setToast, fetchGmailTransactions, c
   const [editDate, setEditDate] = useState("");
   const [editTime, setEditTime] = useState("");
   const [editNotes, setEditNotes] = useState("");
+  const [editPaymentMethod, setEditPaymentMethod] = useState("");
+  const [editAccountReference, setEditAccountReference] = useState("");
 
   const openEdit = (record) => {
     setEditingRecord(record);
@@ -5716,6 +5762,8 @@ function GmailRecordsView({ state, setState, setToast, fetchGmailTransactions, c
     setEditDate(record.date);
     setEditTime(record.time);
     setEditNotes(record.notes);
+    setEditPaymentMethod(record.paymentMethod || "UPI");
+    setEditAccountReference(record.accountReference || "");
   };
 
   const saveEdit = () => {
@@ -5731,7 +5779,9 @@ function GmailRecordsView({ state, setState, setToast, fetchGmailTransactions, c
               category: editCategory,
               date: editDate,
               time: editTime,
-              notes: editNotes
+              notes: editNotes,
+              paymentMethod: editPaymentMethod,
+              accountReference: editAccountReference
             }
           : r
       )
@@ -5774,7 +5824,7 @@ function GmailRecordsView({ state, setState, setToast, fetchGmailTransactions, c
         category: record.category,
         date: record.date,
         time: record.time || "12:00",
-        paymentMethod: "UPI",
+        paymentMethod: record.paymentMethod || "UPI",
         splitMode: "No split",
         notes: record.notes || `Imported from Gmail: ${record.subject}`,
         createdAt: timestamp,
@@ -5808,7 +5858,7 @@ function GmailRecordsView({ state, setState, setToast, fetchGmailTransactions, c
         paidBy: state.profile?.name || "Me",
         splitMode: "No split",
         participants: [state.profile?.name || "Me"],
-        paymentMethod: "UPI",
+        paymentMethod: record.paymentMethod || "UPI",
         notes: record.notes || `Imported from Gmail: ${record.subject}`,
         createdAt: timestamp,
         updatedAt: timestamp
@@ -5904,6 +5954,11 @@ function GmailRecordsView({ state, setState, setToast, fetchGmailTransactions, c
                       <span className={`gmail-card-type ${record.type.toLowerCase()}`}>{record.type}</span>
                       <strong className="gmail-card-amount">{rupee.format(record.amount)}</strong>
                     </div>
+                    {(record.paymentMethod || record.accountReference) && (
+                      <div className="gmail-card-payment-info" style={{ fontSize: "0.8rem", color: "#665", margin: "0.25rem 0", display: "flex", gap: "0.25rem", alignItems: "center" }}>
+                        <span>💳 {record.paymentMethod || "Payment"}{record.accountReference ? ` (${record.accountReference})` : ""}</span>
+                      </div>
+                    )}
                     {record.notes && <p className="gmail-card-notes">{record.notes}</p>}
                     <div className="gmail-source-badge">
                       <span>From: {record.sender}</span>
@@ -5952,6 +6007,12 @@ function GmailRecordsView({ state, setState, setToast, fetchGmailTransactions, c
               </label>
               <label>Time
                 <input type="time" value={editTime} onChange={(e) => setEditTime(e.target.value)} />
+              </label>
+              <label>Payment Method
+                <input value={editPaymentMethod} onChange={(e) => setEditPaymentMethod(e.target.value)} placeholder="UPI, Credit Card, etc." />
+              </label>
+              <label>Account / Card Ref
+                <input value={editAccountReference} onChange={(e) => setEditAccountReference(e.target.value)} placeholder="e.g. Card ending 1234" />
               </label>
               <label className="span-2">Notes
                 <textarea value={editNotes} onChange={(e) => setEditNotes(e.target.value)} rows={2} />

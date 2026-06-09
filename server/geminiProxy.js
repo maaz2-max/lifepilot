@@ -158,12 +158,26 @@ export async function handleAiRequest(req, res, env = process.env) {
   nextKeyIndex = (startIndex + 1) % keys.length;
   if (!FREE_MLVOCA_MODELS.includes(selectedModel)) {
     try {
-      const fallbackResponse = await callMlvoca({ model: "mlvoca:tinyllama", prompt: body.prompt });
+      const fallbackResponse = await callMlvoca({ model: "mlvoca:deepseek-r1:1.5b", prompt: body.prompt });
       if (fallbackResponse.ok) {
         jsonResponse(res, 200, {
           data: normalizeMlvocaResponse(await fallbackResponse.json()),
+          model: "mlvoca:deepseek-r1:1.5b",
+          provider: "mlvoca-fallback-deepseek"
+        });
+        return;
+      }
+    } catch {
+      // Try next fallback
+    }
+
+    try {
+      const fallbackResponse2 = await callMlvoca({ model: "mlvoca:tinyllama", prompt: body.prompt });
+      if (fallbackResponse2.ok) {
+        jsonResponse(res, 200, {
+          data: normalizeMlvocaResponse(await fallbackResponse2.json()),
           model: "mlvoca:tinyllama",
-          provider: "mlvoca-fallback"
+          provider: "mlvoca-fallback-tinyllama"
         });
         return;
       }
