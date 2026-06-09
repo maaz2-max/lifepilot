@@ -975,7 +975,12 @@ export default function App() {
     };
 
     try {
-      const query = encodeURIComponent("label:INBOX (debit OR credit OR transaction OR payment OR spent OR UPI OR bank)");
+      const today = new Date();
+      const yyyy = today.getFullYear();
+      const mm = String(today.getMonth() + 1).padStart(2, '0');
+      const dd = String(today.getDate()).padStart(2, '0');
+      const afterStr = `${yyyy}/${mm}/${dd}`;
+      const query = encodeURIComponent(`label:INBOX after:${afterStr} (debit OR credit OR transaction OR payment OR spent OR UPI OR bank)`);
       const listRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${query}&maxResults=10`, {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -3643,18 +3648,22 @@ function AiActionCard({ messageId, actionIndex, state, setState, action, upsert,
   }, [action.status]);
 
   const persistActionStatus = (status) => {
-    setState((current) => ({
-      ...current,
-      aiMessages: (current.aiMessages || []).map((message) => {
-        if (message.id !== messageId) return message;
-        return {
-          ...message,
-          actions: (message.actions || []).map((entry, index) =>
-            index === actionIndex ? { ...entry, status, resolvedAt: new Date().toISOString() } : entry
-          )
-        };
-      })
-    }));
+    setState((current) => {
+      const next = {
+        ...current,
+        aiMessages: (current.aiMessages || []).map((message) => {
+          if (message.id !== messageId) return message;
+          return {
+            ...message,
+            actions: (message.actions || []).map((entry, index) =>
+              index === actionIndex ? { ...entry, status, resolvedAt: new Date().toISOString() } : entry
+            )
+          };
+        })
+      };
+      savePersistedState(STORE_KEY, next);
+      return next;
+    });
   };
 
   const apply = () => {
@@ -5921,14 +5930,18 @@ function GmailRecordsView({ state, setState, setToast, fetchGmailTransactions, c
   };
 
   const deleteRecord = (record) => {
-    setState((current) => ({
-      ...current,
-      gmailRecords: (current.gmailRecords || []).filter((r) => r.id !== record.id),
-      settings: {
-        ...current.settings,
-        gmailProcessedEmailIds: [...(current.settings.gmailProcessedEmailIds || []), record.emailId]
-      }
-    }));
+    setState((current) => {
+      const next = {
+        ...current,
+        gmailRecords: (current.gmailRecords || []).filter((r) => r.id !== record.id),
+        settings: {
+          ...current.settings,
+          gmailProcessedEmailIds: [...(current.settings.gmailProcessedEmailIds || []), record.emailId]
+        }
+      };
+      savePersistedState(STORE_KEY, next);
+      return next;
+    });
     setToast("Record ignored");
   };
 
@@ -5961,15 +5974,19 @@ function GmailRecordsView({ state, setState, setToast, fetchGmailTransactions, c
         updatedAt: timestamp
       };
 
-      setState((current) => ({
-        ...current,
-        expenses: [...current.expenses, newExpense],
-        gmailRecords: (current.gmailRecords || []).filter((r) => r.id !== record.id),
-        settings: {
-          ...current.settings,
-          gmailProcessedEmailIds: [...(current.settings.gmailProcessedEmailIds || []), record.emailId]
-        }
-      }));
+      setState((current) => {
+        const next = {
+          ...current,
+          expenses: [...current.expenses, newExpense],
+          gmailRecords: (current.gmailRecords || []).filter((r) => r.id !== record.id),
+          settings: {
+            ...current.settings,
+            gmailProcessedEmailIds: [...(current.settings.gmailProcessedEmailIds || []), record.emailId]
+          }
+        };
+        savePersistedState(STORE_KEY, next);
+        return next;
+      });
       setToast("Imported to Daily Expenses");
     } else {
       if (!targetProjectId) {
@@ -5994,15 +6011,19 @@ function GmailRecordsView({ state, setState, setToast, fetchGmailTransactions, c
         updatedAt: timestamp
       };
 
-      setState((current) => ({
-        ...current,
-        projectTransactions: [...current.projectTransactions, newProjTx],
-        gmailRecords: (current.gmailRecords || []).filter((r) => r.id !== record.id),
-        settings: {
-          ...current.settings,
-          gmailProcessedEmailIds: [...(current.settings.gmailProcessedEmailIds || []), record.emailId]
-        }
-      }));
+      setState((current) => {
+        const next = {
+          ...current,
+          projectTransactions: [...current.projectTransactions, newProjTx],
+          gmailRecords: (current.gmailRecords || []).filter((r) => r.id !== record.id),
+          settings: {
+            ...current.settings,
+            gmailProcessedEmailIds: [...(current.settings.gmailProcessedEmailIds || []), record.emailId]
+          }
+        };
+        savePersistedState(STORE_KEY, next);
+        return next;
+      });
       setToast("Imported to Project Expenses");
     }
 
@@ -6123,7 +6144,7 @@ function GmailRecordsView({ state, setState, setToast, fetchGmailTransactions, c
       {/* Edit Modal */}
       {editingRecord && (
         <div className="modal-backdrop">
-          <div className="modal-content gmail-editor-modal">
+          <div className="modal gmail-editor-modal">
             <div className="modal-header">
               <h2>Edit Transaction Details</h2>
               <button className="icon-button tactile" onClick={() => setEditingRecord(null)}><X size={20} /></button>

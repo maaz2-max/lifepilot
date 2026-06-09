@@ -266,6 +266,7 @@ function compactState(state) {
     })),
     salaryExpenses: take(state.salaryExpenses, ["id", "salaryId", "title", "amount", "type", "category", "date", "paymentMethod"]),
     projectTransactions: take(state.projectTransactions, ["id", "projectId", "title", "amount", "type", "category", "date", "time", "paidBy", "owedBy", "splitMode", "participants", "paymentMethod"]),
+    gmailRecords: take(state.gmailRecords || [], ["id", "subject", "title", "amount", "type", "category", "date", "time", "paymentMethod", "notes", "accountReference"]),
     credentials: (state.credentials || []).map((credential) => ({
       id: credential.id,
       title: credential.title,
@@ -582,6 +583,8 @@ Rules:
 - For expenses default type is Debit unless user says credit/income.
 - For salary-linked expense or project transaction, include salaryId/projectId when clear from existing data.
 - If information is missing, make a reasonable draft and mention what can be edited before confirming.
+- If user asks about extracted Gmail transactions, read the 'gmailRecords' array. These are un-imported transactions. You can suggest creating daily/project expenses from them.
+- You have access to recent conversation history in this prompt, including the status of any actions you previously proposed (e.g. 'applied', 'cancelled', or 'Pending'). If the user confirmed or cancelled an action, acknowledge it accurately.
 
 Allowed action types:
 ${ACTION_TYPES.join(", ")}
@@ -636,12 +639,27 @@ export async function askGeminiAssistant({ state, model, message }) {
     ? model
     : FREE_GEMINI_MODELS[0].id;
 
+  const recentHistory = (state.aiMessages || [])
+    .slice(-8)
+    .map((msg) => {
+      let text = `${msg.role === "user" ? "User" : "Assistant"}: ${msg.text}`;
+      if (msg.actions && msg.actions.length > 0) {
+        text += `\n[Proposed Actions: ` + msg.actions.map(a => `{"summary": "${a.summary}", "status": "${a.status || 'Pending'}"}`).join(", ") + `]`;
+      }
+      return text;
+    })
+    .join("\n\n");
+
+  const promptBody = recentHistory
+    ? `${systemPrompt(state)}\n\n--- Recent Conversation History ---\n${recentHistory}\n\nUser message: ${message}`
+    : `${systemPrompt(state)}\n\nUser message: ${message}`;
+
   const response = await fetch("/api/ai", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       model: selectedModel,
-      prompt: `${systemPrompt(state)}\n\nUser message: ${message}`
+      prompt: promptBody
     })
   });
 
