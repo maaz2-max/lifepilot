@@ -1072,23 +1072,24 @@ export default function App() {
       const dd = String(today.getDate()).padStart(2, '0');
       const afterStr = `${yyyy}/${mm}/${dd}`;
       const query = encodeURIComponent(`label:INBOX after:${afterStr} (debit OR credit OR transaction OR payment OR spent OR UPI OR bank)`);
-      const listRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${query}&maxResults=10`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-
-      if (!listRes.ok) {
-        const errText = await listRes.text();
-        throw new Error(`Gmail API returned ${listRes.status}: ${errText.includes("disabled") ? "Gmail API not enabled in Google Console" : listRes.statusText}`);
-      }
-
-      const listRawText = await listRes.text();
-      let listData;
-      try {
-        listData = JSON.parse(listRawText);
-      } catch (err) {
-        throw new Error(`Gmail Inbox API returned invalid JSON (Captive portal or network block?). Preview: ${listRawText.substring(0, 150)}`);
-      }
-      const messages = listData.messages || [];
+      
+      let messages = [];
+      let nextPageToken = "";
+      do {
+        const url = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${query}&maxResults=100${nextPageToken ? `&pageToken=${nextPageToken}` : ""}`;
+        const listRes = await fetch(url, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (!listRes.ok) {
+          const errText = await listRes.text();
+          throw new Error(`Gmail API returned ${listRes.status}: ${errText}`);
+        }
+        const listData = await listRes.json();
+        if (listData.messages) {
+          messages.push(...listData.messages);
+        }
+        nextPageToken = listData.nextPageToken;
+      } while (nextPageToken);
 
       if (!messages.length) {
         if (!isBackground) {
@@ -1146,7 +1147,7 @@ export default function App() {
         const from = headers.find((h) => h.name.toLowerCase() === "from")?.value || "";
         const dateHeader = headers.find((h) => h.name.toLowerCase() === "date")?.value || "";
 
-        const snippet = msgData.snippet || "";
+        const snippet = (msgData.snippet || "").substring(0, 160);
         const bodyText = getGmailMessageBody(payload) || snippet;
 
         if (!isBackground) {
@@ -1181,13 +1182,20 @@ export default function App() {
               emailDate: dateHeader
             });
           } else {
-            setState((current) => ({
-              ...current,
-              settings: {
-                ...current.settings,
-                gmailProcessedEmailIds: [...(current.settings.gmailProcessedEmailIds || []), msg.id]
-              }
-            }));
+            setState((current) => {
+              const cleanProcessed = Array.isArray(current.settings.gmailProcessedEmailIds)
+                ? current.settings.gmailProcessedEmailIds.slice(-200)
+                : [];
+              const next = {
+                ...current,
+                settings: {
+                  ...current.settings,
+                  gmailProcessedEmailIds: [...cleanProcessed, msg.id]
+                }
+              };
+              savePersistedState(STORE_KEY, next);
+              return next;
+            });
           }
         } catch (err) {
           console.error(`Error parsing email ${msg.id} with Gemini`, err);
@@ -1195,27 +1203,39 @@ export default function App() {
       }
 
       if (newRecords.length) {
-        setState((current) => ({
-          ...current,
-          gmailRecords: [...(current.gmailRecords || []), ...newRecords],
-          settings: {
-            ...current.settings,
-            gmailLastSyncAt: new Date().toISOString(),
-            gmailLastStatus: `Synced ${newRecords.length} new records`,
-            gmailLastError: ""
-          }
-        }));
+        setState((current) => {
+          const cleanProcessed = Array.isArray(current.settings.gmailProcessedEmailIds)
+            ? current.settings.gmailProcessedEmailIds.slice(-200)
+            : [];
+          const next = {
+            ...current,
+            gmailRecords: [...(current.gmailRecords || []), ...newRecords],
+            settings: {
+              ...current.settings,
+              gmailLastSyncAt: new Date().toISOString(),
+              gmailLastStatus: `Synced ${newRecords.length} new records`,
+              gmailLastError: "",
+              gmailProcessedEmailIds: [...cleanProcessed, ...newRecords.map((r) => r.emailId)]
+            }
+          };
+          savePersistedState(STORE_KEY, next);
+          return next;
+        });
         setToast(`Fetched ${newRecords.length} transaction(s)!`);
       } else {
-        setState((current) => ({
-          ...current,
-          settings: {
-            ...current.settings,
-            gmailLastSyncAt: new Date().toISOString(),
-            gmailLastStatus: "Synced, no new records",
-            gmailLastError: ""
-          }
-        }));
+        setState((current) => {
+          const next = {
+            ...current,
+            settings: {
+              ...current.settings,
+              gmailLastSyncAt: new Date().toISOString(),
+              gmailLastStatus: "Synced, no new records",
+              gmailLastError: ""
+            }
+          };
+          savePersistedState(STORE_KEY, next);
+          return next;
+        });
         if (!isBackground) {
           setToast("No new transaction records found in emails.");
         }
@@ -1266,23 +1286,24 @@ export default function App() {
       const afterStr = `${yyyy}/${mm}/${dd}`;
       // Query for label:INBOX, starting from today, and excluding transactions
       const query = encodeURIComponent(`label:INBOX after:${afterStr} -debit -credit -transaction -payment -spent -UPI -bank`);
-      const listRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${query}&maxResults=10`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-
-      if (!listRes.ok) {
-        const errText = await listRes.text();
-        throw new Error(`Gmail API returned ${listRes.status}: ${errText.includes("disabled") ? "Gmail API not enabled" : listRes.statusText}`);
-      }
-
-      const listRawText = await listRes.text();
-      let listData;
-      try {
-        listData = JSON.parse(listRawText);
-      } catch (err) {
-        throw new Error(`Gmail Inbox API returned invalid JSON. Preview: ${listRawText.substring(0, 150)}`);
-      }
-      const messages = listData.messages || [];
+      
+      let messages = [];
+      let nextPageToken = "";
+      do {
+        const url = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${query}&maxResults=100${nextPageToken ? `&pageToken=${nextPageToken}` : ""}`;
+        const listRes = await fetch(url, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (!listRes.ok) {
+          const errText = await listRes.text();
+          throw new Error(`Gmail API returned ${listRes.status}: ${errText}`);
+        }
+        const listData = await listRes.json();
+        if (listData.messages) {
+          messages.push(...listData.messages);
+        }
+        nextPageToken = listData.nextPageToken;
+      } while (nextPageToken);
 
       if (!messages.length) {
         if (!isBackground) {
@@ -1339,7 +1360,7 @@ export default function App() {
         const from = headers.find((h) => h.name.toLowerCase() === "from")?.value || "";
         const dateHeader = headers.find((h) => h.name.toLowerCase() === "date")?.value || "";
 
-        const snippet = msgData.snippet || "";
+        const snippet = (msgData.snippet || "").substring(0, 160);
         const bodyText = getGmailMessageBody(payload) || snippet;
 
         // Run local regex safety check
@@ -1384,6 +1405,23 @@ export default function App() {
             urls: [],
             hasFiles,
             date: emailDateStr
+          });
+        } else if (i >= 15) {
+          // AI Safeguard limit reached: Queue for next sync to prevent rate limits
+          newRecords.push({
+            id: "gi-" + Math.random().toString(36).substring(2, 9),
+            emailId: msg.id,
+            subject,
+            sender: from,
+            emailDate: dateHeader,
+            snippet,
+            summary: "AI summary queued. Sync again to summarize.",
+            isImportant: false,
+            isSecure: false,
+            urls: [],
+            hasFiles,
+            date: emailDateStr,
+            aiUnavailable: true
           });
         } else {
           if (!isBackground) {
@@ -1436,9 +1474,16 @@ export default function App() {
 
       if (newRecords.length) {
         setState((current) => {
+          const cleanProcessed = Array.isArray(current.settings.gmailInboxProcessedIds) 
+            ? current.settings.gmailInboxProcessedIds.slice(-200) 
+            : [];
           const next = {
             ...current,
-            gmailInbox: [...(current.gmailInbox || []), ...newRecords]
+            gmailInbox: [...(current.gmailInbox || []), ...newRecords],
+            settings: {
+              ...current.settings,
+              gmailInboxProcessedIds: [...cleanProcessed, ...newRecords.map((r) => r.emailId)]
+            }
           };
           savePersistedState(STORE_KEY, next);
           return next;
