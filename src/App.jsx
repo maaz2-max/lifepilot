@@ -180,6 +180,7 @@ const dashboardNavigationItems = [
   { key: "todo", label: "Todo List", icon: CheckCircle2 },
   { key: "calendar", label: "Calendar", icon: CalendarDays },
   { key: "expenses", label: "Money & Expenses", icon: WalletCards },
+  { key: "loans", label: "EMI / Loans", icon: Percent },
   { key: "gmail", label: "Gmail Records", icon: Mail },
   { key: "gmailInbox", label: "Gmail Inbox", icon: Inbox },
   { key: "vault", label: "Secure Vault", icon: KeyRound },
@@ -3367,6 +3368,19 @@ function LoansView({ state, openAdd, setModal, remove, upsert, requestConfirm, s
                 <span>Remaining Months</span>
                 <strong>{Math.max(0, amount(selectedLoan.totalMonths) - amount(selectedLoan.completedMonths))} Months</strong>
               </div>
+              {(() => {
+                const nextDate = getNextUnpaidEmiDate(selectedLoan);
+                if (!nextDate) return null;
+                const diffTime = new Date(`${nextDate}T12:00:00`) - new Date(`${todayISO()}T12:00:00`);
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                const label = diffDays === 0 ? "due today" : diffDays > 0 ? `${diffDays} days left` : `overdue by ${Math.abs(diffDays)} days`;
+                return (
+                  <div className="detail-stat highlight-stat">
+                    <span>Next EMI Date</span>
+                    <strong>{formatDate(nextDate)} <span style={{ fontSize: "0.8rem", color: "var(--muted)", display: "block", marginTop: "0.15rem" }}>({label})</span></strong>
+                  </div>
+                );
+              })()}
               {selectedLoan.totalAmount && (
                 <div className="detail-stat">
                   <span>Total Principal</span>
