@@ -6845,9 +6845,12 @@ function ProjectSplitView({ project, transactions, upsert, requestConfirm }) {
         {stats.length ? stats.map((item) => (
           <article className="split-person-card" key={item.name}>
             <strong>{item.name}</strong>
-            <span>Paid {rupee.format(item.paid)}</span>
-            <span>Share {rupee.format(item.share)}</span>
-            <b className={item.balance >= 0 ? "credit" : "debit"}>{item.balance >= 0 ? "Should receive" : "Should pay"} {rupee.format(Math.abs(item.balance))}</b>
+            <span style={{ fontSize: "0.85rem", color: "var(--ink)", display: "block", marginBottom: "0.25rem" }}>Total Spent: <strong>{rupee.format(item.totalSpent)}</strong></span>
+            <span style={{ fontSize: "0.76rem", opacity: 0.8, display: "block" }}>Paid (in splits): {rupee.format(item.paid)}</span>
+            <span style={{ fontSize: "0.76rem", opacity: 0.8, display: "block" }}>Split Share: {rupee.format(item.share)}</span>
+            <b className={item.balance >= 0 ? "credit" : "debit"} style={{ marginTop: "0.35rem", display: "block" }}>
+              {item.balance >= 0 ? "Should receive" : "Should pay"} {rupee.format(Math.abs(item.balance))}
+            </b>
           </article>
         )) : <EmptyState text="Add participants and project expenses to calculate split balances." />}
       </div>
@@ -7001,6 +7004,9 @@ function projectSplitSummary(project, transactions) {
   const debitTransactions = transactions.filter((item) => item.type === "Debit");
   const paidSettlements = (project.paidSettlements || []).filter((item) => item.from && item.to && amount(item.amount) > 0);
   const rawStats = names.map((name) => {
+    const totalSpent = debitTransactions.reduce((total, item) => {
+      return item.paidBy === name ? total + amount(item.amount) : total;
+    }, 0);
     const paid = debitTransactions.reduce((total, item) => {
       const mode = splitModeOf(item);
       const hasEqualSplit = mode === "Equal split" && (item.participants || []).filter(Boolean).length > 0;
@@ -7015,7 +7021,7 @@ function projectSplitSummary(project, transactions) {
       return splitMembers.includes(name) ? total + amount(item.amount) / Math.max(splitMembers.length, 1) : total;
     }, 0);
     const credit = 0;
-    return { name, paid, share, credit, balance: paid + credit - share };
+    return { name, paid, share, credit, totalSpent, balance: paid + credit - share };
   });
   const stats = rawStats.map((row) => {
     const paidOut = paidSettlements.filter((item) => item.from === row.name).reduce((total, item) => total + amount(item.amount), 0);
