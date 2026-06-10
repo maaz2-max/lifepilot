@@ -4818,3 +4818,28 @@ label {
   color: #2b7d48;
   flex-shrink: 0;
 }
+
+/* Money Receivable Reminder Badge styling */
+.money-receivable-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  padding: 0.25rem 0.55rem;
+  background: rgba(43, 125, 72, 0.08);
+  border: 1px solid rgba(43, 125, 72, 0.15);
+  border-radius: 8px;
+  color: #2b7d48;
+  margin: 0.35rem 0;
+  width: fit-content;
+}
+
+.money-receivable-badge svg {
+  flex-shrink: 0;
+  color: #2b7d48;
+}
+
+.money-receivable-badge strong {
+  font-weight: 700;
+}
+

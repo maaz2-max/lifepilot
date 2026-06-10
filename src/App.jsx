@@ -1783,6 +1783,8 @@ export default function App() {
           body = daysLeft === 0 ? "EMI due today!" : `EMI due in ${daysLeft} days (on ${formatDate(nextDate)}).`;
         } else if (item.dueDate) {
           body = `Bill due ${formatDate(item.dueDate)}.`;
+        } else if (item.isMoneyReceive) {
+          body = `Receive ${rupee.format(Number(item.moneyAmount || 0))} from ${item.payerName}.`;
         } else {
           body = "LifePilot reminder for today.";
         }
@@ -1922,6 +1924,40 @@ export default function App() {
         };
       }
       
+      if (collection === "reminders") {
+        if (record.isMoneyReceive && record.status === "Completed") {
+          const reminderIdVal = record.id;
+          const matchingExpense = current.expenses.find(e => e.reminderId === reminderIdVal);
+          const expenseRecord = {
+            id: matchingExpense?.id || id("expense"),
+            title: `Received: ${record.title}`,
+            amount: record.moneyAmount || 0,
+            type: "Credit",
+            category: "Salary",
+            date: record.date || todayISO(),
+            time: matchingExpense?.time || record.time || "",
+            paymentMethod: "UPI",
+            notes: record.description || "",
+            reminderId: reminderIdVal,
+            updatedAt: new Date().toISOString()
+          };
+          nextState = {
+            ...nextState,
+            expenses: matchingExpense
+              ? current.expenses.map(e => e.reminderId === reminderIdVal ? expenseRecord : e)
+              : [expenseRecord, ...current.expenses]
+          };
+        } else {
+          const reminderIdVal = record.id;
+          if (current.expenses.some(e => e.reminderId === reminderIdVal)) {
+            nextState = {
+              ...nextState,
+              expenses: current.expenses.filter(e => e.reminderId !== reminderIdVal)
+            };
+          }
+        }
+      }
+      
       return nextState;
     }, item.id ? "Changes saved" : "Added");
   };
@@ -1941,7 +1977,13 @@ export default function App() {
           updateState(options.apply, "Deleted");
           return;
         }
-        updateState((current) => ({ ...current, [collection]: current[collection].filter((item) => item.id !== itemId) }), "Deleted");
+        updateState((current) => ({
+          ...current,
+          [collection]: current[collection].filter((item) => item.id !== itemId),
+          expenses: collection === "reminders"
+            ? current.expenses.filter((e) => e.reminderId !== itemId)
+            : current.expenses
+        }), "Deleted");
       }
     });
   };
@@ -3033,6 +3075,12 @@ function WorkList({ type, state, openAdd, setModal, remove, upsert, requestConfi
               <p className="eyebrow">{item.category || item.priority || item.status || (item.imported ? "Imported" : "")}</p>
               <h3 className={isDone ? "task-text--completed" : ""}>{item.title}</h3>
               <p>{item.description || item.content || item.notes || "No extra notes."}</p>
+              {item.isMoneyReceive && (
+                <div className="money-receivable-badge">
+                  <CircleDollarSign size={14} />
+                  <span>Receive <strong>{rupee.format(Number(item.moneyAmount || 0))}</strong> from <strong>{item.payerName}</strong></span>
+                </div>
+              )}
               <small>{formatDate(item[config.date])} {displayTime}</small>
               {type === "todo" && (
                 <div className="todo-subtasks">
@@ -6136,6 +6184,32 @@ function applyAiActionData(current, action, dataOverride = {}) {
           : [expenseRecord, ...current.expenses];
       }
     }
+    if (action.type === "reminder") {
+      const updatedReminder = nextState.reminders.find(r => r.id === action.id);
+      if (updatedReminder) {
+        if (updatedReminder.isMoneyReceive && updatedReminder.status === "Completed") {
+          const matchingExpense = current.expenses.find(e => e.reminderId === action.id);
+          const expenseRecord = {
+            id: matchingExpense?.id || id("expense"),
+            title: `Received: ${updatedReminder.title}`,
+            amount: updatedReminder.moneyAmount || 0,
+            type: "Credit",
+            category: "Salary",
+            date: updatedReminder.date || todayISO(),
+            time: matchingExpense?.time || updatedReminder.time || "",
+            paymentMethod: "UPI",
+            notes: updatedReminder.description || "",
+            reminderId: action.id,
+            updatedAt: new Date().toISOString()
+          };
+          nextState.expenses = matchingExpense
+            ? current.expenses.map(e => e.reminderId === action.id ? expenseRecord : e)
+            : [expenseRecord, ...current.expenses];
+        } else {
+          nextState.expenses = current.expenses.filter(e => e.reminderId !== action.id);
+        }
+      }
+    }
     return nextState;
   }
 
@@ -6160,6 +6234,24 @@ function applyAiActionData(current, action, dataOverride = {}) {
       updatedAt: new Date().toISOString()
     };
     nextState.expenses = [expenseRecord, ...current.expenses];
+  }
+  if (action.type === "reminder") {
+    if (record.isMoneyReceive && record.status === "Completed") {
+      const expenseRecord = {
+        id: id("expense"),
+        title: `Received: ${record.title}`,
+        amount: record.moneyAmount || 0,
+        type: "Credit",
+        category: "Salary",
+        date: record.date || todayISO(),
+        time: record.time || "",
+        paymentMethod: "UPI",
+        notes: record.description || "",
+        reminderId: record.id,
+        updatedAt: new Date().toISOString()
+      };
+      nextState.expenses = [expenseRecord, ...current.expenses];
+    }
   }
   return nextState;
 }
@@ -6259,6 +6351,9 @@ function applyAiDelete(current, collection, action) {
   if (action.type === "salary") {
     next.salaryExpenses = current.salaryExpenses.filter((item) => item.salaryId !== action.id);
     next.expenses = current.expenses.filter((item) => item.salaryId !== action.id);
+  }
+  if (action.type === "reminder") {
+    next.expenses = current.expenses.filter((item) => item.reminderId !== action.id);
   }
   return next;
 }
@@ -6980,7 +7075,7 @@ function getInitialForm(kind, item, context = {}, state) {
   const defaults = {
     loan: { title: "", bankName: "", totalAmount: "", monthlyPayment: "", totalMonths: "", completedMonths: 0, interestRate: "", interestPeriod: "Annually", emiDate: "", startDate: baseDate, status: "Active", notes: "", foreclosurePaidAmount: "", paidMonths: [] },
     task: { title: "", description: "", dueDate: baseDate, startTime: "", endTime: "", dueTime: nowTime(), todayOnly: false, priority: state.settings.defaultTaskPriority, category: "", status: "Pending", reminder: false, notes: "", subtasks: [] },
-    reminder: { title: "", description: "", date: baseDate, time: state.settings.defaultReminderTime, repeat: "No repeat", priority: "Medium", notificationEnabled: true, status: "Active" },
+    reminder: { title: "", description: "", date: baseDate, time: state.settings.defaultReminderTime, repeat: "No repeat", priority: "Medium", notificationEnabled: true, status: "Active", isMoneyReceive: false, payerName: "", moneyAmount: "" },
     note: { title: "", content: "", date: baseDate, category: "", reminder: false, pinned: false },
     event: { title: "", description: "", startDate: baseDate, startTime: nowTime(), endDate: baseDate, endTime: "", location: "", category: "", reminderBefore: "", repeat: "No repeat", imported: false, status: "Scheduled" },
     expense: { title: "", amount: "", type: "Debit", category: "", date: baseDate, time: nowTime(), paymentMethod: "UPI", splitMode: "No split", paidBy: "", owedBy: "", participants: "", notes: "", reminder: false },
@@ -7062,7 +7157,14 @@ function fieldsForKind(kind, state, form = {}) {
       { name: "repeat", label: "Repeat", type: "select", options: ["No repeat", "Daily", "Weekly", "Monthly", "Yearly", "Custom"] },
       { name: "priority", label: "Priority", type: "select", options: ["Low", "Medium", "High", "Urgent"] },
       { name: "notificationEnabled", label: "Notification enabled", type: "checkbox" },
-      { name: "status", label: "Status", type: "select", options: ["Active", "Completed", "Expired", "Cancelled"] }
+      { name: "status", label: "Status", type: "select", options: ["Active", "Completed", "Expired", "Cancelled"] },
+      { name: "isMoneyReceive", label: "Is Money Receivable?", type: "checkbox" },
+      ...(form.isMoneyReceive
+        ? [
+            { name: "payerName", label: "From whom (Person Name)", required: true },
+            { name: "moneyAmount", label: "Amount to receive", type: "number", min: 0, required: true }
+          ]
+        : [])
     ],
     note: [
       { name: "title", label: "Note title", required: true },
@@ -7198,6 +7300,10 @@ function validateForm(kind, form) {
   if (kind === "expense" && form.type === "Debit" && form.splitMode === "Direct owed" && (!form.paidBy || !form.owedBy)) return "Select receiver and owed by participant.";
   if (kind === "projectTransaction" && form.type === "Debit" && form.splitMode === "Equal split" && !splitParticipants(form.participants).length) return "Select participants for equal split, or choose No split.";
   if (kind === "projectTransaction" && form.type === "Debit" && form.splitMode === "Direct owed" && (!form.paidBy || !form.owedBy)) return "Select receiver and owed by participant.";
+  if (kind === "reminder" && form.isMoneyReceive) {
+    if (!form.payerName?.trim()) return "Payer name is required for money receivable.";
+    if (amount(form.moneyAmount) <= 0) return "Money amount must be greater than zero.";
+  }
   if (kind === "project" && amount(form.budget) < 0) return "Budget cannot be negative.";
   return "";
 }
@@ -7246,7 +7352,7 @@ function withAiDefaults(kind, data) {
   const date = todayISO();
   const defaults = {
     task: { title: "Task", description: "", dueDate: date, startTime: "", endTime: "", dueTime: "", todayOnly: false, priority: "Medium", category: "", status: "Pending", reminder: false, notes: "", subtasks: [] },
-    reminder: { title: "Reminder", description: "", date, time: "", repeat: "No repeat", priority: "Medium", notificationEnabled: true, status: "Active" },
+    reminder: { title: "Reminder", description: "", date, time: "", repeat: "No repeat", priority: "Medium", notificationEnabled: true, status: "Active", isMoneyReceive: false, payerName: "", moneyAmount: 0 },
     note: { title: "Note", content: "", date, category: "", reminder: false, pinned: false },
     event: { title: "Event", description: "", startDate: date, startTime: "", endDate: date, endTime: "", location: "", category: "", reminderBefore: "", repeat: "No repeat", status: "Scheduled", imported: false },
     expense: { title: "Expense", amount: 0, type: "Debit", category: "", date, time: nowTime(), paymentMethod: "UPI", splitMode: "No split", paidBy: "", owedBy: "", participants: [], notes: "", reminder: false },

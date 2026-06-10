@@ -257,7 +257,7 @@ function compactState(state) {
       frequentMerchants: state.aiMemory?.frequentMerchants || []
     },
     tasks: take(state.tasks, ["id", "title", "dueDate", "startTime", "endTime", "dueTime", "todayOnly", "status", "priority", "category", "subtasks"]),
-    reminders: take(state.reminders, ["id", "title", "date", "time", "repeat", "status"]),
+    reminders: take(state.reminders, ["id", "title", "date", "time", "repeat", "status", "isMoneyReceive", "payerName", "moneyAmount"]),
     notes: take(state.notes, ["id", "title", "date", "category", "pinned"]),
     events: take(state.events, ["id", "title", "startDate", "startTime", "endDate", "location"]),
     expenses: take(state.expenses, ["id", "title", "amount", "type", "category", "date", "time", "paymentMethod", "splitMode", "paidBy", "owedBy", "participants", "notes"]),
@@ -599,6 +599,7 @@ Rules:
 - For loan and EMI actions, output type "loan". You can create, edit, delete active loans, record monthly EMI payments, or mark a loan foreclosed or completed.
 - If the user asks about their running loans or EMIs, look at the "loans" array, calculate paid/outstanding amounts, status, and summarize them.
 - Salary records are automatically synced as credit transactions in the daily expenses (expenses) list under the "Salary" category. You can query and summarize salary usage, compare current salary with the previous month's salary and spending, and calculate how much is saved.
+- Reminders can be marked as money receivable (by setting isMoneyReceive to true). If isMoneyReceive is true, you must provide the payerName (name of the person to receive money from) and moneyAmount (amount to receive). When a money receivable reminder is marked completed, it automatically gets synced as a Credit transaction under category "Salary" in Daily Expenses.
 
 
 Allowed action types:
@@ -606,7 +607,7 @@ ${ACTION_TYPES.join(", ")}
 
 Action data schemas:
 task: { title, description, dueDate, startTime, endTime, dueTime, todayOnly, priority, category, status, reminder, subtasks, notes }
-reminder: { title, description, date, time, repeat, priority, notificationEnabled, status }
+reminder: { title, description, date, time, repeat, priority, notificationEnabled, status, isMoneyReceive, payerName, moneyAmount }
 note: { title, content, date, category, reminder, pinned }
 event: { title, description, startDate, startTime, endDate, endTime, location, category, reminderBefore, repeat, status }
 expense: { title, amount, type, category, date, time, paymentMethod, splitMode, paidBy, owedBy, participants, notes, reminder }
