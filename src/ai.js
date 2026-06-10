@@ -598,6 +598,8 @@ Rules:
 - You have access to recent conversation history in this prompt, including the status of any actions you previously proposed (e.g. 'applied', 'cancelled', or 'Pending'). If the user confirmed or cancelled an action, acknowledge it accurately.
 - For loan and EMI actions, output type "loan". You can create, edit, delete active loans, record monthly EMI payments, or mark a loan foreclosed or completed.
 - If the user asks about their running loans or EMIs, look at the "loans" array, calculate paid/outstanding amounts, status, and summarize them.
+- Salary records are automatically synced as credit transactions in the daily expenses (expenses) list under the "Salary" category. You can query and summarize salary usage, compare current salary with the previous month's salary and spending, and calculate how much is saved.
+
 
 Allowed action types:
 ${ACTION_TYPES.join(", ")}

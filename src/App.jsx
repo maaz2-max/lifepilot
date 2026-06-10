@@ -180,6 +180,7 @@ const dashboardNavigationItems = [
   { key: "todo", label: "Todo List", icon: CheckCircle2 },
   { key: "calendar", label: "Calendar", icon: CalendarDays },
   { key: "expenses", label: "Money & Expenses", icon: WalletCards },
+  { key: "salary", label: "Salary Tracker", icon: CircleDollarSign },
   { key: "loans", label: "EMI / Loans", icon: Percent },
   { key: "gmail", label: "Gmail Records", icon: Mail },
   { key: "gmailInbox", label: "Gmail Inbox", icon: Inbox },
@@ -1888,12 +1889,40 @@ export default function App() {
     updateState((current) => {
       const exists = Boolean(item.id);
       const record = { ...item, id: item.id || id(prefix), updatedAt: new Date().toISOString() };
-      return {
+      
+      let nextState = {
         ...current,
         [collection]: exists
           ? current[collection].map((entry) => (entry.id === item.id ? record : entry))
           : [record, ...current[collection]]
       };
+      
+      if (collection === "salaries") {
+        const salaryIdVal = record.id;
+        const matchingExpense = current.expenses.find(e => e.salaryId === salaryIdVal);
+        const expenseRecord = {
+          id: matchingExpense?.id || id("expense"),
+          title: `Salary: ${record.title}`,
+          amount: record.amount,
+          type: "Credit",
+          category: "Salary",
+          date: record.receivedDate,
+          time: matchingExpense?.time || "",
+          paymentMethod: record.paymentMethod || "Bank transfer",
+          notes: record.notes,
+          salaryId: salaryIdVal,
+          updatedAt: new Date().toISOString()
+        };
+        
+        nextState = {
+          ...nextState,
+          expenses: matchingExpense
+            ? current.expenses.map(e => e.salaryId === salaryIdVal ? expenseRecord : e)
+            : [expenseRecord, ...current.expenses]
+        };
+      }
+      
+      return nextState;
     }, item.id ? "Changes saved" : "Added");
   };
 
@@ -1926,6 +1955,11 @@ export default function App() {
     setQuickOpen(false);
     if (key === "calendar") {
       setSelectedDate(todayISO());
+    }
+    if (key === "salary") {
+      setActive("expenses");
+      setExpenseTab("salary");
+      return;
     }
     setActive(key);
   };
@@ -3138,6 +3172,23 @@ function DailyExpenses({ state, openAdd, setModal, remove, setToast }) {
     <div>
       <Toolbar query={query} setQuery={setQuery} filter={filter} setFilter={setFilter} options={["All", "Today", "This week", "This month", "Last month", "Credit", "Debit"]} />
       <MetricGrid metrics={[["Daily Credit", sum(list, (e) => e.type === "Credit")], ["Daily Debit", sum(list, (e) => e.type === "Debit")], ["Balance", sum(list, (e) => e.type === "Credit") - sum(list, (e) => e.type === "Debit")], ["Today's Spending", sum(state.expenses, (e) => e.date === todayISO() && e.type === "Debit")]]} />
+      {(() => {
+        const salaryCredits = list.filter(e => e.category === "Salary" && e.type === "Credit");
+        const totalSalaryInView = sum(salaryCredits, e => e.amount);
+        if (totalSalaryInView > 0) {
+          const totalDebit = sum(list, e => e.type === "Debit");
+          return (
+            <div className="salary-insights-banner">
+              <Sparkles size={16} className="sparkle-icon" />
+              <span>
+                Salary Credit Detected: You received <strong>{rupee.format(totalSalaryInView)}</strong> in salary. 
+                Your daily debit accounts for <strong>{Math.round((totalDebit / totalSalaryInView) * 100)}%</strong> of your salary.
+              </span>
+            </div>
+          );
+        }
+        return null;
+      })()}
       <div className="money-action-row spaced">
         <button className="primary tactile" onClick={() => openAdd("expense")}><Plus size={18} />Add Entry</button>
         <button className="icon-button tactile pdf-tab-icon" type="button" title="Download daily PDF" aria-label="Download daily PDF" onClick={downloadDailyReport}><Download size={16} /></button>
@@ -4014,6 +4065,24 @@ function SalaryView({ state, selectedSalary, setSelectedSalary, openAdd, setModa
   const active = state.salaries.find((salary) => salary.id === selectedSalary) || state.salaries[0];
   const linked = active ? state.salaryExpenses.filter((expense) => expense.salaryId === active.id) : [];
   const spent = sum(linked, (expense) => expense.type !== "Credit");
+
+  const activeMonth = active?.month || (active?.receivedDate ? active.receivedDate.slice(0, 7) : "");
+  let prevMonthStr = "";
+  if (activeMonth) {
+    const [yr, mo] = activeMonth.split("-").map(Number);
+    const d = new Date(yr, mo - 2, 1);
+    prevMonthStr = d.toISOString().slice(0, 7);
+  }
+  const prevSalaries = prevMonthStr 
+    ? (state.salaries || []).filter(s => (s.month === prevMonthStr || (s.receivedDate && s.receivedDate.slice(0, 7) === prevMonthStr)))
+    : [];
+  const prevTotalAmount = sum(prevSalaries, s => s.amount);
+  const prevLinkedExpenses = prevMonthStr
+    ? (state.salaryExpenses || []).filter(e => prevSalaries.some(s => s.id === e.salaryId))
+    : [];
+  const prevTotalSpent = sum(prevLinkedExpenses, e => e.type !== "Credit");
+  const prevRemaining = prevTotalAmount - prevTotalSpent;
+
   return (
     <div className="split-view">
       <div>
@@ -4035,7 +4104,52 @@ function SalaryView({ state, selectedSalary, setSelectedSalary, openAdd, setModa
             <MetricGrid metrics={[["Salary amount", active.amount], ["Total spent", spent], ["Remaining", amount(active.amount) - spent], ["Usage", `${Math.round((spent / Math.max(amount(active.amount), 1)) * 100)}%`]]} />
             <button className="primary tactile spaced" onClick={() => openAdd("salaryExpense", { salaryId: active.id })}>Add Expense from Salary</button>
             <RecordTable list={linked} type="salaryExpense" setModal={setModal} remove={(id) => remove("salaryExpenses", id, "salary-linked expense")} />
-            <button className="secondary danger tactile spaced" onClick={() => remove("salaries", active.id, "salary")}>Delete Salary</button>
+            
+            {prevTotalAmount > 0 && (
+              <div className="month-comparison-card">
+                <h4>Month-on-Month Comparison</h4>
+                <div className="comparison-grid">
+                  <div className="comparison-item">
+                    <span className="label">Last Month's Salary ({prevMonthStr})</span>
+                    <strong className="value">{rupee.format(prevTotalAmount)}</strong>
+                  </div>
+                  <div className="comparison-item">
+                    <span className="label">Last Month's Spent</span>
+                    <strong className="value danger-text">{rupee.format(prevTotalSpent)}</strong>
+                  </div>
+                  <div className="comparison-item">
+                    <span className="label">Last Month's Savings</span>
+                    <strong className="value success-text">{rupee.format(prevRemaining)}</strong>
+                  </div>
+                </div>
+                <div className="comparison-analysis">
+                  {(() => {
+                    const diffAmount = amount(active.amount) - prevTotalAmount;
+                    const diffPercent = prevTotalAmount > 0 ? (diffAmount / prevTotalAmount) * 100 : 0;
+                    const isIncrease = diffAmount >= 0;
+                    return (
+                      <p className="analysis-text">
+                        {isIncrease ? "📈" : "📉"} Your salary for this month is <strong>{rupee.format(Math.abs(diffAmount))} ({Math.abs(diffPercent).toFixed(1)}%) {isIncrease ? "higher" : "lower"}</strong> than last month.
+                        {prevRemaining > 0 && <span> You saved <strong>{rupee.format(prevRemaining)}</strong> in savings last month.</span>}
+                      </p>
+                    );
+                  })()}
+                </div>
+              </div>
+            )}
+            
+            <button 
+              className="secondary danger tactile spaced" 
+              onClick={() => remove("salaries", active.id, "salary", {
+                apply: (current) => ({
+                  ...current,
+                  salaries: current.salaries.filter((s) => s.id !== active.id),
+                  expenses: current.expenses.filter((e) => e.salaryId !== active.id)
+                })
+              })}
+            >
+              Delete Salary
+            </button>
           </>
         ) : <EmptyState text="Select or create a salary record." />}
       </div>
@@ -5992,7 +6106,7 @@ function applyAiActionData(current, action, dataOverride = {}) {
   if (operation === "delete") return applyAiDelete(current, collection, action);
 
   if (operation === "edit") {
-    return {
+    let nextState = {
       ...current,
       [collection]: current[collection].map((item) =>
         item.id === action.id
@@ -6000,6 +6114,29 @@ function applyAiActionData(current, action, dataOverride = {}) {
           : item
       )
     };
+    if (action.type === "salary") {
+      const updatedSalary = nextState.salaries.find(s => s.id === action.id);
+      if (updatedSalary) {
+        const matchingExpense = current.expenses.find(e => e.salaryId === action.id);
+        const expenseRecord = {
+          id: matchingExpense?.id || id("expense"),
+          title: `Salary: ${updatedSalary.title}`,
+          amount: updatedSalary.amount,
+          type: "Credit",
+          category: "Salary",
+          date: updatedSalary.receivedDate,
+          time: matchingExpense?.time || "",
+          paymentMethod: updatedSalary.paymentMethod || "Bank transfer",
+          notes: updatedSalary.notes,
+          salaryId: action.id,
+          updatedAt: new Date().toISOString()
+        };
+        nextState.expenses = matchingExpense
+          ? current.expenses.map(e => e.salaryId === action.id ? expenseRecord : e)
+          : [expenseRecord, ...current.expenses];
+      }
+    }
+    return nextState;
   }
 
   const record = {
@@ -6007,7 +6144,24 @@ function applyAiActionData(current, action, dataOverride = {}) {
     id: id(action.type),
     updatedAt: new Date().toISOString()
   };
-  return { ...current, [collection]: [record, ...current[collection]] };
+  let nextState = { ...current, [collection]: [record, ...current[collection]] };
+  if (action.type === "salary") {
+    const expenseRecord = {
+      id: id("expense"),
+      title: `Salary: ${record.title}`,
+      amount: record.amount,
+      type: "Credit",
+      category: "Salary",
+      date: record.receivedDate,
+      time: "",
+      paymentMethod: record.paymentMethod || "Bank transfer",
+      notes: record.notes,
+      salaryId: record.id,
+      updatedAt: new Date().toISOString()
+    };
+    nextState.expenses = [expenseRecord, ...current.expenses];
+  }
+  return nextState;
 }
 
 function applyAiProjectSettlement(current, action, dataOverride = {}) {
@@ -6104,6 +6258,7 @@ function applyAiDelete(current, collection, action) {
   }
   if (action.type === "salary") {
     next.salaryExpenses = current.salaryExpenses.filter((item) => item.salaryId !== action.id);
+    next.expenses = current.expenses.filter((item) => item.salaryId !== action.id);
   }
   return next;
 }
