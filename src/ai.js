@@ -267,13 +267,6 @@ function compactState(state) {
     salaryExpenses: take(state.salaryExpenses, ["id", "salaryId", "title", "amount", "type", "category", "date", "paymentMethod"]),
     projectTransactions: take(state.projectTransactions, ["id", "projectId", "title", "amount", "type", "category", "date", "time", "paidBy", "owedBy", "splitMode", "participants", "paymentMethod"]),
     gmailRecords: take(state.gmailRecords || [], ["id", "subject", "title", "amount", "type", "category", "date", "time", "paymentMethod", "notes", "accountReference"]),
-    credentials: (state.credentials || []).map((credential) => ({
-      id: credential.id,
-      title: credential.title,
-      type: credential.type,
-      url: credential.url,
-      fieldNames: credential.fieldNames || []
-    })),
     pendingAiActions: (state.aiMessages || []).flatMap((message) =>
       (message.actions || [])
         .map((action, index) => ({

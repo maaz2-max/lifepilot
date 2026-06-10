@@ -38,6 +38,7 @@ import {
   X,
   Mail
 } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   clearPersistedState,
@@ -2383,7 +2384,7 @@ function WorkList({ type, state, openAdd, setModal, remove, upsert, requestConfi
           <article className={`record-card ${type} ${isDone ? "completed" : ""}`} key={item.id}>
             <div>
               <p className="eyebrow">{item.category || item.priority || item.status || (item.imported ? "Imported" : "")}</p>
-              <h3>{item.title}</h3>
+              <h3 className={isDone ? "task-text--completed" : ""}>{item.title}</h3>
               <p>{item.description || item.content || item.notes || "No extra notes."}</p>
               <small>{formatDate(item[config.date])} {displayTime}</small>
               {type === "todo" && (
@@ -2403,7 +2404,7 @@ function WorkList({ type, state, openAdd, setModal, remove, upsert, requestConfi
                         </button>
                         {isEditing ? (
                           <input value={editingSubtask.title} onChange={(event) => setEditingSubtask({ ...editingSubtask, title: event.target.value })} />
-                        ) : <span>{subtask.title}</span>}
+                        ) : <span className={isSubDone ? "task-text--completed" : ""}>{subtask.title}</span>}
                         {isEditing ? (
                           <button className="secondary tactile" type="button" onClick={() => saveSubtaskEdit(item, subtask.id, editingSubtask.title)}>Save</button>
                         ) : (

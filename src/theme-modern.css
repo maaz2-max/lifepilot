@@ -13,9 +13,63 @@
   --modern-accent-tertiary: #6b4cff; /* Purple */
   --modern-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
   
+  /* Semantic aliases (Modern Theme Dark overrides) */
+  --cream: #0f1014;
+  --paper: #181920;
+  --ink: #f0f0f5;
+  --muted: #8b8d98;
+  --lavender: #6b4cff;
+  --lime: #00d9b5;
+  --yellow: #ffb703;
+  --peach: #ff5f38;
+  
+  --bg-app: var(--cream);
+  --bg-surface: var(--paper);
+  --bg-elevated: #20222a;
+  --text-primary: var(--ink);
+  --text-secondary: var(--muted);
+  --accent-1: var(--lavender);
+  --accent-2: var(--lime);
+  --accent-3: var(--yellow);
+  --accent-4: var(--peach);
+
+  /* Shadow system (tactile, thick black) */
+  --shadow-sm:  2px 2px 0px #000000;
+  --shadow-md:  4px 4px 0px #000000;
+  --shadow-lg:  6px 6px 0px #000000;
+  --shadow-xl:  8px 8px 0px #000000;
+  --shadow-2xl: 10px 10px 0px #000000;
+  --shadow-pressed: 1px 1px 0px #000000;
+  --translate-pressed: translate(3px, 3px);
+
+  /* Border */
+  --border: 1.5px solid rgba(255,255,255,0.1);
+  --border-light: 1.5px solid rgba(255,255,255,0.05);
+
+  /* Radius scale */
+  --radius-sm:   10px;
+  --radius-md:   18px;
+  --radius-lg:   24px;
+  --radius-full: 9999px;
+
+  /* Typography */
+  --font-body: 'Geist', 'Outfit', system-ui, sans-serif;
+  --font-mono: 'Geist Mono', monospace;
+  --font-size-mobile: 13px;
+  --font-size-base: 14px;
+
+  /* Z-index scale */
+  --z-base: 0;
+  --z-sticky: 10;
+  --z-dropdown: 20;
+  --z-modal-bg: 30;
+  --z-modal: 40;
+  --z-toast: 50;
+  --z-tooltip: 60;
+
   background: var(--modern-bg);
   color: var(--modern-text);
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-body);
 }
 
 /* Base Overrides for Modern Theme */
@@ -328,4 +382,267 @@
 .app-shell.theme-modern .lumi-companion {
   animation: floatModern 6s ease-in-out infinite;
   filter: drop-shadow(0 10px 20px rgba(0, 0, 0, 0.4));
+}
+
+/* Base Redesign Components */
+.app-shell.theme-modern .panel,
+.app-shell.theme-modern .sub-panel,
+.app-shell.theme-modern .onboarding-panel,
+.app-shell.theme-modern .card {
+  background: var(--bg-surface);
+  border: var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  padding: 16px;
+  box-sizing: border-box;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.app-shell.theme-modern .card--elevated {
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-lg);
+}
+
+.app-shell.theme-modern .card--pastel-lavender { background: var(--lavender); }
+.app-shell.theme-modern .card--pastel-lime     { background: var(--lime); }
+.app-shell.theme-modern .card--pastel-yellow   { background: var(--yellow); }
+.app-shell.theme-modern .card--pastel-peach    { background: var(--peach); }
+
+.app-shell.theme-modern button.tactile,
+.app-shell.theme-modern .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 18px;
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  font-family: var(--font-body);
+  border: var(--border);
+  border-radius: var(--radius-full);
+  background: var(--ink);
+  color: var(--paper);
+  box-shadow: var(--shadow-md);
+  cursor: pointer;
+  transition: transform 0.08s ease, box-shadow 0.08s ease;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.app-shell.theme-modern button.tactile:active,
+.app-shell.theme-modern .btn:active {
+  transform: var(--translate-pressed);
+  box-shadow: var(--shadow-pressed);
+}
+
+.app-shell.theme-modern button.tactile.ghost,
+.app-shell.theme-modern button.tactile.tertiary,
+.app-shell.theme-modern .btn--ghost {
+  background: transparent;
+  color: var(--ink);
+  box-shadow: none;
+  border-color: transparent;
+}
+
+.app-shell.theme-modern .btn--pastel {
+  background: var(--lavender);
+  color: var(--ink);
+}
+
+.app-shell.theme-modern button.icon-button,
+.app-shell.theme-modern .btn--icon {
+  padding: 10px;
+  border-radius: var(--radius-full);
+  min-width: 40px;
+  min-height: 40px;
+}
+
+/* Modals */
+.app-shell.theme-modern .modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(17, 17, 17, 0.4);
+  backdrop-filter: blur(2px);
+  z-index: var(--z-modal-bg);
+  display: flex;
+  align-items: flex-end; /* bottom sheet on mobile */
+  justify-content: center;
+  padding: env(safe-area-inset-bottom);
+}
+
+@media (min-width: 480px) {
+  .app-shell.theme-modern .modal-backdrop {
+    align-items: center; /* centered on tablet+ */
+  }
+}
+
+.app-shell.theme-modern .modal,
+.app-shell.theme-modern .confirm-modal,
+.app-shell.theme-modern .modal-content {
+  background: var(--bg-surface) !important;
+  border: var(--border) !important;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0 !important; /* bottom sheet */
+  box-shadow: var(--shadow-2xl) !important;
+  width: 100%;
+  max-width: 480px;
+  max-height: 90dvh;
+  overflow-y: auto;
+  padding: 20px;
+  box-sizing: border-box;
+}
+
+@media (min-width: 480px) {
+  .app-shell.theme-modern .modal,
+  .app-shell.theme-modern .confirm-modal,
+  .app-shell.theme-modern .modal-content {
+    border-radius: var(--radius-lg) !important;
+  }
+}
+
+.app-shell.theme-modern .modal-footer,
+.app-shell.theme-modern .modal-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+/* Inputs */
+.app-shell.theme-modern input[type="date"],
+.app-shell.theme-modern input[type="time"],
+.app-shell.theme-modern input[type="datetime-local"] {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  -webkit-appearance: none;
+  appearance: none;
+  font-size: 16px; /* prevents iOS zoom */
+  padding: 10px 12px;
+  border: var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--ink);
+  font-family: var(--font-body);
+}
+
+/* Segments */
+.app-shell.theme-modern .seg-control {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border: var(--border);
+  border-radius: var(--radius-full);
+  background: var(--bg-app);
+  padding: 3px;
+  width: 100%;
+  max-width: 320px;
+}
+
+.app-shell.theme-modern .seg-control__item {
+  text-align: center;
+  padding: 7px 0;
+  border-radius: var(--radius-full);
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 0.15s, box-shadow 0.08s;
+  cursor: pointer;
+}
+
+.app-shell.theme-modern .seg-control__item--active {
+  background: var(--ink);
+  color: var(--paper);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Tabs */
+.app-shell.theme-modern .money-tabs {
+  display: flex;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  gap: 6px;
+  padding-bottom: 2px;
+  border-bottom: var(--border-light);
+}
+
+.app-shell.theme-modern .money-tabs::-webkit-scrollbar { display: none; }
+
+.app-shell.theme-modern .money-tab {
+  flex-shrink: 0;
+  padding: 8px 14px;
+  border-radius: var(--radius-full);
+  font-size: 13px;
+  font-weight: 500;
+  border: var(--border);
+  background: transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.1s, box-shadow 0.08s;
+}
+
+.app-shell.theme-modern .money-tab--active {
+  background: var(--ink);
+  color: var(--paper);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Task Completion */
+.app-shell.theme-modern .task-text--completed {
+  position: relative;
+  color: var(--text-secondary) !important;
+}
+
+.app-shell.theme-modern .task-text--completed::after {
+  content: '';
+  position: absolute;
+  left: 0; top: 50%;
+  height: 1.5px;
+  background: var(--ink);
+  width: 0;
+  animation: strikethrough 0.3s ease-out forwards;
+}
+
+@keyframes strikethrough {
+  to { width: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Layout Constraints (Impeccable) */
+.app-shell.theme-modern * {
+  max-width: 100%;
+}
+
+.app-shell.theme-modern img, 
+.app-shell.theme-modern video, 
+.app-shell.theme-modern canvas {
+  max-width: 100%;
+  height: auto;
+}
+
+/* AI Assistant Modern Adjustments */
+.app-shell.theme-modern .ai-panel {
+  background: var(--bg-surface);
+}
+
+.app-shell.theme-modern .ai-message.user .ai-message-text {
+  background: var(--ink);
+  color: var(--paper);
+  border-radius: 18px 18px 4px 18px;
+}
+
+.app-shell.theme-modern .ai-message.ai .ai-message-text {
+  background: var(--bg-app);
+  border: var(--border);
+  border-radius: 18px 18px 18px 4px;
+}
+
+.app-shell.theme-modern .ai-chip {
+  flex-shrink: 0;
 }
