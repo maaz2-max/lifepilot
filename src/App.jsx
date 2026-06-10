@@ -3216,6 +3216,38 @@ function LoansView({ state, openAdd, setModal, remove, upsert, requestConfirm, s
     return acc + (remainingMonths * amount(loan.monthlyPayment));
   }, 0);
 
+  const closedLoans = (state.loans || []).filter(loan => loan.status !== "Active");
+  const averageEmi = activeLoans.length ? totalActiveEmi / activeLoans.length : 0;
+  const totalPrincipal = (state.loans || []).reduce((acc, loan) => acc + amount(loan.totalAmount), 0);
+  
+  let nextUpcomingEmi = null;
+  activeLoans.forEach(loan => {
+    const nextDate = getNextUnpaidEmiDate(loan);
+    if (nextDate) {
+      if (!nextUpcomingEmi || nextDate < nextUpcomingEmi.date) {
+        nextUpcomingEmi = {
+          date: nextDate,
+          title: loan.title,
+          amount: loan.monthlyPayment
+        };
+      }
+    }
+  });
+
+  const upcomingEmiTimeline = [];
+  activeLoans.forEach(loan => {
+    const nextDate = getNextUnpaidEmiDate(loan);
+    if (nextDate) {
+      upcomingEmiTimeline.push({
+        loan,
+        date: nextDate,
+        title: loan.title,
+        amount: loan.monthlyPayment
+      });
+    }
+  });
+  upcomingEmiTimeline.sort((a, b) => a.date.localeCompare(b.date));
+
   const selectedLoan = (state.loans || []).find(l => l.id === selectedLoanId);
 
   const handleMarkPaid = (loan) => {
@@ -3262,37 +3294,6 @@ function LoansView({ state, openAdd, setModal, remove, upsert, requestConfirm, s
   return (
     <div className="loans-container split-view">
       <div className="loans-main">
-        <div className="insights-panel">
-          <h3>EMI & Loan Insights</h3>
-          <div className="insights-grid">
-            <div className="insight-item">
-              <span className="insight-label">Active Monthly EMI</span>
-              <strong className="insight-value text-primary">{rupee.format(totalActiveEmi)}</strong>
-            </div>
-            <div className="insight-item">
-              <span className="insight-label">Total Paid Till Now</span>
-              <strong className="insight-value text-success">{rupee.format(totalPaid)}</strong>
-            </div>
-            <div className="insight-item">
-              <span className="insight-label">Total Outstanding</span>
-              <strong className="insight-value text-warning">{rupee.format(totalOutstanding)}</strong>
-            </div>
-          </div>
-          {(totalPaid + totalOutstanding) > 0 && (
-            <div className="loan-progress-bar-wrap">
-              <div className="loan-progress-labels">
-                <span>Paid Off ({Math.round(totalPaid / (totalPaid + totalOutstanding) * 100)}%)</span>
-                <span>Outstanding</span>
-              </div>
-              <div className="progress-bar-track">
-                <div 
-                  className="progress-bar-fill fill-success" 
-                  style={{ width: `${(totalPaid / (totalPaid + totalOutstanding)) * 100}%` }} 
-                />
-              </div>
-            </div>
-          )}
-        </div>
 
         <Toolbar 
           query={query} 
@@ -3328,7 +3329,7 @@ function LoansView({ state, openAdd, setModal, remove, upsert, requestConfirm, s
               <button 
                 key={loan.id} 
                 className={`loan-card record-card tactile ${selectedLoanId === loan.id ? "selected" : ""}`}
-                onClick={() => setSelectedLoanId(loan.id)}
+                onClick={() => setSelectedLoanId(curr => curr === loan.id ? null : loan.id)}
               >
                 <div className="loan-card-header">
                   <div>
@@ -3536,9 +3537,193 @@ function LoansView({ state, openAdd, setModal, remove, upsert, requestConfirm, s
 
           </div>
         ) : (
-          <div className="empty-subpanel">
-            <Percent size={40} />
-            <p>Select a loan to view full payment history and actions.</p>
+          <div className="loan-portfolio-insights">
+            <div className="loan-portfolio-header">
+              <h2>EMI & Loan Portfolio</h2>
+              <p className="subtitle">Overall overview of active and closed liabilities, upcoming dues, and insights.</p>
+            </div>
+
+            <div className="portfolio-stats-grid">
+              <div className="portfolio-stat-card active-emi-card">
+                <span className="stat-label">Active Monthly EMI</span>
+                <strong className="stat-value text-primary">{rupee.format(totalActiveEmi)}</strong>
+                <span className="stat-sub">{activeLoans.length} active EMIs</span>
+              </div>
+              <div className="portfolio-stat-card outstanding-card">
+                <span className="stat-label">Total Outstanding</span>
+                <strong className="stat-value text-warning">{rupee.format(totalOutstanding)}</strong>
+                <span className="stat-sub">Remaining to pay</span>
+              </div>
+              <div className="portfolio-stat-card paid-card">
+                <span className="stat-label">Total Paid Till Now</span>
+                <strong className="stat-value text-success">{rupee.format(totalPaid)}</strong>
+                <span className="stat-sub">Completed payments</span>
+              </div>
+              {totalPrincipal > 0 && (
+                <div className="portfolio-stat-card principal-card">
+                  <span className="stat-label">Total Principal</span>
+                  <strong className="stat-value">{rupee.format(totalPrincipal)}</strong>
+                  <span className="stat-sub">Original borrowing</span>
+                </div>
+              )}
+            </div>
+
+            {(totalPaid + totalOutstanding) > 0 && (
+              <div className="portfolio-progress-section">
+                <div className="portfolio-progress-header">
+                  <span>Portfolio Paid Off ({Math.round(totalPaid / (totalPaid + totalOutstanding) * 100)}%)</span>
+                  <span>{rupee.format(totalPaid)} / {rupee.format(totalPaid + totalOutstanding)}</span>
+                </div>
+                <div className="progress-bar-track large-track">
+                  <div 
+                    className="progress-bar-fill fill-success" 
+                    style={{ width: `${(totalPaid / (totalPaid + totalOutstanding)) * 100}%` }} 
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className="insights-secondary-details-row">
+              <div className="secondary-detail-item">
+                <span className="label">Total Loans Tracked</span>
+                <strong>{state.loans?.length || 0} ({activeLoans.length} active, {closedLoans.length} closed)</strong>
+              </div>
+              {activeLoans.length > 1 && (
+                <div className="secondary-detail-item">
+                  <span className="label">Average Monthly EMI</span>
+                  <strong>{rupee.format(averageEmi)}</strong>
+                </div>
+              )}
+            </div>
+
+            {nextUpcomingEmi ? (
+              <div className="upcoming-emi-alert-card">
+                <div className="alert-header">
+                  <Bell size={18} className="alert-icon" />
+                  <div>
+                    <h4>Next Upcoming EMI</h4>
+                    <p className="alert-subtitle">Due date is approaching soon</p>
+                  </div>
+                </div>
+                <div className="alert-details">
+                  <div className="alert-details-row">
+                    <span>Loan/EMI:</span>
+                    <strong>{nextUpcomingEmi.title}</strong>
+                  </div>
+                  <div className="alert-details-row">
+                    <span>Monthly payment:</span>
+                    <strong className="text-warning">{rupee.format(nextUpcomingEmi.amount)}</strong>
+                  </div>
+                  <div className="alert-details-row">
+                    <span>EMI Due Date:</span>
+                    <strong>{formatDate(nextUpcomingEmi.date)}</strong>
+                  </div>
+                </div>
+                {(() => {
+                  const diffTime = new Date(`${nextUpcomingEmi.date}T12:00:00`) - new Date(`${todayISO()}T12:00:00`);
+                  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                  const matchingLoan = activeLoans.find(l => l.title === nextUpcomingEmi.title);
+                  return (
+                    <div className="alert-actions">
+                      <span className="due-countdown">
+                        {diffDays === 0 ? "🔥 Due today!" : diffDays > 0 ? `⏰ In ${diffDays} days` : `⚠️ Overdue by ${Math.abs(diffDays)} days!`}
+                      </span>
+                      {matchingLoan && (
+                        <button 
+                          className="primary mini-pay-button tactile"
+                          onClick={() => handleMarkPaid(matchingLoan)}
+                        >
+                          <CheckCircle2 size={14} /> Mark as Paid
+                        </button>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
+            ) : activeLoans.length > 0 ? (
+              <div className="no-upcoming-emi-card">
+                <CheckCircle2 size={20} className="success-icon" />
+                <span>No upcoming active EMIs. You're all clear!</span>
+              </div>
+            ) : null}
+
+            {activeLoans.length > 0 && upcomingEmiTimeline.length > 0 && (
+              <div className="timeline-section">
+                <h3>Upcoming Payments Timeline</h3>
+                <p className="section-desc">Chronological view of upcoming payments across all active loans.</p>
+                <div className="timeline-list">
+                  {upcomingEmiTimeline.slice(0, 5).map((item, idx) => {
+                    const diffTime = new Date(`${item.date}T12:00:00`) - new Date(`${todayISO()}T12:00:00`);
+                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                    return (
+                      <div className="timeline-item" key={item.loan.id}>
+                        <div className="timeline-badge-line">
+                          <div className="timeline-dot"></div>
+                          {idx < Math.min(upcomingEmiTimeline.length, 5) - 1 && <div className="timeline-line"></div>}
+                        </div>
+                        <div className="timeline-content">
+                          <div className="timeline-main-info">
+                            <strong>{item.title}</strong>
+                            <span className="timeline-date">{formatDate(item.date)}</span>
+                          </div>
+                          <div className="timeline-pay-info">
+                            <strong className="timeline-amount">{rupee.format(item.amount)}</strong>
+                            <span className={`timeline-countdown ${diffDays <= 5 ? "urgent" : ""}`}>
+                              {diffDays === 0 ? "Due today" : diffDays > 0 ? `${diffDays}d left` : `${Math.abs(diffDays)}d overdue`}
+                            </span>
+                            <button 
+                              className="timeline-pay-btn tactile"
+                              onClick={() => handleMarkPaid(item.loan)}
+                              title="Mark as paid"
+                            >
+                              Pay
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className="portfolio-ai-advisor">
+              <div className="ai-advisor-header">
+                <Sparkles size={16} className="ai-sparkle-icon" />
+                <h4>AI Advisor Loan Tips</h4>
+              </div>
+              <div className="ai-advisor-tips-list">
+                {(() => {
+                  const tips = [];
+                  if (activeLoans.length === 0) {
+                    tips.push("No active loans tracked. Add your active loans using the '+ Add EMI / Loan' button to get insights, calendar schedules, and AI suggestions.");
+                  } else {
+                    const highPaidLoan = activeLoans.find(l => (amount(l.completedMonths) / amount(l.totalMonths)) >= 0.75);
+                    if (highPaidLoan) {
+                      const percent = Math.round((amount(highPaidLoan.completedMonths) / amount(highPaidLoan.totalMonths)) * 100);
+                      tips.push(`Your loan "${highPaidLoan.title}" is ${percent}% paid off! Since it's nearing completion, you could prioritize foreclosing it to free up monthly cash flow.`);
+                    }
+                    
+                    if (activeLoans.length > 1) {
+                      tips.push(`You have ${activeLoans.length} active loans. To save the most money on interest, focus extra payments on the loan with the highest interest rate (Avalanche method). Alternatively, use the Snowball method (pay off the smallest loan first) to gain psychological wins.`);
+                    }
+
+                    if (totalActiveEmi > 0) {
+                      tips.push(`Your combined monthly EMI commitment is ${rupee.format(totalActiveEmi)}. Ensure this amount is budgeted in your monthly expense plans on the respective EMI days.`);
+                    }
+
+                    const missingDates = activeLoans.filter(l => !l.startDate);
+                    if (missingDates.length > 0) {
+                      tips.push(`Tip: Add a start date for "${missingDates[0].title}" to automatically map it to the payment schedule timeline and calendar.`);
+                    }
+                  }
+                  return tips.map((tip, index) => (
+                    <p className="ai-tip-paragraph" key={index}>• {tip}</p>
+                  ));
+                })()}
+              </div>
+            </div>
+
           </div>
         )}
       </div>
