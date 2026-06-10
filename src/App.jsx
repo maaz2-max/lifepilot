@@ -7026,7 +7026,13 @@ function projectSplitSummary(project, transactions) {
   const stats = rawStats.map((row) => {
     const paidOut = paidSettlements.filter((item) => item.from === row.name).reduce((total, item) => total + amount(item.amount), 0);
     const received = paidSettlements.filter((item) => item.to === row.name).reduce((total, item) => total + amount(item.amount), 0);
-    return { ...row, settledPaid: paidOut, settledReceived: received, balance: row.balance + paidOut - received };
+    return { 
+      ...row, 
+      settledPaid: paidOut, 
+      settledReceived: received, 
+      totalSpent: row.totalSpent + paidOut,
+      balance: row.balance + paidOut - received 
+    };
   });
   const activeSplitTransactions = debitTransactions.filter((item) =>
     (splitModeOf(item) === "Equal split" && (item.participants || []).filter(Boolean).length > 0) ||
