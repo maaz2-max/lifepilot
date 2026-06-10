@@ -505,6 +505,7 @@ input[type="datetime-local"] {
   background: rgba(255, 250, 241, 0.86);
   box-shadow: var(--shadow);
   border-radius: 22px;
+  min-width: 0;
 }
 
 .panel,
@@ -529,6 +530,7 @@ input[type="datetime-local"] {
 .hero-panel,
 .metric-grid {
   grid-column: 1 / -1;
+  min-width: 0;
 }
 
 .hero-panel {
