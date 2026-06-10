@@ -5317,5 +5317,50 @@ label {
   background: rgba(220, 53, 69, 0.03);
 }
 
+/* Custom responsive AutoTrack Tab navigation */
+.autotrack-nav-container {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+.autotrack-tab-list {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  flex-wrap: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+
+.autotrack-tab-list::-webkit-scrollbar {
+  display: none;
+}
+
+.autotrack-tab-list button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* Flex row class for small elements that shouldn't use the grid-based .cluster class */
+.autotrack-flex-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.autotrack-flex-row.spaced {
+  justify-content: space-between;
+  width: 100%;
+}
+
+
 
 

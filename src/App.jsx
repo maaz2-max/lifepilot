@@ -9099,8 +9099,8 @@ function AutoTrackView({ state, setState, upsert, remove, setToast, setCarLoadin
     <div className="autotrack-dashboard page-grid">
       {/* Tab Navigation header */}
       <div className="autotrack-tabs panel span-2">
-        <div className="cluster spaced">
-          <div className="cluster autotrack-btn-group">
+        <div className="autotrack-nav-container">
+          <div className="autotrack-tab-list">
             {[
               ["overview", "Overview & Insights"],
               ["vehicles", "Vehicles"],
@@ -9272,7 +9272,7 @@ function AutoTrackView({ state, setState, upsert, remove, setToast, setCarLoadin
             ) : (
               vehicles.map((v) => (
                 <div key={v.id} className="vehicle-card panel tactile" style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-                  <div className="cluster spaced">
+                  <div className="autotrack-flex-row spaced" style={{ margin: "0.65rem 0" }}>
                     <span className="badge-tag" style={{ background: v.fuelType === "electric" ? "var(--blue)" : "var(--yellow)" }}>
                       {v.type} ({v.fuelType})
                     </span>
@@ -9282,7 +9282,7 @@ function AutoTrackView({ state, setState, upsert, remove, setToast, setCarLoadin
                     <h4 style={{ margin: 0, fontSize: "1.2rem" }}>{v.brand} {v.model}</h4>
                     <p style={{ margin: "0.25rem 0 0 0", color: "var(--muted)" }}>Odometer: <strong>{v.currentOdometer.toLocaleString()} km</strong></p>
                   </div>
-                  <div className="cluster" style={{ marginTop: "auto", borderTop: "1px solid var(--line)", paddingTop: "0.75rem" }}>
+                  <div className="autotrack-flex-row" style={{ marginTop: "auto", borderTop: "1px solid var(--line)", paddingTop: "0.75rem", gap: "0.50rem" }}>
                     <button className="secondary tactile" style={{ flex: 1 }} onClick={() => setEditor({ kind: "vehicle", item: v })}>Edit</button>
                     <button className="secondary danger tactile" onClick={() => remove("vehicles", v.id, "vehicle")}>Delete</button>
                   </div>
@@ -9332,7 +9332,7 @@ function AutoTrackView({ state, setState, upsert, remove, setToast, setCarLoadin
                           <td>₹{log.pricePerLitre}</td>
                           <td><strong>₹{log.amount}</strong></td>
                           <td>
-                            <div className="cluster" style={{ gap: "0.25rem" }}>
+                            <div className="autotrack-flex-row" style={{ gap: "0.25rem", flexWrap: "nowrap" }}>
                               <button className="icon-button tactile" onClick={() => setEditor({ kind: "fuelLog", item: log })}><Edit3 size={15} /></button>
                               <button className="icon-button tactile danger" onClick={() => remove("fuelLogs", log.id, "fuel log")}><Trash2 size={15} /></button>
                             </div>
@@ -9380,7 +9380,7 @@ function AutoTrackView({ state, setState, upsert, remove, setToast, setCarLoadin
                           <td><strong>₹{log.amountSpent}</strong></td>
                           <td style={{ maxWidth: "150px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={log.notes}>{log.notes || "-"}</td>
                           <td>
-                            <div className="cluster" style={{ gap: "0.25rem" }}>
+                            <div className="autotrack-flex-row" style={{ gap: "0.25rem", flexWrap: "nowrap" }}>
                               <button className="icon-button tactile" onClick={() => setEditor({ kind: "chargingLog", item: log })}><Edit3 size={15} /></button>
                               <button className="icon-button tactile danger" onClick={() => remove("chargingLogs", log.id, "charging log")}><Trash2 size={15} /></button>
                             </div>
@@ -9433,7 +9433,7 @@ function AutoTrackView({ state, setState, upsert, remove, setToast, setCarLoadin
                         <td><strong>₹{log.expense.toLocaleString()}</strong></td>
                         <td style={{ fontSize: "0.85rem", maxWidth: "250px" }}>{log.notes || "-"}</td>
                         <td>
-                          <div className="cluster" style={{ gap: "0.25rem" }}>
+                          <div className="autotrack-flex-row" style={{ gap: "0.25rem", flexWrap: "nowrap" }}>
                             <button className="icon-button tactile" onClick={() => setEditor({ kind: "serviceLog", item: log })}><Edit3 size={15} /></button>
                             <button className="icon-button tactile danger" onClick={() => remove("serviceLogs", log.id, "service record")}><Trash2 size={15} /></button>
                           </div>
@@ -9478,7 +9478,7 @@ function AutoTrackView({ state, setState, upsert, remove, setToast, setCarLoadin
                   return (
                     <div key={rem.id} className={`vehicle-reminder-card panel tactile ${rem.isCompleted ? "done" : isOverdue ? "overdue" : ""}`} style={{ padding: "0.75rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                       <div>
-                        <div className="cluster" style={{ gap: "0.5rem" }}>
+                        <div className="autotrack-flex-row" style={{ gap: "0.5rem" }}>
                           <input
                             type="checkbox"
                             checked={rem.isCompleted}
@@ -9491,7 +9491,7 @@ function AutoTrackView({ state, setState, upsert, remove, setToast, setCarLoadin
                         </p>
                         {rem.notes && <p style={{ margin: "0.25rem 0 0 1.5rem", fontSize: "0.8rem", color: "var(--muted)" }}>{rem.notes}</p>}
                       </div>
-                      <div className="cluster" style={{ gap: "0.25rem" }}>
+                      <div className="autotrack-flex-row" style={{ gap: "0.25rem" }}>
                         <button className="icon-button tactile" onClick={() => setEditor({ kind: "vehicleReminder", item: rem })}><Edit3 size={14} /></button>
                         <button className="icon-button tactile danger" onClick={() => remove("vehicleReminders", rem.id, "reminder")}><Trash2 size={14} /></button>
                       </div>
@@ -9519,14 +9519,16 @@ function AutoTrackView({ state, setState, upsert, remove, setToast, setCarLoadin
                   return (
                     <div key={doc.id} className={`vehicle-reminder-card panel tactile ${isExpired ? "overdue" : ""}`} style={{ padding: "0.75rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                       <div>
-                        <strong>{doc.title}</strong> <span className="badge-tag">{doc.type}</span>
+                        <div className="autotrack-flex-row" style={{ gap: "0.5rem" }}>
+                          <strong>{doc.title}</strong> <span className="badge-tag">{doc.type}</span>
+                        </div>
                         <p style={{ margin: "0.25rem 0 0 0", fontSize: "0.85rem", color: "var(--muted)" }}>
                           {v ? `${v.brand} ${v.model} (${v.name})` : "Vehicle"} | Expiry: {doc.expiryDate ? `${formatDate(doc.expiryDate)} ${isExpired ? "(Expired)" : ""}` : "No expiry"}
                         </p>
                         {doc.notes && <p style={{ margin: "0.25rem 0 0 0", fontSize: "0.8rem", color: "var(--muted)" }}>{doc.notes}</p>}
                         {doc.link && <a href={doc.link} target="_blank" rel="noopener noreferrer" style={{ fontSize: "0.8rem", color: "var(--ink)", textDecoration: "underline", display: "inline-block", marginTop: "0.25rem" }}>View File Link</a>}
                       </div>
-                      <div className="cluster" style={{ gap: "0.25rem" }}>
+                      <div className="autotrack-flex-row" style={{ gap: "0.25rem" }}>
                         <button className="icon-button tactile" onClick={() => setEditor({ kind: "vehicleDocument", item: doc })}><Edit3 size={14} /></button>
                         <button className="icon-button tactile danger" onClick={() => remove("vehicleDocuments", doc.id, "document")}><Trash2 size={14} /></button>
                       </div>
@@ -9543,7 +9545,7 @@ function AutoTrackView({ state, setState, upsert, remove, setToast, setCarLoadin
       {importOpen && (
         <div className="autotrack-modal-overlay">
           <div className="autotrack-modal panel tactile">
-            <div className="modal-header cluster spaced" style={{ borderBottom: "2px solid var(--ink)", paddingBottom: "0.75rem", marginBottom: "1rem" }}>
+            <div className="modal-header autotrack-flex-row spaced" style={{ borderBottom: "2px solid var(--ink)", paddingBottom: "0.75rem", marginBottom: "1rem" }}>
               <h2 style={{ margin: 0 }}>Import AutoTrack JSON</h2>
               <button className="icon-button tactile" onClick={() => setImportOpen(false)}><X size={20} /></button>
             </div>
@@ -9554,7 +9556,7 @@ function AutoTrackView({ state, setState, upsert, remove, setToast, setCarLoadin
               value={importText}
               onChange={(e) => setImportText(e.target.value)}
             />
-            <div className="cluster" style={{ justifyContent: "flex-end", marginTop: "1rem", gap: "0.5rem" }}>
+            <div className="autotrack-flex-row" style={{ justifyContent: "flex-end", marginTop: "1rem", gap: "0.5rem" }}>
               <button className="secondary tactile" onClick={() => setImportOpen(false)}>Cancel</button>
               <button className="primary tactile" onClick={handleImportJson}>Import & Seed</button>
             </div>
