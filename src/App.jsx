@@ -2007,6 +2007,11 @@ export default function App() {
       setExpenseTab("salary");
       return;
     }
+    if (key === "bills") {
+      setActive("expenses");
+      setExpenseTab("bills");
+      return;
+    }
     setActive(key);
   };
 
@@ -2657,6 +2662,85 @@ function HomeView({ state, setState, openAdd, setActive, setAiOpen }) {
   const insightCards = homeInsightCards(state);
   const dailyDigest = buildDailyDigest(state);
   const monthReview = buildMonthEndReview(state);
+
+  const importantDues = (() => {
+    const dues = [];
+    const todayDateObj = new Date(`${today}T12:00:00`);
+
+    // 1. EMI (Loans) - due in next 10 days
+    (state.loans || []).forEach((loan) => {
+      if (loan.status === "Active" || loan.status === "Pending") {
+        const nextDate = getNextUnpaidEmiDate(loan);
+        if (nextDate) {
+          const daysLeft = Math.ceil((new Date(`${nextDate}T12:00:00`) - todayDateObj) / 86400000);
+          if (daysLeft >= 0 && daysLeft <= 10) {
+            dues.push({
+              id: `loan-${loan.id}-${nextDate}`,
+              type: "EMI",
+              title: `${loan.title} EMI`,
+              detail: `₹${loan.monthlyPayment} due on ${formatDate(nextDate)}`,
+              daysLeft,
+              targetTab: "loans"
+            });
+          }
+        }
+      }
+    });
+
+    // 2. Tasks - due in next 10 days, not completed or cancelled
+    (state.tasks || []).forEach((task) => {
+      if (task.dueDate && !["Completed", "Cancelled"].includes(task.status)) {
+        const daysLeft = Math.ceil((new Date(`${task.dueDate}T12:00:00`) - todayDateObj) / 86400000);
+        if (daysLeft >= 0 && daysLeft <= 10) {
+          dues.push({
+            id: `task-${task.id}`,
+            type: "Task",
+            title: task.title,
+            detail: `Due on ${formatDate(task.dueDate)}`,
+            daysLeft,
+            targetTab: "tasks"
+          });
+        }
+      }
+    });
+
+    // 3. Reminders - active, due in next 10 days
+    (state.reminders || []).forEach((reminder) => {
+      if (reminder.date && reminder.status === "Active") {
+        const daysLeft = Math.ceil((new Date(`${reminder.date}T12:00:00`) - todayDateObj) / 86400000);
+        if (daysLeft >= 0 && daysLeft <= 10) {
+          dues.push({
+            id: `reminder-${reminder.id}`,
+            type: "Reminder",
+            title: reminder.title,
+            detail: `Due on ${formatDate(reminder.date)}`,
+            daysLeft,
+            targetTab: "reminders"
+          });
+        }
+      }
+    });
+
+    // 4. Bills - unpaid, due in next 10 days
+    (state.bills || []).forEach((bill) => {
+      if (bill.dueDate && bill.status !== "Paid") {
+        const daysLeft = Math.ceil((new Date(`${bill.dueDate}T12:00:00`) - todayDateObj) / 86400000);
+        if (daysLeft >= 0 && daysLeft <= 10) {
+          dues.push({
+            id: `bill-${bill.id}`,
+            type: "Bill",
+            title: bill.title,
+            detail: `₹${bill.amount} due on ${formatDate(bill.dueDate)}`,
+            daysLeft,
+            targetTab: "bills"
+          });
+        }
+      }
+    });
+
+    return dues.sort((a, b) => a.daysLeft - b.daysLeft);
+  })();
+
   const refreshWeather = () => {
     setState((current) => ({
       ...current,
@@ -2676,6 +2760,30 @@ function HomeView({ state, setState, openAdd, setActive, setAiOpen }) {
         </div>
         {isBirthday(state.profile, today) && <div className="birthday-card">Happy Birthday, {state.profile.name}!</div>}
       </div>
+
+      {importantDues.length > 0 && (
+        <section className="panel span-2 glass-panel important-dues-section">
+          <SectionHeader title="🚨 Important Dues & Actions (Next 10 Days)" />
+          <div className="important-dues-grid">
+            {importantDues.map((due) => (
+              <button 
+                key={due.id} 
+                className={`due-box-card tactile ${due.daysLeft === 0 ? "due-today" : due.daysLeft <= 3 ? "due-soon" : ""}`} 
+                onClick={() => setActive(due.targetTab)}
+              >
+                <div className="due-badge">{due.type}</div>
+                <div className="due-info">
+                  <strong>{due.title}</strong>
+                  <span>{due.detail}</span>
+                </div>
+                <div className="due-countdown">
+                  {due.daysLeft === 0 ? "Today" : `${due.daysLeft}d left`}
+                </div>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
 
       {state.settings.weatherEnabled && (
         <section className="panel weather-card span-2">

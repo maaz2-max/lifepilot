@@ -5007,4 +5007,111 @@ label {
   color: var(--ink);
 }
 
+/* Important Dues Section Styling */
+.important-dues-section {
+  border: 1px solid rgba(220, 53, 69, 0.15) !important;
+  background: linear-gradient(135deg, rgba(220, 53, 69, 0.03) 0%, rgba(220, 53, 69, 0.005) 100%) !important;
+}
+
+.important-dues-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 0.85rem;
+  margin-top: 0.85rem;
+}
+
+.due-box-card {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  text-align: left;
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.2s, background 0.2s;
+  width: 100%;
+}
+
+.due-box-card:hover {
+  background: rgba(255, 255, 255, 0.06);
+  transform: translateY(-2px);
+}
+
+.due-box-card .due-badge {
+  font-size: 0.65rem;
+  font-weight: 800;
+  padding: 0.18rem 0.45rem;
+  border-radius: 6px;
+  text-transform: uppercase;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--ink-light);
+  letter-spacing: 0.03em;
+}
+
+.due-box-card .due-info {
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+  gap: 0.15rem;
+}
+
+.due-box-card .due-info strong {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.due-box-card .due-info span {
+  font-size: 0.76rem;
+  color: var(--ink-light);
+}
+
+.due-box-card .due-countdown {
+  font-size: 0.74rem;
+  font-weight: 800;
+  color: var(--ink-light);
+  padding: 0.25rem 0.5rem;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+/* Colors based on urgency */
+.due-box-card.due-soon {
+  border-color: rgba(253, 126, 20, 0.25);
+  background: rgba(253, 126, 20, 0.03);
+}
+.due-box-card.due-soon .due-badge {
+  background: rgba(253, 126, 20, 0.15);
+  color: #fd7e14;
+}
+.due-box-card.due-soon .due-countdown {
+  color: #fd7e14;
+  background: rgba(253, 126, 20, 0.08);
+}
+
+.due-box-card.due-today {
+  border-color: rgba(220, 53, 69, 0.35);
+  background: rgba(220, 53, 69, 0.05);
+  animation: pulse-border 2s infinite alternate;
+}
+.due-box-card.due-today .due-badge {
+  background: rgba(220, 53, 69, 0.2);
+  color: #dc3545;
+}
+.due-box-card.due-today .due-countdown {
+  color: #dc3545;
+  background: rgba(220, 53, 69, 0.1);
+  font-weight: 900;
+}
+
+@keyframes pulse-border {
+  0% { border-color: rgba(220, 53, 69, 0.25); }
+  100% { border-color: rgba(220, 53, 69, 0.55); }
+}
+
+
 
