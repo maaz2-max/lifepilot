@@ -156,7 +156,6 @@ const navItems = [
   { key: "notes", label: "Notes", icon: NotebookPen },
   { key: "events", label: "Events", icon: Sparkles },
   { key: "expenses", label: "Expenses", icon: WalletCards },
-  { key: "loans", label: "EMI / Loans", icon: Percent },
   { key: "vault", label: "Vault", icon: KeyRound },
   { key: "gmail", label: "Gmail Records", icon: Mail },
   { key: "gmailInbox", label: "Gmail Inbox", icon: Inbox },
@@ -171,10 +170,10 @@ const quickActions = [
   { kind: "event", label: "Add Event", icon: Sparkles },
   { kind: "expense", label: "Add Daily Expense", icon: IndianRupee },
   { kind: "bill", label: "Add Bill", icon: Bell },
+  { kind: "loan", label: "Add EMI / Loan", icon: Percent },
   { kind: "salary", label: "Add Salary", icon: CircleDollarSign },
   { kind: "project", label: "Add Expense Project", icon: BriefcaseBusiness },
-  { kind: "credential", label: "Add Secure Credential", icon: KeyRound },
-  { kind: "loan", label: "Add EMI / Loan", icon: Percent }
+  { kind: "credential", label: "Add Secure Credential", icon: KeyRound }
 ];
 
 const dashboardNavigationItems = [
@@ -2110,7 +2109,6 @@ export default function App() {
         <button className={active === "calendar" ? "active" : ""} onClick={() => showView("calendar")}><CalendarDays size={21} /><span>Calendar</span></button>
         <button className={`bottom-add ${quickOpen ? "open" : ""}`} onClick={() => setQuickOpen((value) => !value)}>{quickOpen ? <X size={24} /> : <Plus size={24} />}</button>
         <button className={active === "expenses" ? "active" : ""} onClick={() => showView("expenses")}><WalletCards size={21} /><span>Money</span></button>
-        <button className={active === "loans" ? "active" : ""} onClick={() => showView("loans")}><Percent size={21} /><span>Loans</span></button>
         <button className={active === "vault" ? "active" : ""} onClick={() => showView("vault")}><KeyRound size={21} /><span>Vault</span></button>
       </nav>
 
@@ -3078,6 +3076,7 @@ function MoneyCommand({ state, openAdd }) {
         <div className="quick-grid">
           <button className="quick-card tactile" onClick={() => openAdd("expense")}><IndianRupee />Daily Expense</button>
           <button className="quick-card tactile" onClick={() => openAdd("bill")}><Bell />Bill Tracker</button>
+          <button className="quick-card tactile" onClick={() => openAdd("loan")}><Percent />EMI / Loan</button>
           <button className="quick-card tactile" onClick={() => openAdd("salary")}><CircleDollarSign />Salary</button>
           <button className="quick-card tactile" onClick={() => openAdd("project")}><BriefcaseBusiness />Expense Project</button>
         </div>
