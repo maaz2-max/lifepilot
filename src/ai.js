@@ -21,7 +21,13 @@ const ACTION_TYPES = [
   "projectTransaction",
   "projectSettlement",
   "category",
-  "loan"
+  "loan",
+  "vehicle",
+  "fuelLog",
+  "serviceLog",
+  "chargingLog",
+  "vehicleReminder",
+  "vehicleDocument"
 ];
 
 export const AI_JSON_REFERENCE = `{
@@ -285,6 +291,12 @@ function compactState(state) {
     projectTransactions: take(state.projectTransactions, ["id", "projectId", "title", "amount", "type", "category", "date", "time", "paidBy", "owedBy", "splitMode", "participants", "paymentMethod"]),
     gmailRecords: take(state.gmailRecords || [], ["id", "subject", "title", "amount", "type", "category", "date", "time", "paymentMethod", "notes", "accountReference"]),
     loans: take(state.loans || [], ["id", "title", "bankName", "totalAmount", "monthlyPayment", "totalMonths", "completedMonths", "emiDate", "startDate", "status", "notes", "paidMonths", "foreclosurePaidAmount", "interestRate", "interestPeriod", "customPayments"]),
+    vehicles: take(state.vehicles || [], ["id", "name", "brand", "model", "type", "fuelType", "currentOdometer"]),
+    fuelLogs: take(state.fuelLogs || [], ["id", "vehicleId", "date", "pricePerLitre", "amount", "litres", "odometer", "notes"]),
+    serviceLogs: take(state.serviceLogs || [], ["id", "vehicleId", "date", "expense", "serviceType", "odometer", "notes"]),
+    chargingLogs: take(state.chargingLogs || [], ["id", "vehicleId", "date", "amountSpent", "chargingType", "notes"]),
+    vehicleReminders: take(state.vehicleReminders || [], ["id", "vehicleId", "type", "title", "dueDate", "dueMileage", "isMileageBased", "isCompleted"]),
+    vehicleDocuments: take(state.vehicleDocuments || [], ["id", "vehicleId", "type", "title", "expiryDate", "link", "notes"]),
     pendingAiActions: (state.aiMessages || []).flatMap((message) =>
       (message.actions || [])
         .map((action, index) => ({
@@ -434,8 +446,37 @@ function buildInsights(state) {
     .filter((reminder) => reminder.status === "Active" && reminder.date >= today && reminder.date <= weekEnd)
     .sort((a, b) => String(a.date).localeCompare(String(b.date)));
 
+  // Vehicle metrics
+  const vehicles = state.vehicles || [];
+  const totalDistance = vehicles.reduce((sum, v) => sum + Number(v.currentOdometer || 0), 0);
+  const electricDistance = vehicles.filter((v) => v.fuelType === "electric").reduce((sum, v) => sum + Number(v.currentOdometer || 0), 0);
+  const fuelDistance = vehicles.filter((v) => v.fuelType === "petrol" || v.fuelType === "diesel").reduce((sum, v) => sum + Number(v.currentOdometer || 0), 0);
+  
+  const vehicleExpenses = vehicles.map((v) => {
+    const fuelCost = (state.fuelLogs || []).filter((log) => log.vehicleId === v.id).reduce((sum, log) => sum + Number(log.amount || 0), 0);
+    const serviceCost = (state.serviceLogs || []).filter((log) => log.vehicleId === v.id).reduce((sum, log) => sum + Number(log.expense || 0), 0);
+    const chargingCost = (state.chargingLogs || []).filter((log) => log.vehicleId === v.id).reduce((sum, log) => sum + Number(log.amountSpent || 0), 0);
+    const totalCost = fuelCost + serviceCost + chargingCost;
+    return {
+      vehicleId: v.id,
+      name: v.name,
+      brand: v.brand,
+      model: v.model,
+      fuelCost,
+      serviceCost,
+      chargingCost,
+      totalCost
+    };
+  });
+
   return {
     month,
+    vehicleInsights: {
+      totalDistance,
+      electricDistance,
+      fuelDistance,
+      vehicleExpenses
+    },
     currentMonth: {
       dailyCredit: totalDailyCredit,
       dailyDebit: totalDailyDebit,
@@ -601,7 +642,9 @@ Rules:
 - Salary records are automatically synced as credit transactions in the daily expenses (expenses) list under the "Salary" category. You can query and summarize salary usage, compare current salary with the previous month's salary and spending, and calculate how much is saved.
 - Reminders can be marked as money receivable (by setting isMoneyReceive to true). If isMoneyReceive is true, you must provide the payerName (name of the person to receive money from) and moneyAmount (amount to receive). When a money receivable reminder is marked completed, it automatically gets synced as a Credit transaction under category "Salary" in Daily Expenses.
 - Bills can have splits (array of contributor objects with name and amount). The remaining amount of the bill (amount minus total splits) is paid by the user. You can draft bills with custom splits if specified by the user.
-
+- If the user asks about vehicles, fuel logs, charging logs, services, reminders, or vehicle documents, refer to the "vehicles", "fuelLogs", "serviceLogs", "chargingLogs", "vehicleReminders", "vehicleDocuments" arrays, and "insights.vehicleInsights". Summarize distances and expenses using markdown tables.
+- For vehicle logs or reminders, if you do not have the vehicleId but know the vehicle name/model/plate, you can set "vehicleName" to that value in the action data (the app will auto-resolve it to vehicleId).
+- Vehicle reminders can be date-based (dueDate) or mileage-based (isMileageBased: true, dueMileage).
 
 Allowed action types:
 ${ACTION_TYPES.join(", ")}
@@ -620,6 +663,12 @@ projectTransaction: { projectId, title, amount, type, category, date, time, paid
 projectSettlement: { projectId, projectName, from, to, amount, paymentType, paidAt }
 category: { name, type, color, icon }
 loan: { title, bankName, totalAmount, monthlyPayment, totalMonths, completedMonths, emiDate, startDate, status, notes, foreclosurePaidAmount }
+vehicle: { name, brand, model, type, fuelType, currentOdometer }
+fuelLog: { vehicleId, vehicleName, date, pricePerLitre, amount, litres, odometer, notes }
+serviceLog: { vehicleId, vehicleName, date, expense, serviceType, odometer, notes }
+chargingLog: { vehicleId, vehicleName, date, amountSpent, chargingType, notes }
+vehicleReminder: { vehicleId, vehicleName, type, title, dueDate, dueMileage, isMileageBased, isCompleted }
+vehicleDocument: { vehicleId, vehicleName, type, title, expiryDate, link, notes }
 
 Output JSON shape:
 {

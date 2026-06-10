@@ -38,7 +38,14 @@ import {
   WalletCards,
   X,
   Mail,
-  Inbox
+  Inbox,
+  Bike,
+  Car,
+  Gauge,
+  Fuel,
+  Wrench,
+  Shield,
+  FileText
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -84,6 +91,12 @@ const emptyState = {
   projectTransactions: [],
   credentials: [],
   loans: [],
+  vehicles: [],
+  fuelLogs: [],
+  serviceLogs: [],
+  chargingLogs: [],
+  vehicleReminders: [],
+  vehicleDocuments: [],
   aiMessages: [],
   gmailRecords: [],
   gmailInbox: [],
@@ -104,6 +117,7 @@ const emptyState = {
   categories: DEFAULT_CATEGORIES,
   settings: {
     notificationsEnabled: false,
+    defaultFuelPrice: 102.98,
     taskNotifications: true,
     reminderNotifications: true,
     eventNotifications: true,
@@ -159,6 +173,7 @@ const navItems = [
   { key: "vault", label: "Vault", icon: KeyRound },
   { key: "gmail", label: "Gmail Records", icon: Mail },
   { key: "gmailInbox", label: "Gmail Inbox", icon: Inbox },
+  { key: "autotrack", label: "AutoTrack", icon: Bike },
   { key: "settings", label: "Settings", icon: Settings }
 ];
 
@@ -300,7 +315,13 @@ function mergeState(parsed) {
     categories: parsed?.categories?.length ? parsed.categories : DEFAULT_CATEGORIES,
     credentials: parsed?.credentials || [],
     bills: parsed?.bills || [],
-    loans: parsed?.loans || []
+    loans: parsed?.loans || [],
+    vehicles: parsed?.vehicles || [],
+    fuelLogs: parsed?.fuelLogs || [],
+    serviceLogs: parsed?.serviceLogs || [],
+    chargingLogs: parsed?.chargingLogs || [],
+    vehicleReminders: parsed?.vehicleReminders || [],
+    vehicleDocuments: parsed?.vehicleDocuments || []
   };
 }
 
@@ -523,6 +544,64 @@ function buildTelegramNotificationPayload(state) {
     priority: "High",
     updatedAt: `${todayISO().slice(0, 7)}-01T00:00:00.000Z`
   });
+
+  // Vehicle reminders
+  (state.vehicleReminders || [])
+    .filter((reminder) => !reminder.isCompleted)
+    .forEach((reminder) => {
+      const vehicle = (state.vehicles || []).find((v) => v.id === reminder.vehicleId);
+      const vehicleName = vehicle ? `${vehicle.brand} ${vehicle.model} (${vehicle.name})` : "Vehicle";
+      
+      if (reminder.isMileageBased) {
+        const kmsLeft = Number(reminder.dueMileage || 0) - Number(vehicle?.currentOdometer || 0);
+        if (kmsLeft <= 500) {
+          add({
+            localId: reminder.id,
+            type: "vehicleReminder",
+            title: `Vehicle: ${reminder.title}`,
+            body: `${vehicleName} odometer is ${vehicle?.currentOdometer || 0} km. Due mileage ${reminder.dueMileage} km reached or near (${kmsLeft <= 0 ? "Overdue" : `${kmsLeft} km left`}).`,
+            dueAt: isoDateTime(todayISO(), "09:00"),
+            repeat: "No repeat",
+            status: "active",
+            priority: kmsLeft <= 0 ? "High" : "Medium",
+            updatedAt: reminder.updatedAt
+          });
+        }
+      } else if (reminder.dueDate) {
+        add({
+          localId: reminder.id,
+          type: "vehicleReminder",
+          title: `Vehicle: ${reminder.title}`,
+          body: `${vehicleName} - Service/Task due on ${formatDate(reminder.dueDate)}.`,
+          dueAt: isoDateTime(reminder.dueDate, "09:00"),
+          repeat: "No repeat",
+          status: "active",
+          priority: reminder.dueDate < todayISO() ? "High" : "Medium",
+          updatedAt: reminder.updatedAt
+        });
+      }
+    });
+
+  // Vehicle documents
+  (state.vehicleDocuments || [])
+    .forEach((doc) => {
+      if (!doc.expiryDate) return;
+      const vehicle = (state.vehicles || []).find((v) => v.id === doc.vehicleId);
+      const vehicleName = vehicle ? `${vehicle.brand} ${vehicle.model} (${vehicle.name})` : "Vehicle";
+      const alertDate = addDaysISO(doc.expiryDate, -10);
+      
+      add({
+        localId: doc.id,
+        type: "vehicleDocument",
+        title: `Vehicle Doc: ${doc.title}`,
+        body: `${vehicleName} document is expiring on ${formatDate(doc.expiryDate)}.\nNotes: ${doc.notes || ""}`,
+        dueAt: isoDateTime(alertDate < todayISO() ? todayISO() : alertDate, "09:00"),
+        repeat: "No repeat",
+        status: "active",
+        priority: doc.expiryDate < todayISO() ? "High" : "Medium",
+        updatedAt: doc.updatedAt
+      });
+    });
 
   return { items, timezone };
 }
@@ -1162,6 +1241,7 @@ export default function App() {
   const [selectedSalary, setSelectedSalary] = useState("");
   const [selectedProject, setSelectedProject] = useState("");
   const installPrompt = useInstallPrompt();
+  const [carLoading, setCarLoading] = useState(false);
   const notified = useRef(new Set());
   const telegramSyncSignature = useRef("");
 
@@ -2210,6 +2290,16 @@ export default function App() {
             deleteSavedGmail={deleteSavedGmail}
           />
         )}
+        {active === "autotrack" && (
+          <AutoTrackView
+            state={state}
+            setState={setState}
+            upsert={upsert}
+            remove={remove}
+            setToast={setToast}
+            setCarLoading={setCarLoading}
+          />
+        )}
       </main>
 
       <button className="floating-add tactile" onClick={() => setQuickOpen((value) => !value)} aria-label="Quick add">
@@ -2251,6 +2341,7 @@ export default function App() {
           close={() => setAiOpen(false)}
         />
       )}
+      {carLoading && <CarLoader active={carLoading} text="Processing AutoTrack..." />}
       {toast && <div className="toast"><CheckCircle2 size={18} />{toast}</div>}
     </div>
   );
@@ -2263,6 +2354,24 @@ function Brand() {
       <div>
         <strong>LifePilot</strong>
         <span>Planner and money diary</span>
+      </div>
+    </div>
+  );
+}
+
+function CarLoader({ active, text }) {
+  if (!active) return null;
+  return (
+    <div className="car-loader-overlay">
+      <div className="car-loader-box panel tactile">
+        <div className="car-track">
+          <div className="car-moving">
+            <svg viewBox="0 0 24 24" width="36" height="36" fill="currentColor">
+              <path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.5 16c-.83 0-1.5-.67-1.5-1.5S5.67 13 6.5 13s1.5.67 1.5 1.5S7.33 16 6.5 16zm11 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM5 11l1.27-3.82c.14-.4.52-.68.95-.68h9.54c.43 0 .81.28.95.68L19 11H5z" />
+            </svg>
+          </div>
+        </div>
+        <p className="car-loader-text">{text || "Processing AutoTrack..."}</p>
       </div>
     </div>
   );
@@ -2358,8 +2467,8 @@ function TopBar({ state, active, installPrompt, requestNotifications, setActive,
             <Download size={19} />
           </button>
         )}
-        <button className="icon-button tactile" title="Notifications" onClick={requestNotifications}>
-          <Bell size={19} />
+        <button className={`icon-button tactile ${active === "autotrack" ? "active" : ""}`} title="AutoTrack" onClick={() => setActive("autotrack")}>
+          <Bike size={19} />
         </button>
         <button className="profile-chip tactile" onClick={() => setActive("settings")}>
           {state.profile?.image ? <img src={state.profile.image} alt="" /> : <UserRound size={19} />}
@@ -2667,18 +2776,18 @@ function HomeView({ state, setState, openAdd, setActive, setAiOpen }) {
     const dues = [];
     const todayDateObj = new Date(`${today}T12:00:00`);
 
-    // 1. EMI (Loans) - due in next 10 days
+    // 1. EMI (Loans) - due in next 10 days or overdue
     (state.loans || []).forEach((loan) => {
       if (loan.status === "Active" || loan.status === "Pending") {
         const nextDate = getNextUnpaidEmiDate(loan);
         if (nextDate) {
           const daysLeft = Math.ceil((new Date(`${nextDate}T12:00:00`) - todayDateObj) / 86400000);
-          if (daysLeft >= 0 && daysLeft <= 10) {
+          if (daysLeft <= 10) {
             dues.push({
               id: `loan-${loan.id}-${nextDate}`,
               type: "EMI",
               title: `${loan.title} EMI`,
-              detail: `₹${loan.monthlyPayment} due on ${formatDate(nextDate)}`,
+              detail: daysLeft < 0 ? `₹${loan.monthlyPayment} overdue since ${formatDate(nextDate)}` : `₹${loan.monthlyPayment} due on ${formatDate(nextDate)}`,
               daysLeft,
               targetTab: "loans"
             });
@@ -2687,16 +2796,16 @@ function HomeView({ state, setState, openAdd, setActive, setAiOpen }) {
       }
     });
 
-    // 2. Tasks - due in next 10 days, not completed or cancelled
+    // 2. Tasks - due in next 10 days or overdue, not completed or cancelled
     (state.tasks || []).forEach((task) => {
       if (task.dueDate && !["Completed", "Cancelled"].includes(task.status)) {
         const daysLeft = Math.ceil((new Date(`${task.dueDate}T12:00:00`) - todayDateObj) / 86400000);
-        if (daysLeft >= 0 && daysLeft <= 10) {
+        if (daysLeft <= 10) {
           dues.push({
             id: `task-${task.id}`,
             type: "Task",
             title: task.title,
-            detail: `Due on ${formatDate(task.dueDate)}`,
+            detail: daysLeft < 0 ? `Overdue since ${formatDate(task.dueDate)}` : `Due on ${formatDate(task.dueDate)}`,
             daysLeft,
             targetTab: "tasks"
           });
@@ -2704,16 +2813,16 @@ function HomeView({ state, setState, openAdd, setActive, setAiOpen }) {
       }
     });
 
-    // 3. Reminders - active, due in next 10 days
+    // 3. Reminders - active, due in next 10 days or overdue
     (state.reminders || []).forEach((reminder) => {
       if (reminder.date && reminder.status === "Active") {
         const daysLeft = Math.ceil((new Date(`${reminder.date}T12:00:00`) - todayDateObj) / 86400000);
-        if (daysLeft >= 0 && daysLeft <= 10) {
+        if (daysLeft <= 10) {
           dues.push({
             id: `reminder-${reminder.id}`,
             type: "Reminder",
             title: reminder.title,
-            detail: `Due on ${formatDate(reminder.date)}`,
+            detail: daysLeft < 0 ? `Overdue since ${formatDate(reminder.date)}` : `Due on ${formatDate(reminder.date)}`,
             daysLeft,
             targetTab: "reminders"
           });
@@ -2721,18 +2830,75 @@ function HomeView({ state, setState, openAdd, setActive, setAiOpen }) {
       }
     });
 
-    // 4. Bills - unpaid, due in next 10 days
+    // 4. Bills - unpaid, due in next 10 days or overdue
     (state.bills || []).forEach((bill) => {
       if (bill.dueDate && bill.status !== "Paid") {
         const daysLeft = Math.ceil((new Date(`${bill.dueDate}T12:00:00`) - todayDateObj) / 86400000);
-        if (daysLeft >= 0 && daysLeft <= 10) {
+        if (daysLeft <= 10) {
           dues.push({
             id: `bill-${bill.id}`,
             type: "Bill",
             title: bill.title,
-            detail: `₹${bill.amount} due on ${formatDate(bill.dueDate)}`,
+            detail: daysLeft < 0 ? `₹${bill.amount} overdue since ${formatDate(bill.dueDate)}` : `₹${bill.amount} due on ${formatDate(bill.dueDate)}`,
             daysLeft,
             targetTab: "bills"
+          });
+        }
+      }
+    });
+
+    // 5. Vehicle Reminders (date-based & mileage-based)
+    (state.vehicleReminders || []).forEach((reminder) => {
+      if (!reminder.isCompleted) {
+        const vehicle = (state.vehicles || []).find(v => v.id === reminder.vehicleId);
+        const vehicleName = vehicle ? `${vehicle.brand} ${vehicle.model}` : "Vehicle";
+        
+        if (reminder.isMileageBased) {
+          const currentOdo = Number(vehicle?.currentOdometer || 0);
+          const dueOdo = Number(reminder.dueMileage || 0);
+          const kmsLeft = dueOdo - currentOdo;
+          
+          if (kmsLeft <= 500) {
+            dues.push({
+              id: `vehicle-rem-${reminder.id}`,
+              type: "Vehicle",
+              title: `${vehicleName}: ${reminder.title}`,
+              detail: kmsLeft <= 0 ? `Overdue by ${Math.abs(kmsLeft)} km (at ${dueOdo} km)` : `Due at ${dueOdo} km (${kmsLeft} km left)`,
+              daysLeft: kmsLeft <= 0 ? -1 : 1,
+              targetTab: "autotrack"
+            });
+          }
+        } else if (reminder.dueDate) {
+          const daysLeft = Math.ceil((new Date(`${reminder.dueDate}T12:00:00`) - todayDateObj) / 86400000);
+          if (daysLeft <= 10) {
+            dues.push({
+              id: `vehicle-rem-${reminder.id}`,
+              type: "Vehicle",
+              title: `${vehicleName}: ${reminder.title}`,
+              detail: daysLeft < 0 ? `Overdue since ${formatDate(reminder.dueDate)}` : `Due on ${formatDate(reminder.dueDate)}`,
+              daysLeft,
+              targetTab: "autotrack"
+            });
+          }
+        }
+      }
+    });
+
+    // 6. Vehicle Documents (insurance/rc/puc expiring or expired)
+    (state.vehicleDocuments || []).forEach((doc) => {
+      if (doc.expiryDate) {
+        const vehicle = (state.vehicles || []).find(v => v.id === doc.vehicleId);
+        const vehicleName = vehicle ? `${vehicle.brand} ${vehicle.model}` : "Vehicle";
+        const daysLeft = Math.ceil((new Date(`${doc.expiryDate}T12:00:00`) - todayDateObj) / 86400000);
+        
+        if (daysLeft <= 10) {
+          dues.push({
+            id: `vehicle-doc-${doc.id}`,
+            type: "Vehicle",
+            title: `${vehicleName}: ${doc.title}`,
+            detail: daysLeft < 0 ? `Expired on ${formatDate(doc.expiryDate)}` : `Expires on ${formatDate(doc.expiryDate)}`,
+            daysLeft,
+            targetTab: "autotrack"
           });
         }
       }
@@ -2763,12 +2929,12 @@ function HomeView({ state, setState, openAdd, setActive, setAiOpen }) {
 
       {importantDues.length > 0 && (
         <section className="panel span-2 glass-panel important-dues-section">
-          <SectionHeader title="🚨 Important Dues & Actions (Next 10 Days)" />
+          <SectionHeader title="🚨 Important Dues & Actions" />
           <div className="important-dues-grid">
             {importantDues.map((due) => (
               <button 
                 key={due.id} 
-                className={`due-box-card tactile ${due.daysLeft === 0 ? "due-today" : due.daysLeft <= 3 ? "due-soon" : ""}`} 
+                className={`due-box-card tactile ${due.daysLeft < 0 ? "due-overdue" : due.daysLeft === 0 ? "due-today" : due.daysLeft <= 3 ? "due-soon" : ""}`} 
                 onClick={() => setActive(due.targetTab)}
               >
                 <div className="due-badge">{due.type}</div>
@@ -2777,7 +2943,7 @@ function HomeView({ state, setState, openAdd, setActive, setAiOpen }) {
                   <span>{due.detail}</span>
                 </div>
                 <div className="due-countdown">
-                  {due.daysLeft === 0 ? "Today" : `${due.daysLeft}d left`}
+                  {due.daysLeft < 0 ? "Overdue" : due.daysLeft === 0 ? "Today" : `${due.daysLeft}d left`}
                 </div>
               </button>
             ))}
@@ -4926,6 +5092,19 @@ function SettingsView({ state, setState, setToast, requestNotifications, setModa
       </div>
 
       <div className="panel">
+        <SectionHeader title="AutoTrack Settings" />
+        <label>Default Fuel Price (per Litre)
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            value={state.settings.defaultFuelPrice !== undefined ? state.settings.defaultFuelPrice : 102.98}
+            onChange={(e) => setSetting("defaultFuelPrice", Number(e.target.value) || 0)}
+          />
+        </label>
+      </div>
+
+      <div className="panel">
         <SectionHeader title="Data Management" />
         <div className="storage-status">
           <div>
@@ -6587,6 +6766,13 @@ function resolveLinkedAiData(current, type, data) {
     const salary = current.salaries.find((entry) => entry.title?.toLowerCase() === String(data.salaryTitle).toLowerCase());
     if (salary) return { ...data, salaryId: salary.id };
   }
+  if (["fuelLog", "serviceLog", "chargingLog", "vehicleReminder", "vehicleDocument"].includes(type) && !data.vehicleId && data.vehicleName) {
+    const vehicle = current.vehicles.find((entry) => 
+      entry.name?.toLowerCase() === String(data.vehicleName).toLowerCase() ||
+      entry.model?.toLowerCase() === String(data.vehicleName).toLowerCase()
+    );
+    if (vehicle) return { ...data, vehicleId: vehicle.id };
+  }
   return data;
 }
 
@@ -6601,6 +6787,13 @@ function applyAiDelete(current, collection, action) {
   }
   if (action.type === "reminder") {
     next.expenses = current.expenses.filter((item) => item.reminderId !== action.id);
+  }
+  if (action.type === "vehicle") {
+    next.fuelLogs = current.fuelLogs.filter((item) => item.vehicleId !== action.id);
+    next.serviceLogs = current.serviceLogs.filter((item) => item.vehicleId !== action.id);
+    next.chargingLogs = current.chargingLogs.filter((item) => item.vehicleId !== action.id);
+    next.vehicleReminders = current.vehicleReminders.filter((item) => item.vehicleId !== action.id);
+    next.vehicleDocuments = current.vehicleDocuments.filter((item) => item.vehicleId !== action.id);
   }
   return next;
 }
@@ -7702,6 +7895,45 @@ function normalizeForm(kind, form) {
       paidMonths: Array.isArray(form.paidMonths) ? form.paidMonths : []
     };
   }
+  if (kind === "vehicle") {
+    return {
+      ...form,
+      currentOdometer: Number(form.currentOdometer || 0)
+    };
+  }
+  if (kind === "fuelLog") {
+    return {
+      ...form,
+      pricePerLitre: Number(form.pricePerLitre || 0),
+      amount: Number(form.amount || 0),
+      litres: Number(form.litres || 0),
+      odometer: Number(form.odometer || 0)
+    };
+  }
+  if (kind === "serviceLog") {
+    return {
+      ...form,
+      expense: Number(form.expense || 0),
+      odometer: Number(form.odometer || 0)
+    };
+  }
+  if (kind === "chargingLog") {
+    return {
+      ...form,
+      amountSpent: Number(form.amountSpent || 0)
+    };
+  }
+  if (kind === "vehicleReminder") {
+    return {
+      ...form,
+      dueMileage: Number(form.dueMileage || 0),
+      isMileageBased: Boolean(form.isMileageBased),
+      isCompleted: Boolean(form.isCompleted)
+    };
+  }
+  if (kind === "vehicleDocument") {
+    return form;
+  }
   return form;
 }
 
@@ -7719,7 +7951,13 @@ function withAiDefaults(kind, data) {
     project: { name: "Project", type: "Custom", description: "", startDate: date, endDate: date, budget: 0, participants: [], status: "Active", notes: "" },
     projectTransaction: { projectId: "", title: "Project transaction", amount: 0, type: "Debit", splitMode: "No split", category: "", date, time: nowTime(), paidBy: "", owedBy: "", participants: [], paymentMethod: "UPI", notes: "" },
     category: { name: "Category", type: "Both", color: "#d8ff8f", icon: "spark" },
-    loan: { title: "Loan", bankName: "", totalAmount: 0, monthlyPayment: 0, totalMonths: 1, completedMonths: 0, interestRate: 0, interestPeriod: "Annually", emiDate: null, startDate: date, status: "Active", notes: "", foreclosurePaidAmount: 0, paidMonths: [] }
+    loan: { title: "Loan", bankName: "", totalAmount: 0, monthlyPayment: 0, totalMonths: 1, completedMonths: 0, interestRate: 0, interestPeriod: "Annually", emiDate: null, startDate: date, status: "Active", notes: "", foreclosurePaidAmount: 0, paidMonths: [] },
+    vehicle: { name: "", brand: "", model: "", type: "car", fuelType: "petrol", currentOdometer: 0 },
+    fuelLog: { vehicleId: "", date: date + "T12:00", pricePerLitre: 100, amount: 0, litres: 0, odometer: 0, notes: "" },
+    serviceLog: { vehicleId: "", date: date, expense: 0, serviceType: "General Service", odometer: 0, notes: "" },
+    chargingLog: { vehicleId: "", date: date + "T12:00", amountSpent: 0, chargingType: "public", notes: "" },
+    vehicleReminder: { vehicleId: "", type: "service", title: "General Service", dueDate: date, dueMileage: 0, isMileageBased: false, isCompleted: false },
+    vehicleDocument: { vehicleId: "", type: "insurance", title: "Vehicle Insurance", expiryDate: date, link: "", notes: "" }
   };
 
   return { ...(defaults[kind] || {}), ...data };
@@ -7769,7 +8007,13 @@ function collectionForKind(kind) {
     projectSettlement: "projects",
     category: "categories",
     credential: "credentials",
-    loan: "loans"
+    loan: "loans",
+    vehicle: "vehicles",
+    fuelLog: "fuelLogs",
+    serviceLog: "serviceLogs",
+    chargingLog: "chargingLogs",
+    vehicleReminder: "vehicleReminders",
+    vehicleDocument: "vehicleDocuments"
   }[kind];
 }
 
@@ -7791,7 +8035,13 @@ function kindLabel(kind) {
     credential: "Credential",
     profile: "Profile",
     participants: "Participants",
-    loan: "EMI / Loan"
+    loan: "EMI / Loan",
+    vehicle: "Vehicle",
+    fuelLog: "Fuel Log",
+    serviceLog: "Service Log",
+    chargingLog: "Charging Log",
+    vehicleReminder: "Vehicle Reminder",
+    vehicleDocument: "Vehicle Document"
   }[kind] || "Item";
 }
 
@@ -8701,6 +8951,879 @@ function GmailInboxView({
           </section>
         </>
       )}
+    </div>
+  );
+}
+
+function AutoTrackView({ state, setState, upsert, remove, setToast, setCarLoading }) {
+  const [tab, setTab] = useState("overview");
+  const [editor, setEditor] = useState(null); // { kind: 'vehicle'|'fuelLog'|'serviceLog'|'chargingLog'|'vehicleReminder'|'vehicleDocument', item: null|object }
+  const [importText, setImportText] = useState("");
+  const [importOpen, setImportOpen] = useState(false);
+
+  // Mileage Calculator State
+  const [calcVehicleId, setCalcVehicleId] = useState("");
+  const [calcStartOdo, setCalcStartOdo] = useState("");
+  const [calcEndOdo, setCalcEndOdo] = useState("");
+  const [calcFuelFilled, setCalcFuelFilled] = useState("");
+  const [calcResult, setCalcResult] = useState(null);
+
+  const today = todayISO();
+  const vehicles = state.vehicles || [];
+
+  // Metrics
+  const totalDistance = vehicles.reduce((sum, v) => sum + Number(v.currentOdometer || 0), 0);
+  const electricDistance = vehicles.filter((v) => v.fuelType === "electric").reduce((sum, v) => sum + Number(v.currentOdometer || 0), 0);
+  const fuelDistance = vehicles.filter((v) => v.fuelType === "petrol" || v.fuelType === "diesel").reduce((sum, v) => sum + Number(v.currentOdometer || 0), 0);
+
+  // Per Vehicle Expenses
+  const vehicleStats = vehicles.map((v) => {
+    const fuelCost = (state.fuelLogs || []).filter((log) => log.vehicleId === v.id).reduce((sum, log) => sum + Number(log.amount || 0), 0);
+    const serviceCost = (state.serviceLogs || []).filter((log) => log.vehicleId === v.id).reduce((sum, log) => sum + Number(log.expense || 0), 0);
+    const chargingCost = (state.chargingLogs || []).filter((log) => log.vehicleId === v.id).reduce((sum, log) => sum + Number(log.amountSpent || 0), 0);
+    const totalCost = fuelCost + serviceCost + chargingCost;
+
+    // Auto Mileage Calculation
+    const sortedFuelLogs = (state.fuelLogs || [])
+      .filter((log) => log.vehicleId === v.id && log.odometer && log.litres)
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
+    let autoMileage = null;
+    if (sortedFuelLogs.length >= 2) {
+      const dist = Number(sortedFuelLogs[sortedFuelLogs.length - 1].odometer) - Number(sortedFuelLogs[0].odometer);
+      const litresConsumed = sortedFuelLogs.slice(1).reduce((sum, log) => sum + Number(log.litres || 0), 0);
+      if (litresConsumed > 0) {
+        autoMileage = (dist / litresConsumed).toFixed(2);
+      }
+    }
+
+    return {
+      ...v,
+      fuelCost,
+      serviceCost,
+      chargingCost,
+      totalCost,
+      autoMileage
+    };
+  });
+
+  // Calculate Interactive Mileage
+  const handleCalculateMileage = (e) => {
+    e.preventDefault();
+    const start = Number(calcStartOdo);
+    const end = Number(calcEndOdo);
+    const fuel = Number(calcFuelFilled);
+
+    if (end <= start) {
+      setToast("End odometer must be greater than start odometer");
+      return;
+    }
+    if (fuel <= 0) {
+      setToast("Fuel filled must be greater than zero");
+      return;
+    }
+
+    const mileage = (end - start) / fuel;
+    setCalcResult(mileage.toFixed(2));
+  };
+
+  // Pre-fill fields for Interactive Calculator based on selected vehicle
+  const handleCalcVehicleChange = (vId) => {
+    setCalcVehicleId(vId);
+    const vLogs = (state.fuelLogs || [])
+      .filter((l) => l.vehicleId === vId && l.odometer)
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
+    if (vLogs.length > 0) {
+      setCalcStartOdo(vLogs[0].odometer);
+      setCalcEndOdo(vLogs[vLogs.length - 1].odometer);
+    } else {
+      const vehicle = vehicles.find((v) => v.id === vId);
+      if (vehicle) {
+        setCalcStartOdo(0);
+        setCalcEndOdo(vehicle.currentOdometer || 0);
+      }
+    }
+  };
+
+  // JSON Seeding
+  const handleImportJson = () => {
+    if (!importText.trim()) return;
+    try {
+      const parsed = JSON.parse(importText);
+      const data = parsed.data || parsed;
+      if (!data) throw new Error("Invalid schema wrapper");
+
+      setCarLoading(true);
+      setImportOpen(false);
+
+      setTimeout(() => {
+        setState((current) => {
+          return {
+            ...current,
+            settings: {
+              ...current.settings,
+              defaultFuelPrice: data.defaultFuelPrice || current.settings.defaultFuelPrice || 102.98
+            },
+            vehicles: [...(data.vehicles || []), ...current.vehicles].filter((v, idx, self) => self.findIndex((x) => x.id === v.id) === idx),
+            fuelLogs: [...(data.fuelLogs || []), ...current.fuelLogs].filter((v, idx, self) => self.findIndex((x) => x.id === v.id) === idx),
+            serviceLogs: [...(data.serviceLogs || []), ...current.serviceLogs].filter((v, idx, self) => self.findIndex((x) => x.id === v.id) === idx),
+            chargingLogs: [...(data.chargingLogs || []), ...current.chargingLogs].filter((v, idx, self) => self.findIndex((x) => x.id === v.id) === idx),
+            vehicleReminders: [...(data.reminders || []), ...current.vehicleReminders || []].filter((v, idx, self) => self.findIndex((x) => x.id === v.id) === idx),
+            vehicleDocuments: [...(data.documents || []), ...current.vehicleDocuments || []].filter((v, idx, self) => self.findIndex((x) => x.id === v.id) === idx)
+          };
+        });
+        setToast("AutoTrack data loaded");
+        setCarLoading(false);
+      }, 1500);
+    } catch (err) {
+      setToast("Failed to parse JSON: " + err.message);
+    }
+  };
+
+  // Editor Save
+  const handleEditorSave = (itemData) => {
+    upsert(collectionForKind(editor.kind), itemData, editor.kind);
+    
+    // Automatically update currentOdometer on vehicle if a fuel/service/charging log has a higher odometer reading
+    if (["fuelLog", "serviceLog"].includes(editor.kind) && itemData.odometer && itemData.vehicleId) {
+      const odo = Number(itemData.odometer);
+      const vehicle = vehicles.find((v) => v.id === itemData.vehicleId);
+      if (vehicle && odo > Number(vehicle.currentOdometer || 0)) {
+        upsert("vehicles", { ...vehicle, currentOdometer: odo }, "vehicle");
+      }
+    }
+    
+    setEditor(null);
+  };
+
+  return (
+    <div className="autotrack-dashboard page-grid">
+      {/* Tab Navigation header */}
+      <div className="autotrack-tabs panel span-2">
+        <div className="cluster spaced">
+          <div className="cluster autotrack-btn-group">
+            {[
+              ["overview", "Overview & Insights"],
+              ["vehicles", "Vehicles"],
+              ["logs", "Refuel & Charge"],
+              ["service", "Service Logs"],
+              ["reminders", "Reminders & Docs"]
+            ].map(([k, label]) => (
+              <button
+                key={k}
+                className={`secondary tactile ${tab === k ? "active-tab" : ""}`}
+                onClick={() => setTab(k)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <button className="primary tactile" onClick={() => setImportOpen(true)}>Import JSON</button>
+        </div>
+      </div>
+
+      {/* OVERVIEW & INSIGHTS TAB */}
+      {tab === "overview" && (
+        <>
+          {/* Stats Cards */}
+          <div className="overview-stats span-2">
+            <div className="metric-card panel tactile">
+              <div className="due-badge" style={{ background: "var(--lavender)" }}>Distance</div>
+              <h3>{totalDistance.toLocaleString()} km</h3>
+              <span>Total Across All Vehicles</span>
+            </div>
+            <div className="metric-card panel tactile">
+              <div className="due-badge" style={{ background: "var(--yellow)" }}>Petrol/Diesel</div>
+              <h3>{fuelDistance.toLocaleString()} km</h3>
+              <span>Combustion Engine Vehicles</span>
+            </div>
+            <div className="metric-card panel tactile">
+              <div className="due-badge" style={{ background: "var(--blue)" }}>Electric</div>
+              <h3>{electricDistance.toLocaleString()} km</h3>
+              <span>Electric Vehicle Mileage</span>
+            </div>
+          </div>
+
+          {/* Expenses Breakdown */}
+          <div className="panel span-2">
+            <SectionHeader title="Vehicle Expenses Summary" />
+            <div className="autotrack-table-container">
+              <table className="autotrack-table">
+                <thead>
+                  <tr>
+                    <th>Vehicle</th>
+                    <th>Type</th>
+                    <th>Fuel Costs</th>
+                    <th>Charging Costs</th>
+                    <th>Service Costs</th>
+                    <th>Total Expenses</th>
+                    <th>Calculated Mileage</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {vehicleStats.length === 0 ? (
+                    <tr>
+                      <td colSpan="7" style={{ textAlign: "center", padding: "1.5rem", color: "var(--muted)" }}>
+                        No vehicles added yet. Use the Vehicles tab or import JSON to get started.
+                      </td>
+                    </tr>
+                  ) : (
+                    vehicleStats.map((v) => (
+                      <tr key={v.id}>
+                        <td><strong>{v.name}</strong><br /><small>{v.brand} {v.model}</small></td>
+                        <td><span className="badge-tag">{v.type} ({v.fuelType})</span></td>
+                        <td>₹{v.fuelCost.toLocaleString()}</td>
+                        <td>₹{v.chargingCost.toLocaleString()}</td>
+                        <td>₹{v.serviceCost.toLocaleString()}</td>
+                        <td><strong>₹{v.totalCost.toLocaleString()}</strong></td>
+                        <td>
+                          {v.fuelType === "electric" ? (
+                            <span style={{ color: "var(--muted)" }}>N/A (EV)</span>
+                          ) : v.autoMileage ? (
+                            <strong>{v.autoMileage} km/L</strong>
+                          ) : (
+                            <span style={{ fontSize: "0.8rem", color: "var(--muted)" }}>Needs 2+ refuels</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Mileage Calculator Form */}
+          <div className="panel">
+            <SectionHeader title="Mileage Efficiency Calculator" />
+            <form onSubmit={handleCalculateMileage} className="form-grid">
+              <label className="wide">Select Vehicle
+                <Select
+                  value={calcVehicleId}
+                  onChange={handleCalcVehicleChange}
+                  options={[
+                    ["", "Choose petrol/diesel vehicle"],
+                    ...vehicles.filter((v) => v.fuelType !== "electric").map((v) => [v.id, `${v.brand} ${v.model} (${v.name})`])
+                  ]}
+                />
+              </label>
+              <label>Start Odometer (km)
+                <input
+                  type="number"
+                  min="0"
+                  value={calcStartOdo}
+                  onChange={(e) => setCalcStartOdo(e.target.value)}
+                  required
+                />
+              </label>
+              <label>End Odometer (km)
+                <input
+                  type="number"
+                  min="0"
+                  value={calcEndOdo}
+                  onChange={(e) => setCalcEndOdo(e.target.value)}
+                  required
+                />
+              </label>
+              <label className="wide">Fuel Filled (Litres)
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  value={calcFuelFilled}
+                  onChange={(e) => setCalcFuelFilled(e.target.value)}
+                  required
+                />
+              </label>
+              <button className="primary tactile wide" type="submit">Calculate Mileage</button>
+            </form>
+            {calcResult !== null && (
+              <div className="calculator-result" style={{ marginTop: "1rem", padding: "1rem", border: "2px solid var(--ink)", borderRadius: "8px", background: "var(--paper)" }}>
+                <p style={{ margin: 0, fontSize: "1.1rem" }}>Calculated Mileage: <strong>{calcResult} km/L</strong></p>
+                <p className="helper-text" style={{ margin: "0.5rem 0 0 0", color: "var(--muted)" }}>
+                  ⚠️ <em>Results will vary based on driving conditions, road conditions, traffic, vehicle health, and driving style.</em>
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Quick Info / Tips */}
+          <div className="panel">
+            <SectionHeader title="Maintenance & Efficiency Tips" />
+            <ul style={{ paddingLeft: "1.2rem", margin: 0, display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+              <li><strong>Tire Pressure</strong>: Keep tires properly inflated to improve fuel economy by up to 3%.</li>
+              <li><strong>Regular Service</strong>: Changing air filters, spark plugs, and engine oil on time keeps the engine running efficiently.</li>
+              <li><strong>Smooth Driving</strong>: Avoid sudden acceleration and braking. Gradual speed changes conserve energy.</li>
+              <li><strong>EV Charging</strong>: For electric vehicles, charging between 20% and 80% extends battery health.</li>
+            </ul>
+          </div>
+        </>
+      )}
+
+      {/* VEHICLES CRUD TAB */}
+      {tab === "vehicles" && (
+        <div className="span-2 panel">
+          <SectionHeader
+            title="Registered Vehicles"
+            action={<button className="primary tactile" onClick={() => setEditor({ kind: "vehicle", item: null })}>+ Add Vehicle</button>}
+          />
+          <div className="vehicles-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "1rem", marginTop: "1rem" }}>
+            {vehicles.length === 0 ? (
+              <p style={{ gridColumn: "1/-1", textAlign: "center", color: "var(--muted)", padding: "2rem" }}>No vehicles registered yet.</p>
+            ) : (
+              vehicles.map((v) => (
+                <div key={v.id} className="vehicle-card panel tactile" style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+                  <div className="cluster spaced">
+                    <span className="badge-tag" style={{ background: v.fuelType === "electric" ? "var(--blue)" : "var(--yellow)" }}>
+                      {v.type} ({v.fuelType})
+                    </span>
+                    <strong style={{ fontSize: "1.1rem" }}>{v.name}</strong>
+                  </div>
+                  <div>
+                    <h4 style={{ margin: 0, fontSize: "1.2rem" }}>{v.brand} {v.model}</h4>
+                    <p style={{ margin: "0.25rem 0 0 0", color: "var(--muted)" }}>Odometer: <strong>{v.currentOdometer.toLocaleString()} km</strong></p>
+                  </div>
+                  <div className="cluster" style={{ marginTop: "auto", borderTop: "1px solid var(--line)", paddingTop: "0.75rem" }}>
+                    <button className="secondary tactile" style={{ flex: 1 }} onClick={() => setEditor({ kind: "vehicle", item: v })}>Edit</button>
+                    <button className="secondary danger tactile" onClick={() => remove("vehicles", v.id, "vehicle")}>Delete</button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* REFUEL & CHARGE TAB */}
+      {tab === "logs" && (
+        <>
+          {/* Refuel Logs (Petrol/Diesel) */}
+          <div className="panel">
+            <SectionHeader
+              title="Fuel Refill Logs (Combustion)"
+              action={<button className="primary tactile" onClick={() => setEditor({ kind: "fuelLog", item: null })}>+ Add Fuel Log</button>}
+            />
+            <div className="autotrack-table-container" style={{ marginTop: "1rem" }}>
+              <table className="autotrack-table">
+                <thead>
+                  <tr>
+                    <th>Vehicle</th>
+                    <th>Date</th>
+                    <th>Odometer</th>
+                    <th>Litres</th>
+                    <th>Price/L</th>
+                    <th>Amount</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(state.fuelLogs || []).length === 0 ? (
+                    <tr>
+                      <td colSpan="7" style={{ textAlign: "center", color: "var(--muted)", padding: "1.5rem" }}>No refuel logs recorded yet.</td>
+                    </tr>
+                  ) : (
+                    (state.fuelLogs || []).map((log) => {
+                      const v = vehicles.find((x) => x.id === log.vehicleId);
+                      return (
+                        <tr key={log.id}>
+                          <td><strong>{v ? v.name : "Unknown"}</strong></td>
+                          <td>{formatDate(log.date?.slice(0, 10))}<br /><small>{log.date?.slice(11)}</small></td>
+                          <td>{log.odometer ? `${log.odometer.toLocaleString()} km` : "-"}</td>
+                          <td>{log.litres} L</td>
+                          <td>₹{log.pricePerLitre}</td>
+                          <td><strong>₹{log.amount}</strong></td>
+                          <td>
+                            <div className="cluster" style={{ gap: "0.25rem" }}>
+                              <button className="icon-button tactile" onClick={() => setEditor({ kind: "fuelLog", item: log })}><Edit3 size={15} /></button>
+                              <button className="icon-button tactile danger" onClick={() => remove("fuelLogs", log.id, "fuel log")}><Trash2 size={15} /></button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Charging Logs (Electric) */}
+          <div className="panel">
+            <SectionHeader
+              title="EV Charging Logs (Electric)"
+              action={<button className="primary tactile" onClick={() => setEditor({ kind: "chargingLog", item: null })}>+ Add Charging Log</button>}
+            />
+            <div className="autotrack-table-container" style={{ marginTop: "1rem" }}>
+              <table className="autotrack-table">
+                <thead>
+                  <tr>
+                    <th>Vehicle</th>
+                    <th>Date</th>
+                    <th>Location/Type</th>
+                    <th>Cost</th>
+                    <th>Notes</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(state.chargingLogs || []).length === 0 ? (
+                    <tr>
+                      <td colSpan="6" style={{ textAlign: "center", color: "var(--muted)", padding: "1.5rem" }}>No charging logs recorded yet.</td>
+                    </tr>
+                  ) : (
+                    (state.chargingLogs || []).map((log) => {
+                      const v = vehicles.find((x) => x.id === log.vehicleId);
+                      return (
+                        <tr key={log.id}>
+                          <td><strong>{v ? v.name : "Unknown"}</strong></td>
+                          <td>{formatDate(log.date?.slice(0, 10))}<br /><small>{log.date?.slice(11)}</small></td>
+                          <td><span className="badge-tag">{log.chargingType}</span></td>
+                          <td><strong>₹{log.amountSpent}</strong></td>
+                          <td style={{ maxWidth: "150px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={log.notes}>{log.notes || "-"}</td>
+                          <td>
+                            <div className="cluster" style={{ gap: "0.25rem" }}>
+                              <button className="icon-button tactile" onClick={() => setEditor({ kind: "chargingLog", item: log })}><Edit3 size={15} /></button>
+                              <button className="icon-button tactile danger" onClick={() => remove("chargingLogs", log.id, "charging log")}><Trash2 size={15} /></button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* SERVICE LOGS TAB */}
+      {tab === "service" && (
+        <div className="panel span-2">
+          <SectionHeader
+            title="Service & Repair History"
+            action={<button className="primary tactile" onClick={() => setEditor({ kind: "serviceLog", item: null })}>+ Add Service Record</button>}
+          />
+          <div className="autotrack-table-container" style={{ marginTop: "1rem" }}>
+            <table className="autotrack-table">
+              <thead>
+                <tr>
+                  <th>Vehicle</th>
+                  <th>Date</th>
+                  <th>Service Type</th>
+                  <th>Odometer Reading</th>
+                  <th>Expense Amount</th>
+                  <th>Work Summary / Notes</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(state.serviceLogs || []).length === 0 ? (
+                  <tr>
+                    <td colSpan="7" style={{ textAlign: "center", color: "var(--muted)", padding: "2rem" }}>No service records found.</td>
+                  </tr>
+                ) : (
+                  (state.serviceLogs || []).map((log) => {
+                    const v = vehicles.find((x) => x.id === log.vehicleId);
+                    return (
+                      <tr key={log.id}>
+                        <td><strong>{v ? v.name : "Unknown"}</strong></td>
+                        <td>{formatDate(log.date)}</td>
+                        <td><span className="badge-tag" style={{ background: "var(--lavender)" }}>{log.serviceType}</span></td>
+                        <td>{log.odometer ? `${log.odometer.toLocaleString()} km` : "-"}</td>
+                        <td><strong>₹{log.expense.toLocaleString()}</strong></td>
+                        <td style={{ fontSize: "0.85rem", maxWidth: "250px" }}>{log.notes || "-"}</td>
+                        <td>
+                          <div className="cluster" style={{ gap: "0.25rem" }}>
+                            <button className="icon-button tactile" onClick={() => setEditor({ kind: "serviceLog", item: log })}><Edit3 size={15} /></button>
+                            <button className="icon-button tactile danger" onClick={() => remove("serviceLogs", log.id, "service record")}><Trash2 size={15} /></button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* REMINDERS & DOCUMENTS TAB */}
+      {tab === "reminders" && (
+        <>
+          {/* Reminders list */}
+          <div className="panel">
+            <SectionHeader
+              title="Maintenance Reminders"
+              action={<button className="primary tactile" onClick={() => setEditor({ kind: "vehicleReminder", item: null })}>+ Add Reminder</button>}
+            />
+            <div className="vehicle-reminders-list" style={{ display: "flex", flexDirection: "column", gap: "0.75rem", marginTop: "1rem" }}>
+              {(state.vehicleReminders || []).length === 0 ? (
+                <p style={{ textAlign: "center", color: "var(--muted)", padding: "1.5rem" }}>No reminders created.</p>
+              ) : (
+                (state.vehicleReminders || []).map((rem) => {
+                  const v = vehicles.find((x) => x.id === rem.vehicleId);
+                  
+                  let isOverdue = false;
+                  let subtitle = "";
+                  if (rem.isMileageBased) {
+                    const diff = Number(rem.dueMileage || 0) - Number(v?.currentOdometer || 0);
+                    isOverdue = diff <= 0;
+                    subtitle = `Due at: ${rem.dueMileage?.toLocaleString()} km (${isOverdue ? "Overdue" : `${diff.toLocaleString()} km left`})`;
+                  } else if (rem.dueDate) {
+                    isOverdue = rem.dueDate < today;
+                    subtitle = `Due date: ${formatDate(rem.dueDate)} ${isOverdue ? "(Overdue)" : ""}`;
+                  }
+
+                  return (
+                    <div key={rem.id} className={`vehicle-reminder-card panel tactile ${rem.isCompleted ? "done" : isOverdue ? "overdue" : ""}`} style={{ padding: "0.75rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div>
+                        <div className="cluster" style={{ gap: "0.5rem" }}>
+                          <input
+                            type="checkbox"
+                            checked={rem.isCompleted}
+                            onChange={(e) => upsert("vehicleReminders", { ...rem, isCompleted: e.target.checked }, "vehicleReminder")}
+                          />
+                          <strong style={{ textDecoration: rem.isCompleted ? "line-through" : "none" }}>{rem.title}</strong>
+                        </div>
+                        <p style={{ margin: "0.25rem 0 0 1.5rem", fontSize: "0.85rem", color: "var(--muted)" }}>
+                          {v ? `${v.brand} ${v.model} (${v.name})` : "Vehicle"} | {subtitle}
+                        </p>
+                        {rem.notes && <p style={{ margin: "0.25rem 0 0 1.5rem", fontSize: "0.8rem", color: "var(--muted)" }}>{rem.notes}</p>}
+                      </div>
+                      <div className="cluster" style={{ gap: "0.25rem" }}>
+                        <button className="icon-button tactile" onClick={() => setEditor({ kind: "vehicleReminder", item: rem })}><Edit3 size={14} /></button>
+                        <button className="icon-button tactile danger" onClick={() => remove("vehicleReminders", rem.id, "reminder")}><Trash2 size={14} /></button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {/* Documents list */}
+          <div className="panel">
+            <SectionHeader
+              title="Official Documents"
+              action={<button className="primary tactile" onClick={() => setEditor({ kind: "vehicleDocument", item: null })}>+ Add Document</button>}
+            />
+            <div className="vehicle-docs-list" style={{ display: "flex", flexDirection: "column", gap: "0.75rem", marginTop: "1rem" }}>
+              {(state.vehicleDocuments || []).length === 0 ? (
+                <p style={{ textAlign: "center", color: "var(--muted)", padding: "1.5rem" }}>No documents saved.</p>
+              ) : (
+                (state.vehicleDocuments || []).map((doc) => {
+                  const v = vehicles.find((x) => x.id === doc.vehicleId);
+                  const isExpired = doc.expiryDate && doc.expiryDate < today;
+
+                  return (
+                    <div key={doc.id} className={`vehicle-reminder-card panel tactile ${isExpired ? "overdue" : ""}`} style={{ padding: "0.75rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div>
+                        <strong>{doc.title}</strong> <span className="badge-tag">{doc.type}</span>
+                        <p style={{ margin: "0.25rem 0 0 0", fontSize: "0.85rem", color: "var(--muted)" }}>
+                          {v ? `${v.brand} ${v.model} (${v.name})` : "Vehicle"} | Expiry: {doc.expiryDate ? `${formatDate(doc.expiryDate)} ${isExpired ? "(Expired)" : ""}` : "No expiry"}
+                        </p>
+                        {doc.notes && <p style={{ margin: "0.25rem 0 0 0", fontSize: "0.8rem", color: "var(--muted)" }}>{doc.notes}</p>}
+                        {doc.link && <a href={doc.link} target="_blank" rel="noopener noreferrer" style={{ fontSize: "0.8rem", color: "var(--ink)", textDecoration: "underline", display: "inline-block", marginTop: "0.25rem" }}>View File Link</a>}
+                      </div>
+                      <div className="cluster" style={{ gap: "0.25rem" }}>
+                        <button className="icon-button tactile" onClick={() => setEditor({ kind: "vehicleDocument", item: doc })}><Edit3 size={14} /></button>
+                        <button className="icon-button tactile danger" onClick={() => remove("vehicleDocuments", doc.id, "document")}><Trash2 size={14} /></button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* JSON IMPORT DIALOG */}
+      {importOpen && (
+        <div className="autotrack-modal-overlay">
+          <div className="autotrack-modal panel tactile">
+            <div className="modal-header cluster spaced" style={{ borderBottom: "2px solid var(--ink)", paddingBottom: "0.75rem", marginBottom: "1rem" }}>
+              <h2 style={{ margin: 0 }}>Import AutoTrack JSON</h2>
+              <button className="icon-button tactile" onClick={() => setImportOpen(false)}><X size={20} /></button>
+            </div>
+            <p className="helper-text" style={{ marginBottom: "1rem" }}>Paste your AUTOTRACKPRO_v1 export JSON block below to load your vehicles and logs.</p>
+            <textarea
+              style={{ width: "100%", height: "250px", fontFamily: "monospace", padding: "0.5rem", borderRadius: "6px", border: "2px solid var(--ink)" }}
+              placeholder='{ "key": "AUTOTRACKPRO_v1", "data": { ... } }'
+              value={importText}
+              onChange={(e) => setImportText(e.target.value)}
+            />
+            <div className="cluster" style={{ justifyContent: "flex-end", marginTop: "1rem", gap: "0.5rem" }}>
+              <button className="secondary tactile" onClick={() => setImportOpen(false)}>Cancel</button>
+              <button className="primary tactile" onClick={handleImportJson}>Import & Seed</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CRUD FORM EDITOR DIALOG */}
+      {editor && (
+        <AutotrackFormEditor
+          editor={editor}
+          vehicles={vehicles}
+          defaultFuelPrice={state.settings.defaultFuelPrice !== undefined ? state.settings.defaultFuelPrice : 102.98}
+          close={() => setEditor(null)}
+          save={handleEditorSave}
+        />
+      )}
+    </div>
+  );
+}
+
+// Separate component for CRUD editor forms
+function AutotrackFormEditor({ editor, vehicles, defaultFuelPrice, close, save }) {
+  const isEdit = Boolean(editor.item?.id);
+  const [formVal, setFormVal] = useState(() => {
+    if (editor.item) return { ...editor.item };
+    
+    const dateStr = todayISO();
+    if (editor.kind === "vehicle") {
+      return { name: "", brand: "", model: "", type: "car", fuelType: "petrol", currentOdometer: "" };
+    }
+    if (editor.kind === "fuelLog") {
+      return { vehicleId: vehicles.filter((v) => v.fuelType !== "electric")[0]?.id || "", date: dateStr + "T12:00", pricePerLitre: defaultFuelPrice, amount: "", litres: "", odometer: "", notes: "" };
+    }
+    if (editor.kind === "chargingLog") {
+      return { vehicleId: vehicles.filter((v) => v.fuelType === "electric")[0]?.id || "", date: dateStr + "T12:00", amountSpent: "", chargingType: "public", notes: "" };
+    }
+    if (editor.kind === "serviceLog") {
+      return { vehicleId: vehicles[0]?.id || "", date: dateStr, expense: "", serviceType: "General Service", odometer: "", notes: "" };
+    }
+    if (editor.kind === "vehicleReminder") {
+      return { vehicleId: vehicles[0]?.id || "", type: "service", title: "", dueDate: dateStr, dueMileage: "", isMileageBased: false, isCompleted: false };
+    }
+    if (editor.kind === "vehicleDocument") {
+      return { vehicleId: vehicles[0]?.id || "", type: "insurance", title: "", expiryDate: dateStr, link: "", notes: "" };
+    }
+    return {};
+  });
+
+  // Bidirectional calculations for Fuel Log Form
+  const handlePriceChange = (val) => {
+    const p = Number(val);
+    setFormVal(prev => {
+      const next = { ...prev, pricePerLitre: val };
+      if (next.litres && p > 0) {
+        next.amount = (Number(next.litres) * p).toFixed(2);
+      } else if (next.amount && p > 0) {
+        next.litres = (Number(next.amount) / p).toFixed(2);
+      }
+      return next;
+    });
+  };
+
+  const handleLitresChange = (val) => {
+    const l = Number(val);
+    setFormVal(prev => {
+      const next = { ...prev, litres: val };
+      if (next.pricePerLitre && l > 0) {
+        next.amount = (l * Number(next.pricePerLitre)).toFixed(2);
+      }
+      return next;
+    });
+  };
+
+  const handleAmountChange = (val) => {
+    const amt = Number(val);
+    setFormVal(prev => {
+      const next = { ...prev, amount: val };
+      if (next.pricePerLitre && amt > 0) {
+        next.litres = (amt / Number(next.pricePerLitre)).toFixed(2);
+      }
+      return next;
+    });
+  };
+
+  const setVal = (k, v) => setFormVal((prev) => ({ ...prev, [k]: v }));
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    
+    // Validations
+    if (editor.kind === "vehicle" && !formVal.name.trim()) return;
+    if (["fuelLog", "serviceLog", "chargingLog", "vehicleReminder", "vehicleDocument"].includes(editor.kind) && !formVal.vehicleId) {
+      alert("Please select a vehicle");
+      return;
+    }
+
+    save(formVal);
+  };
+
+  return (
+    <div className="autotrack-modal-overlay">
+      <div className="autotrack-modal panel tactile">
+        <div className="modal-header cluster spaced" style={{ borderBottom: "2px solid var(--ink)", paddingBottom: "0.75rem", marginBottom: "1rem" }}>
+          <h2 style={{ margin: 0 }}>{isEdit ? "Edit" : "Add"} {kindLabel(editor.kind)}</h2>
+          <button className="icon-button tactile" onClick={close}><X size={20} /></button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="form-grid">
+          {/* VEHICLE FORM */}
+          {editor.kind === "vehicle" && (
+            <>
+              <label>License Plate (Name)
+                <input value={formVal.name} onChange={(e) => setVal("name", e.target.value)} placeholder="e.g. KA 03 KP 6885" required />
+              </label>
+              <label>Brand
+                <input value={formVal.brand} onChange={(e) => setVal("brand", e.target.value)} placeholder="e.g. Honda, Ather" required />
+              </label>
+              <label>Model
+                <input value={formVal.model} onChange={(e) => setVal("model", e.target.value)} placeholder="e.g. 450X, Unicorn" required />
+              </label>
+              <label>Vehicle Type
+                <Select value={formVal.type} onChange={(val) => setVal("type", val)} options={[["car", "Car"], ["bike", "Bike"], ["scooty", "Scooty"]]} />
+              </label>
+              <label>Fuel Type
+                <Select value={formVal.fuelType} onChange={(val) => setVal("fuelType", val)} options={[["petrol", "Petrol"], ["diesel", "Diesel"], ["electric", "Electric"]]} />
+              </label>
+              <label>Current Odometer (km)
+                <input type="number" min="0" value={formVal.currentOdometer} onChange={(e) => setVal("currentOdometer", e.target.value)} required />
+              </label>
+            </>
+          )}
+
+          {/* FUEL LOG FORM */}
+          {editor.kind === "fuelLog" && (
+            <>
+              <label className="wide">Select Petrol/Diesel Vehicle
+                <Select value={formVal.vehicleId} onChange={(val) => setVal("vehicleId", val)} options={vehicles.filter((v) => v.fuelType !== "electric").map((v) => [v.id, `${v.brand} ${v.model} (${v.name})`])} />
+              </label>
+              <label>Date & Time
+                <input type="datetime-local" value={formVal.date} onChange={(e) => setVal("date", e.target.value)} required />
+              </label>
+              <label>Odometer Reading (km)
+                <input type="number" min="0" value={formVal.odometer} onChange={(e) => setVal("odometer", e.target.value)} required />
+              </label>
+              <label>Price per Litre (₹) <span style={{ fontSize: "0.75rem", color: "var(--muted)" }}>(Default: ₹{defaultFuelPrice})</span>
+                <input type="number" step="0.01" min="0" value={formVal.pricePerLitre} onChange={(e) => handlePriceChange(e.target.value)} required />
+              </label>
+              <label>Fuel Quantity (Litres)
+                <input type="number" step="0.01" min="0" value={formVal.litres} onChange={(e) => handleLitresChange(e.target.value)} required />
+              </label>
+              <label className="wide">Total Spent (₹) <span style={{ fontSize: "0.75rem", color: "var(--muted)" }}>(Autocalculated)</span>
+                <input type="number" step="0.01" min="0" value={formVal.amount} onChange={(e) => handleAmountChange(e.target.value)} required />
+              </label>
+              <label className="wide">Notes
+                <input value={formVal.notes || ""} onChange={(e) => setVal("notes", e.target.value)} placeholder="e.g. Full tank refill, bunk location" />
+              </label>
+            </>
+          )}
+
+          {/* CHARGING LOG FORM */}
+          {editor.kind === "chargingLog" && (
+            <>
+              <label className="wide">Select EV Vehicle
+                <Select value={formVal.vehicleId} onChange={(val) => setVal("vehicleId", val)} options={vehicles.filter((v) => v.fuelType === "electric").map((v) => [v.id, `${v.brand} ${v.model} (${v.name})`])} />
+              </label>
+              <label>Date & Time
+                <input type="datetime-local" value={formVal.date} onChange={(e) => setVal("date", e.target.value)} required />
+              </label>
+              <label>Amount Spent (₹)
+                <input type="number" step="0.01" min="0" value={formVal.amountSpent} onChange={(e) => setVal("amountSpent", e.target.value)} required />
+              </label>
+              <label>Charging Station Type
+                <Select value={formVal.chargingType} onChange={(val) => setVal("chargingType", val)} options={[["public", "Public Charger"], ["home", "Home Charger"]]} />
+              </label>
+              <label className="wide">Notes / Location
+                <input value={formVal.notes || ""} onChange={(e) => setVal("notes", e.target.value)} placeholder="e.g. Gopalan Signature Mall, Ather App" />
+              </label>
+            </>
+          )}
+
+          {/* SERVICE LOG FORM */}
+          {editor.kind === "serviceLog" && (
+            <>
+              <label className="wide">Select Vehicle
+                <Select value={formVal.vehicleId} onChange={(val) => setVal("vehicleId", val)} options={vehicles.map((v) => [v.id, `${v.brand} ${v.model} (${v.name})`])} />
+              </label>
+              <label>Date
+                <input type="date" value={formVal.date} onChange={(e) => setVal("date", e.target.value)} required />
+              </label>
+              <label>Service Expense (₹)
+                <input type="number" min="0" value={formVal.expense} onChange={(e) => setVal("expense", e.target.value)} required />
+              </label>
+              <label>Service Type
+                <input value={formVal.serviceType} onChange={(e) => setVal("serviceType", e.target.value)} placeholder="e.g. General Service, Wheel alignment, Repairs" required />
+              </label>
+              <label>Odometer Reading (km)
+                <input type="number" min="0" value={formVal.odometer || ""} onChange={(e) => setVal("odometer", e.target.value)} placeholder="Leave blank if unknown" />
+              </label>
+              <label className="wide">Service Details / Notes
+                <textarea value={formVal.notes || ""} onChange={(e) => setVal("notes", e.target.value)} placeholder="e.g. Replaced brake pads, belt noise spray, oil change details" />
+              </label>
+            </>
+          )}
+
+          {/* REMINDER FORM */}
+          {editor.kind === "vehicleReminder" && (
+            <>
+              <label className="wide">Select Vehicle
+                <Select value={formVal.vehicleId} onChange={(val) => setVal("vehicleId", val)} options={vehicles.map((v) => [v.id, `${v.brand} ${v.model} (${v.name})`])} />
+              </label>
+              <label className="wide">Reminder Title
+                <input value={formVal.title} onChange={(e) => setVal("title", e.target.value)} placeholder="e.g. General Service, Oil change" required />
+              </label>
+              <label className="wide toggle-row">
+                <input type="checkbox" checked={formVal.isMileageBased} onChange={(e) => setVal("isMileageBased", e.target.checked)} />
+                Mileage-based reminder? (otherwise date-based)
+              </label>
+              {formVal.isMileageBased ? (
+                <label className="wide">Target Mileage (Odometer km)
+                  <input type="number" min="0" value={formVal.dueMileage || ""} onChange={(e) => setVal("dueMileage", e.target.value)} required />
+                </label>
+              ) : (
+                <label className="wide">Due Date
+                  <input type="date" value={formVal.dueDate || ""} onChange={(e) => setVal("dueDate", e.target.value)} required />
+                </label>
+              )}
+              <label className="wide">Notes / Description
+                <input value={formVal.notes || ""} onChange={(e) => setVal("notes", e.target.value)} placeholder="e.g. Check belt noise, check engine light" />
+              </label>
+              {isEdit && (
+                <label className="wide toggle-row">
+                  <input type="checkbox" checked={formVal.isCompleted} onChange={(e) => setVal("isCompleted", e.target.checked)} />
+                  Completed / Handled?
+                </label>
+              )}
+            </>
+          )}
+
+          {/* DOCUMENT FORM */}
+          {editor.kind === "vehicleDocument" && (
+            <>
+              <label className="wide">Select Vehicle
+                <Select value={formVal.vehicleId} onChange={(val) => setVal("vehicleId", val)} options={vehicles.map((v) => [v.id, `${v.brand} ${v.model} (${v.name})`])} />
+              </label>
+              <label>Document Title
+                <input value={formVal.title} onChange={(e) => setVal("title", e.target.value)} placeholder="e.g. Vehicle Insurance, RC Copy" required />
+              </label>
+              <label>Document Type
+                <Select value={formVal.type} onChange={(val) => setVal("type", val)} options={[["insurance", "Insurance"], ["rc", "RC Book"], ["puc", "PUC Certificate"], ["other", "Other"]]} />
+              </label>
+              <label>Expiry Date
+                <input type="date" value={formVal.expiryDate || ""} onChange={(e) => setVal("expiryDate", e.target.value)} />
+              </label>
+              <label>File/Cloud Link (URL)
+                <input type="url" value={formVal.link || ""} onChange={(e) => setVal("link", e.target.value)} placeholder="e.g. Google Drive link, Ather dashboard link" />
+              </label>
+              <label className="wide">Notes / Registration Details
+                <input value={formVal.notes || ""} onChange={(e) => setVal("notes", e.target.value)} placeholder="e.g. Policy number: D0904181..." />
+              </label>
+            </>
+          )}
+
+          <div className="form-actions wide cluster" style={{ justifyContent: "flex-end", borderTop: "1px solid var(--line)", paddingTop: "1rem", marginTop: "1rem", gap: "0.5rem" }}>
+            <button className="secondary tactile" type="button" onClick={close}>Cancel</button>
+            <button className="primary tactile" type="submit">Save</button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

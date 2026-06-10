@@ -5113,5 +5113,209 @@ label {
   100% { border-color: rgba(220, 53, 69, 0.55); }
 }
 
+/* AutoTrack Dashboard styles */
+.autotrack-tabs {
+  margin-bottom: 1rem;
+}
+.autotrack-btn-group button {
+  font-weight: 700;
+}
+.autotrack-btn-group button.active-tab {
+  background: var(--ink);
+  color: var(--paper);
+}
+.overview-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+.metric-card {
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  position: relative;
+}
+.metric-card h3 {
+  font-size: 2rem;
+  margin: 0;
+  font-weight: 950;
+}
+.metric-card span {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.badge-tag {
+  display: inline-block;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.78rem;
+  font-weight: 800;
+  border-radius: 4px;
+  background: var(--line);
+  color: var(--ink);
+  text-transform: uppercase;
+}
+
+/* AutoTrack Tables */
+.autotrack-table-container {
+  overflow-x: auto;
+  border: 2px solid var(--ink);
+  border-radius: 8px;
+  background: var(--paper);
+}
+.autotrack-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+.autotrack-table th {
+  background: var(--cream);
+  color: var(--ink);
+  font-weight: 800;
+  padding: 0.8rem 1rem;
+  border-bottom: 2px solid var(--ink);
+}
+.autotrack-table td {
+  padding: 0.8rem 1rem;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink);
+}
+.autotrack-table tr:last-child td {
+  border-bottom: none;
+}
+
+/* Modals & Overlays */
+.autotrack-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(76, 61, 50, 0.45);
+  backdrop-filter: blur(4px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+.autotrack-modal {
+  width: 100%;
+  max-width: 580px;
+  background: var(--paper);
+  border-radius: 12px;
+  padding: 1.5rem;
+  max-height: 90vh;
+  overflow-y: auto;
+  animation: modal-pop 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes modal-pop {
+  0% { transform: scale(0.95); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* Car Loader Overlay */
+.car-loader-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(247, 239, 227, 0.85);
+  backdrop-filter: blur(8px);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+}
+.car-loader-box {
+  width: 100%;
+  max-width: 400px;
+  background: var(--paper);
+  border: 3px solid var(--ink);
+  padding: 2rem;
+  border-radius: 16px;
+  text-align: center;
+  box-shadow: 10px 10px 0 var(--ink);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.5rem;
+}
+.car-track {
+  width: 250px;
+  height: 4px;
+  background: var(--ink);
+  position: relative;
+  border-radius: 2px;
+  margin: 1.5rem 0;
+}
+.car-moving {
+  position: absolute;
+  bottom: 0px;
+  left: 0;
+  width: 36px;
+  height: 36px;
+  color: var(--ink);
+  animation: driveCar 2s ease-in-out infinite;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform-origin: center;
+}
+@keyframes driveCar {
+  0% {
+    left: -18px;
+    transform: scaleX(1);
+  }
+  45% {
+    left: 232px;
+    transform: scaleX(1);
+  }
+  50% {
+    left: 232px;
+    transform: scaleX(-1);
+  }
+  95% {
+    left: -18px;
+    transform: scaleX(-1);
+  }
+  100% {
+    left: -18px;
+    transform: scaleX(1);
+  }
+}
+.car-loader-text {
+  font-size: 1.1rem;
+  font-weight: 850;
+  color: var(--ink);
+  margin: 0;
+  letter-spacing: 0.5px;
+}
+
+/* Home Important Due Overdue Styling */
+.due-box-card.due-overdue {
+  border-color: rgba(220, 53, 69, 0.55) !important;
+  background: rgba(220, 53, 69, 0.08) !important;
+}
+.due-box-card.due-overdue .due-badge {
+  background: rgba(220, 53, 69, 0.3) !important;
+  color: #dc3545 !important;
+}
+.due-box-card.due-overdue .due-countdown {
+  color: #ffffff !important;
+  background: #dc3545 !important;
+  font-weight: 900;
+}
+
+/* Vehicle reminder states */
+.vehicle-reminder-card {
+  border-left: 5px solid var(--line);
+}
+.vehicle-reminder-card.done {
+  opacity: 0.6;
+  border-left-color: var(--green);
+}
+.vehicle-reminder-card.overdue {
+  border-left-color: #dc3545;
+  background: rgba(220, 53, 69, 0.03);
+}
+
 
 
