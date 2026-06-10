@@ -863,33 +863,60 @@ function nextRepeatDate(date, repeat) {
   return localDateISO(next);
 }
 
+function isLoanMonthPaid(loan, yearMonth) {
+  if (loan.status !== "Active") return true;
+  if ((loan.paidMonths || []).includes(yearMonth)) return true;
+  if (!loan.startDate) return false;
+  
+  const start = new Date(`${loan.startDate}T12:00:00`);
+  const current = new Date(`${yearMonth}-01T12:00:00`);
+  
+  const startMonths = start.getFullYear() * 12 + start.getMonth();
+  const currentMonths = current.getFullYear() * 12 + current.getMonth();
+  const diffMonths = currentMonths - startMonths;
+  
+  if (diffMonths < 0) return true;
+  
+  const emiNum = diffMonths + 1;
+  return emiNum <= amount(loan.completedMonths);
+}
+
 function getNextUnpaidEmiDate(loan) {
   if (!loan.emiDate || loan.status !== "Active") return null;
   const now = new Date();
-  let currentYear = now.getFullYear();
-  let currentMonth = now.getMonth();
+  let checkYear = now.getFullYear();
+  let checkMonth = now.getMonth();
   
-  for (let i = 0; i < 24; i++) {
-    const monthStr = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}`;
+  if (loan.startDate) {
+    const start = new Date(`${loan.startDate}T12:00:00`);
+    checkYear = start.getFullYear();
+    checkMonth = start.getMonth();
+  }
+  
+  for (let i = 0; i < 120; i++) {
+    const monthStr = `${checkYear}-${String(checkMonth + 1).padStart(2, "0")}`;
     const emiDateStr = `${monthStr}-${String(loan.emiDate).padStart(2, "0")}`;
     
-    const isPaid = (loan.paidMonths || []).includes(monthStr);
-    if (!isPaid) {
+    const emiNum = i + 1;
+    const isPaidByCount = emiNum <= amount(loan.completedMonths);
+    const isPaidByList = (loan.paidMonths || []).includes(monthStr);
+    
+    if (!isPaidByCount && !isPaidByList) {
       if (loan.startDate && emiDateStr < loan.startDate) {
-        currentMonth++;
-        if (currentMonth > 11) {
-          currentMonth = 0;
-          currentYear++;
+        checkMonth++;
+        if (checkMonth > 11) {
+          checkMonth = 0;
+          checkYear++;
         }
         continue;
       }
       return emiDateStr;
     }
     
-    currentMonth++;
-    if (currentMonth > 11) {
-      currentMonth = 0;
-      currentYear++;
+    checkMonth++;
+    if (checkMonth > 11) {
+      checkMonth = 0;
+      checkYear++;
     }
   }
   return null;
@@ -3468,15 +3495,13 @@ function LoansView({ state, openAdd, setModal, remove, upsert, requestConfirm, s
                     monthNameStr = `${monthYearStr} (EMI #${emiNum})`;
                   }
 
-                  let isPaid = false;
+                  let isPaid = emiNum <= amount(selectedLoan.completedMonths);
                   let monthKey = "";
                   if (selectedLoan.startDate) {
                     const start = new Date(`${selectedLoan.startDate}T12:00:00`);
                     start.setMonth(start.getMonth() + index);
                     monthKey = start.toISOString().slice(0, 7);
-                    isPaid = (selectedLoan.paidMonths || []).includes(monthKey);
-                  } else {
-                    isPaid = emiNum <= amount(selectedLoan.completedMonths);
+                    isPaid = isLoanMonthPaid(selectedLoan, monthKey);
                   }
 
                   const today = todayISO();
@@ -6749,7 +6774,7 @@ function markersForDate(state, date) {
     loan.status === "Active" && 
     Number(loan.emiDate) === dayOfMonth && 
     (!loan.startDate || date.slice(0, 7) >= loan.startDate.slice(0, 7)) &&
-    !(loan.paidMonths || []).includes(yearMonth)
+    !isLoanMonthPaid(loan, yearMonth)
   )) {
     markers.push("emi");
   }
@@ -6767,7 +6792,7 @@ function itemsForDate(state, date) {
       (!loan.startDate || date.slice(0, 7) >= loan.startDate.slice(0, 7))
     )
     .map((loan) => {
-      const isPaid = (loan.paidMonths || []).includes(yearMonth);
+      const isPaid = isLoanMonthPaid(loan, yearMonth);
       return {
         ...loan,
         id: `${loan.id}-${yearMonth}`,
