@@ -639,6 +639,7 @@ input[type="datetime-local"] {
 
 .weather-card {
   background: linear-gradient(135deg, rgba(255, 250, 241, 0.92), rgba(185, 220, 246, 0.28));
+  transform: translateZ(0);
 }
 
 .weather-details {

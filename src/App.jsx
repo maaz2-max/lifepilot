@@ -3603,7 +3603,18 @@ function AiAssistant({ state, setState, upsert, setToast, close }) {
         </div>
 
         <form className="ai-input" onSubmit={send}>
-          <textarea value={input} onChange={(e) => setInput(e.target.value)} placeholder="Paste bank SMS, bill reminder, or ask LifePilot AI" rows={2} />
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                submitPrompt(input);
+              }
+            }}
+            placeholder="Paste bank SMS, bill reminder, or ask LifePilot AI"
+            rows={2}
+          />
           <button className="primary tactile" type="submit" disabled={loading}><SendHorizontal size={18} /></button>
         </form>
         <button className="secondary tactile clear-chat" onClick={clearChat} type="button">Clear recent chat</button>
