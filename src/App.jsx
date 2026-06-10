@@ -2143,6 +2143,7 @@ export default function App() {
             upsert={upsert}
             requestConfirm={requestConfirm}
             setToast={setToast}
+            setState={setState}
           />
         )}
         {active === "loans" && (
@@ -3146,7 +3147,7 @@ function WorkList({ type, state, openAdd, setModal, remove, upsert, requestConfi
   );
 }
 
-function ExpenseView({ state, expenseTab, setExpenseTab, selectedSalary, setSelectedSalary, selectedProject, setSelectedProject, openAdd, setModal, remove, upsert, requestConfirm, setToast }) {
+function ExpenseView({ state, expenseTab, setExpenseTab, selectedSalary, setSelectedSalary, selectedProject, setSelectedProject, openAdd, setModal, remove, upsert, requestConfirm, setToast, setState }) {
   const tabs = [["command", "Command"], ["daily", "Daily"], ["bills", "Bills"], ["salary", "Salary"], ["projects", "Projects"], ["analytics", "Analytics"]];
   const downloadReport = () => {
     openExpensePdfReport(state);
