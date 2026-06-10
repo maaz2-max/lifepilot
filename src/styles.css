@@ -4664,3 +4664,71 @@ label {
   color: #635043;
   font-weight: 650;
 }
+
+/* Payment history schedule styles */
+.payment-amount-badge {
+  font-size: 0.72rem;
+  font-weight: 800;
+  padding: 0.15rem 0.45rem;
+  background: rgba(141, 103, 70, 0.08);
+  border-radius: 6px;
+  color: var(--ink);
+}
+
+.payment-history-row.paid .payment-amount-badge {
+  background: rgba(43, 125, 72, 0.08);
+  color: #2b7d48;
+}
+
+/* Interest Analysis styles */
+.loan-interest-analysis {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1.1rem;
+  border-radius: 18px;
+  background: linear-gradient(145deg, #fefdfb 0%, #f6f0ea 100%);
+  border: 1px solid var(--line);
+  margin-top: 1.25rem;
+}
+
+.loan-interest-analysis h4 {
+  margin: 0;
+  font-size: 0.98rem;
+  font-weight: 850;
+  color: var(--ink);
+}
+
+.interest-disclaimer-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border-radius: 12px;
+  background: rgba(244, 216, 124, 0.12);
+  border: 1px solid rgba(244, 216, 124, 0.3);
+  color: #7a5814;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  font-weight: 700;
+}
+
+.disclaimer-sparkle {
+  color: #df8839;
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+
+.portfolio-interest-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  margin-top: 1.25rem;
+}
+
+.portfolio-interest-summary h3 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 850;
+  color: var(--ink);
+}

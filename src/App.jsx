@@ -3190,6 +3190,102 @@ function BillsView({ state, openAdd, setModal, remove, upsert }) {
   );
 }
 
+function getLoanPaymentStats(loan) {
+  let paid = 0;
+  let outstanding = 0;
+  const totalMonths = amount(loan.totalMonths);
+  const completedMonths = amount(loan.completedMonths);
+  
+  for (let i = 1; i <= totalMonths; i++) {
+    let isPaid = i <= completedMonths;
+    let monthKey = "";
+    if (loan.startDate) {
+      const start = new Date(`${loan.startDate}T12:00:00`);
+      start.setMonth(start.getMonth() + (i - 1));
+      monthKey = start.toISOString().slice(0, 7);
+      isPaid = isLoanMonthPaid(loan, monthKey);
+    }
+    
+    const emiVal = loan.customPayments?.[i] !== undefined 
+      ? Number(loan.customPayments[i]) 
+      : amount(loan.monthlyPayment);
+      
+    if (isPaid) {
+      paid += emiVal;
+    } else {
+      outstanding += emiVal;
+    }
+  }
+  
+  // Add foreclosure amount if present
+  paid += amount(loan.foreclosurePaidAmount);
+  
+  return { paid, outstanding };
+}
+
+function getInterestBreakdown(loan) {
+  const principal = amount(loan.totalAmount);
+  const rate = Number(loan.interestRate || 0);
+  const period = loan.interestPeriod || "Annually";
+  const months = amount(loan.totalMonths);
+  const emi = amount(loan.monthlyPayment);
+  const completed = amount(loan.completedMonths);
+  
+  if (principal <= 0 || rate <= 0 || months <= 0 || emi <= 0) {
+    const totalRepayable = months * emi;
+    const estTotalInterest = Math.max(0, totalRepayable - principal);
+    const interestRatio = totalRepayable > 0 ? estTotalInterest / totalRepayable : 0;
+    
+    let paidAmount = 0;
+    for (let i = 1; i <= completed; i++) {
+      paidAmount += loan.customPayments?.[i] !== undefined 
+        ? Number(loan.customPayments[i]) 
+        : emi;
+    }
+    const estInterestPaid = paidAmount * interestRatio;
+    const estOutstandingInterest = estTotalInterest - estInterestPaid;
+    
+    return {
+      totalInterest: estTotalInterest,
+      interestPaid: estInterestPaid,
+      remainingInterest: estOutstandingInterest,
+      isEstimated: true
+    };
+  }
+  
+  const monthlyRate = period === "Monthly" ? rate / 100 : rate / 12 / 100;
+  let balance = principal;
+  let totalInterestVal = 0;
+  let interestPaidVal = 0;
+  
+  for (let i = 1; i <= months; i++) {
+    const monthlyInterest = balance * monthlyRate;
+    const monthlyPrincipal = Math.max(0, emi - monthlyInterest);
+    balance = Math.max(0, balance - monthlyPrincipal);
+    
+    totalInterestVal += monthlyInterest;
+    
+    let isPaid = i <= completed;
+    if (loan.startDate) {
+      const start = new Date(`${loan.startDate}T12:00:00`);
+      start.setMonth(start.getMonth() + (i - 1));
+      const monthKey = start.toISOString().slice(0, 7);
+      isPaid = isLoanMonthPaid(loan, monthKey);
+    }
+    
+    if (isPaid) {
+      interestPaidVal += monthlyInterest;
+    }
+  }
+  
+  return {
+    totalInterest: totalInterestVal,
+    interestPaid: interestPaidVal,
+    remainingInterest: Math.max(0, totalInterestVal - interestPaidVal),
+    isEstimated: false
+  };
+}
+
 function LoansView({ state, openAdd, setModal, remove, upsert, requestConfirm, setToast }) {
   const [selectedLoanId, setSelectedLoanId] = useState(null);
   const [query, setQuery] = useState("");
@@ -3205,21 +3301,32 @@ function LoansView({ state, openAdd, setModal, remove, upsert, requestConfirm, s
   const activeLoans = (state.loans || []).filter(loan => loan.status === "Active");
   const totalActiveEmi = sum(activeLoans, loan => loan.monthlyPayment);
   
-  const totalPaid = (state.loans || []).reduce((acc, loan) => {
-    const regularPaid = amount(loan.completedMonths) * amount(loan.monthlyPayment);
-    const foreclosurePaid = amount(loan.foreclosurePaidAmount);
-    return acc + regularPaid + foreclosurePaid;
-  }, 0);
-
-  const totalOutstanding = activeLoans.reduce((acc, loan) => {
-    const remainingMonths = Math.max(0, amount(loan.totalMonths) - amount(loan.completedMonths));
-    return acc + (remainingMonths * amount(loan.monthlyPayment));
-  }, 0);
+  let totalPaid = 0;
+  let totalOutstanding = 0;
+  (state.loans || []).forEach(loan => {
+    const stats = getLoanPaymentStats(loan);
+    totalPaid += stats.paid;
+    if (loan.status === "Active") {
+      totalOutstanding += stats.outstanding;
+    }
+  });
 
   const closedLoans = (state.loans || []).filter(loan => loan.status !== "Active");
   const averageEmi = activeLoans.length ? totalActiveEmi / activeLoans.length : 0;
   const totalPrincipal = (state.loans || []).reduce((acc, loan) => acc + amount(loan.totalAmount), 0);
   
+  let totalInterestPayable = 0;
+  let totalInterestPaid = 0;
+  let totalRemainingInterest = 0;
+  (state.loans || []).forEach(loan => {
+    if (Number(loan.interestRate) > 0) {
+      const info = getInterestBreakdown(loan);
+      totalInterestPayable += info.totalInterest;
+      totalInterestPaid += info.interestPaid;
+      totalRemainingInterest += info.remainingInterest;
+    }
+  });
+
   let nextUpcomingEmi = null;
   activeLoans.forEach(loan => {
     const nextDate = getNextUnpaidEmiDate(loan);
@@ -3238,17 +3345,84 @@ function LoansView({ state, openAdd, setModal, remove, upsert, requestConfirm, s
   activeLoans.forEach(loan => {
     const nextDate = getNextUnpaidEmiDate(loan);
     if (nextDate) {
+      let emiNum = amount(loan.completedMonths) + 1;
+      if (loan.startDate) {
+        const start = new Date(`${loan.startDate}T12:00:00`);
+        const next = new Date(`${nextDate}-01T12:00:00`);
+        const startMonths = start.getFullYear() * 12 + start.getMonth();
+        const nextMonths = next.getFullYear() * 12 + next.getMonth();
+        emiNum = Math.max(1, nextMonths - startMonths + 1);
+      }
+      
+      const emiAmount = loan.customPayments?.[emiNum] !== undefined 
+        ? Number(loan.customPayments[emiNum]) 
+        : amount(loan.monthlyPayment);
+
       upcomingEmiTimeline.push({
         loan,
         date: nextDate,
         title: loan.title,
-        amount: loan.monthlyPayment
+        amount: emiAmount,
+        emiNum
       });
     }
   });
   upcomingEmiTimeline.sort((a, b) => a.date.localeCompare(b.date));
 
   const selectedLoan = (state.loans || []).find(l => l.id === selectedLoanId);
+  const selectedLoanStats = selectedLoan ? getLoanPaymentStats(selectedLoan) : null;
+
+  const handleEditPaymentAmount = (loan, emiNum, monthKey) => {
+    const currentAmount = loan.customPayments?.[emiNum] !== undefined 
+      ? loan.customPayments[emiNum] 
+      : loan.monthlyPayment;
+    
+    const input = window.prompt(`Enter amount paid for EMI #${emiNum}:`, currentAmount);
+    if (input === null) return;
+    const newAmount = Number(input);
+    if (isNaN(newAmount) || newAmount < 0) {
+      alert("Please enter a valid positive amount.");
+      return;
+    }
+    
+    const customPayments = { ...(loan.customPayments || {}), [emiNum]: newAmount };
+    
+    let completedMonths = amount(loan.completedMonths);
+    let paidMonths = [...(loan.paidMonths || [])];
+    let status = loan.status;
+    
+    let isPaid = emiNum <= completedMonths;
+    if (monthKey) {
+      isPaid = isLoanMonthPaid(loan, monthKey);
+    }
+    
+    if (!isPaid) {
+      if (monthKey) {
+        if (!paidMonths.includes(monthKey)) {
+          paidMonths.push(monthKey);
+        }
+        if (emiNum > completedMonths) {
+          completedMonths = emiNum;
+        }
+      } else {
+        if (emiNum > completedMonths) {
+          completedMonths = emiNum;
+        }
+      }
+      if (completedMonths >= amount(loan.totalMonths)) {
+        status = "Completed";
+      }
+    }
+    
+    upsert("loans", {
+      ...loan,
+      customPayments,
+      completedMonths,
+      paidMonths,
+      status
+    }, "loan");
+    setToast(`EMI #${emiNum} payment updated to ${rupee.format(newAmount)}!`);
+  };
 
   const handleMarkPaid = (loan) => {
     const today = todayISO();
@@ -3396,6 +3570,14 @@ function LoansView({ state, openAdd, setModal, remove, upsert, requestConfirm, s
                 <span>Remaining Months</span>
                 <strong>{Math.max(0, amount(selectedLoan.totalMonths) - amount(selectedLoan.completedMonths))} Months</strong>
               </div>
+              <div className="detail-stat highlight-stat">
+                <span>Total Paid So Far</span>
+                <strong className="text-success">{rupee.format(selectedLoanStats.paid)}</strong>
+              </div>
+              <div className="detail-stat highlight-stat">
+                <span>Remaining Outstanding</span>
+                <strong className="text-warning">{rupee.format(selectedLoanStats.outstanding)}</strong>
+              </div>
               {(() => {
                 const nextDate = getNextUnpaidEmiDate(selectedLoan);
                 if (!nextDate) return null;
@@ -3434,6 +3616,39 @@ function LoansView({ state, openAdd, setModal, remove, upsert, requestConfirm, s
                 </div>
               )}
             </div>
+
+            {Number(selectedLoan.interestRate) > 0 && (() => {
+              const interestInfo = getInterestBreakdown(selectedLoan);
+              return (
+                <div className="loan-interest-analysis">
+                  <h4>Interest Analysis ({selectedLoan.interestRate}% {selectedLoan.interestPeriod})</h4>
+                  <div className="interest-stats-grid card-grid-2">
+                    <div className="detail-stat">
+                      <span>Total Interest Payable</span>
+                      <strong>{rupee.format(interestInfo.totalInterest)}</strong>
+                    </div>
+                    <div className="detail-stat">
+                      <span>Estimated Interest Paid</span>
+                      <strong className="text-success">{rupee.format(interestInfo.interestPaid)}</strong>
+                    </div>
+                    <div className="detail-stat">
+                      <span>Remaining Interest</span>
+                      <strong className="text-warning">{rupee.format(interestInfo.remainingInterest)}</strong>
+                    </div>
+                    <div className="detail-stat">
+                      <span>Total Repayment (P + I)</span>
+                      <strong>{rupee.format(amount(selectedLoan.totalAmount) + interestInfo.totalInterest)}</strong>
+                    </div>
+                  </div>
+                  <div className="interest-disclaimer-box">
+                    <Sparkles size={14} className="disclaimer-sparkle" />
+                    <span>
+                      This is generated based on loan details provided; actual amount might vary. Please verify with your bank.
+                    </span>
+                  </div>
+                </div>
+              );
+            })()}
 
             {selectedLoan.notes && (
               <div className="loan-details-notes">
@@ -3509,10 +3724,17 @@ function LoansView({ state, openAdd, setModal, remove, upsert, requestConfirm, s
                   const currentMonthKey = today.slice(0, 7);
                   const isCurrentMonth = monthKey === currentMonthKey;
 
+                  const emiAmount = selectedLoan.customPayments?.[emiNum] !== undefined 
+                    ? Number(selectedLoan.customPayments[emiNum]) 
+                    : amount(selectedLoan.monthlyPayment);
+
                   return (
                     <div className={`payment-history-row ${isPaid ? "paid" : "pending"} ${isCurrentMonth ? "current" : ""}`} key={emiNum}>
                       <div className="payment-info">
-                        <strong>EMI #{emiNum}</strong>
+                        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                          <strong>EMI #{emiNum}</strong>
+                          <span className="payment-amount-badge">{rupee.format(emiAmount)}</span>
+                        </div>
                         {monthYearStr && <span className="payment-date">{monthYearStr}</span>}
                         {isCurrentMonth && <span className="current-badge">Current Month</span>}
                       </div>
@@ -3520,6 +3742,14 @@ function LoansView({ state, openAdd, setModal, remove, upsert, requestConfirm, s
                         <span className={`status-text ${isPaid ? "text-success" : "text-muted"}`}>
                           {isPaid ? "Paid" : "Pending"}
                         </span>
+                        <button 
+                          className="icon-button tactile" 
+                          title="Edit payment amount"
+                          onClick={() => handleEditPaymentAmount(selectedLoan, emiNum, monthKey)}
+                          style={{ padding: "0.2rem", background: "none", border: "none", color: "var(--muted)", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+                        >
+                          <Edit3 size={13} />
+                        </button>
                         {!isPaid && isCurrentMonth && selectedLoan.status === "Active" && (
                           <button 
                             className="mini-pay-button tactile"
@@ -3596,6 +3826,29 @@ function LoansView({ state, openAdd, setModal, remove, upsert, requestConfirm, s
               )}
             </div>
 
+            {totalInterestPayable > 0 && (
+              <div className="portfolio-interest-summary">
+                <h3>Portfolio Interest Summary</h3>
+                <div className="portfolio-stats-grid">
+                  <div className="portfolio-stat-card interest-payable-card">
+                    <span className="stat-label">Total Interest Payable</span>
+                    <strong className="stat-value">{rupee.format(totalInterestPayable)}</strong>
+                    <span className="stat-sub">Across all interest-bearing loans</span>
+                  </div>
+                  <div className="portfolio-stat-card interest-paid-card">
+                    <span className="stat-label">Total Interest Paid</span>
+                    <strong className="stat-value text-success">{rupee.format(totalInterestPaid)}</strong>
+                    <span className="stat-sub">Estimated paid so far</span>
+                  </div>
+                  <div className="portfolio-stat-card interest-remaining-card">
+                    <span className="stat-label">Remaining Interest Dues</span>
+                    <strong className="stat-value text-warning">{rupee.format(totalRemainingInterest)}</strong>
+                    <span className="stat-sub">Future interest commitments</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {nextUpcomingEmi ? (
               <div className="upcoming-emi-alert-card">
                 <div className="alert-header">
@@ -3605,38 +3858,64 @@ function LoansView({ state, openAdd, setModal, remove, upsert, requestConfirm, s
                     <p className="alert-subtitle">Due date is approaching soon</p>
                   </div>
                 </div>
-                <div className="alert-details">
-                  <div className="alert-details-row">
-                    <span>Loan/EMI:</span>
-                    <strong>{nextUpcomingEmi.title}</strong>
-                  </div>
-                  <div className="alert-details-row">
-                    <span>Monthly payment:</span>
-                    <strong className="text-warning">{rupee.format(nextUpcomingEmi.amount)}</strong>
-                  </div>
-                  <div className="alert-details-row">
-                    <span>EMI Due Date:</span>
-                    <strong>{formatDate(nextUpcomingEmi.date)}</strong>
-                  </div>
-                </div>
                 {(() => {
-                  const diffTime = new Date(`${nextUpcomingEmi.date}T12:00:00`) - new Date(`${todayISO()}T12:00:00`);
-                  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
                   const matchingLoan = activeLoans.find(l => l.title === nextUpcomingEmi.title);
+                  let nextEmiNum = 1;
+                  let nextEmiAmount = nextUpcomingEmi.amount;
+                  if (matchingLoan) {
+                    const nextDate = getNextUnpaidEmiDate(matchingLoan);
+                    if (nextDate) {
+                      let emiNum = amount(matchingLoan.completedMonths) + 1;
+                      if (matchingLoan.startDate) {
+                        const start = new Date(`${matchingLoan.startDate}T12:00:00`);
+                        const next = new Date(`${nextDate}-01T12:00:00`);
+                        const startMonths = start.getFullYear() * 12 + start.getMonth();
+                        const nextMonths = next.getFullYear() * 12 + next.getMonth();
+                        emiNum = Math.max(1, nextMonths - startMonths + 1);
+                      }
+                      nextEmiNum = emiNum;
+                      nextEmiAmount = matchingLoan.customPayments?.[emiNum] !== undefined 
+                        ? Number(matchingLoan.customPayments[emiNum]) 
+                        : amount(matchingLoan.monthlyPayment);
+                    }
+                  }
+                  
                   return (
-                    <div className="alert-actions">
-                      <span className="due-countdown">
-                        {diffDays === 0 ? "🔥 Due today!" : diffDays > 0 ? `⏰ In ${diffDays} days` : `⚠️ Overdue by ${Math.abs(diffDays)} days!`}
-                      </span>
-                      {matchingLoan && (
-                        <button 
-                          className="primary mini-pay-button tactile"
-                          onClick={() => handleMarkPaid(matchingLoan)}
-                        >
-                          <CheckCircle2 size={14} /> Mark as Paid
-                        </button>
-                      )}
-                    </div>
+                    <>
+                      <div className="alert-details">
+                        <div className="alert-details-row">
+                          <span>Loan/EMI:</span>
+                          <strong>{nextUpcomingEmi.title} (EMI #{nextEmiNum})</strong>
+                        </div>
+                        <div className="alert-details-row">
+                          <span>Monthly payment:</span>
+                          <strong className="text-warning">{rupee.format(nextEmiAmount)}</strong>
+                        </div>
+                        <div className="alert-details-row">
+                          <span>EMI Due Date:</span>
+                          <strong>{formatDate(nextUpcomingEmi.date)}</strong>
+                        </div>
+                      </div>
+                      {(() => {
+                        const diffTime = new Date(`${nextUpcomingEmi.date}T12:00:00`) - new Date(`${todayISO()}T12:00:00`);
+                        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                        return (
+                          <div className="alert-actions">
+                            <span className="due-countdown">
+                              {diffDays === 0 ? "🔥 Due today!" : diffDays > 0 ? `⏰ In ${diffDays} days` : `⚠️ Overdue by ${Math.abs(diffDays)} days!`}
+                            </span>
+                            {matchingLoan && (
+                              <button 
+                                className="primary mini-pay-button tactile"
+                                onClick={() => handleMarkPaid(matchingLoan)}
+                              >
+                                <CheckCircle2 size={14} /> Mark as Paid
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </>
                   );
                 })()}
               </div>
@@ -3656,7 +3935,7 @@ function LoansView({ state, openAdd, setModal, remove, upsert, requestConfirm, s
                     const diffTime = new Date(`${item.date}T12:00:00`) - new Date(`${todayISO()}T12:00:00`);
                     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
                     return (
-                      <div className="timeline-item" key={item.loan.id}>
+                      <div className="timeline-item" key={`${item.loan.id}-${item.date}`}>
                         <div className="timeline-badge-line">
                           <div className="timeline-dot"></div>
                           {idx < Math.min(upcomingEmiTimeline.length, 5) - 1 && <div className="timeline-line"></div>}
@@ -5870,7 +6149,7 @@ function Field({ field, value, set }) {
   const normalizedType = field.type === "date" || field.type === "month" ? "text" : field.type || "text";
   const placeholder = field.type === "date" ? "YYYY-MM-DD" : field.type === "month" ? "YYYY-MM" : "";
   const pattern = field.type === "date" ? "\\d{4}-\\d{2}-\\d{2}" : field.type === "month" ? "\\d{4}-\\d{2}" : undefined;
-  return <label className={field.wide ? "wide" : ""}>{field.label}<input type={normalizedType} inputMode={field.type === "date" || field.type === "month" ? "numeric" : undefined} placeholder={placeholder} pattern={pattern} min={field.min} value={value || ""} onChange={(e) => set(field.name, e.target.value)} required={field.required} /></label>;
+  return <label className={field.wide ? "wide" : ""}>{field.label}<input type={normalizedType} inputMode={field.type === "date" || field.type === "month" ? "numeric" : undefined} placeholder={placeholder} pattern={pattern} min={field.min} step={field.step} value={value || ""} onChange={(e) => set(field.name, e.target.value)} required={field.required} /></label>;
 }
 
 function ParticipantMultiCustom({ field, value, set }) {
@@ -6544,7 +6823,7 @@ function Chart({ title, data, type = "bar" }) {
 function getInitialForm(kind, item, context = {}, state) {
   const baseDate = context.date || todayISO();
   const defaults = {
-    loan: { title: "", bankName: "", totalAmount: "", monthlyPayment: "", totalMonths: "", completedMonths: 0, emiDate: "", startDate: baseDate, status: "Active", notes: "", foreclosurePaidAmount: "", paidMonths: [] },
+    loan: { title: "", bankName: "", totalAmount: "", monthlyPayment: "", totalMonths: "", completedMonths: 0, interestRate: "", interestPeriod: "Annually", emiDate: "", startDate: baseDate, status: "Active", notes: "", foreclosurePaidAmount: "", paidMonths: [] },
     task: { title: "", description: "", dueDate: baseDate, startTime: "", endTime: "", dueTime: nowTime(), todayOnly: false, priority: state.settings.defaultTaskPriority, category: "", status: "Pending", reminder: false, notes: "", subtasks: [] },
     reminder: { title: "", description: "", date: baseDate, time: state.settings.defaultReminderTime, repeat: "No repeat", priority: "Medium", notificationEnabled: true, status: "Active" },
     note: { title: "", content: "", date: baseDate, category: "", reminder: false, pinned: false },
@@ -6598,6 +6877,8 @@ function fieldsForKind(kind, state, form = {}) {
       { name: "monthlyPayment", label: "Monthly EMI", type: "number", min: 0, required: true },
       { name: "totalMonths", label: "Total Duration (Months)", type: "number", min: 1, required: true },
       { name: "completedMonths", label: "EMIs Paid Till Now (Months)", type: "number", min: 0, required: true },
+      { name: "interestRate", label: "Rate of Interest (%)", type: "number", min: 0, step: "any" },
+      { name: "interestPeriod", label: "Interest Rate Period", type: "select", options: ["Annually", "Monthly"] },
       { name: "emiDate", label: "EMI Day of Month (Optional, 1-31)", type: "number", min: 1, max: 31 },
       { name: "startDate", label: "Start Date (Optional)", type: "date" },
       { name: "status", label: "Status", type: "select", options: ["Active", "Foreclosed", "Completed"] },
@@ -6820,7 +7101,7 @@ function withAiDefaults(kind, data) {
     project: { name: "Project", type: "Custom", description: "", startDate: date, endDate: date, budget: 0, participants: [], status: "Active", notes: "" },
     projectTransaction: { projectId: "", title: "Project transaction", amount: 0, type: "Debit", splitMode: "No split", category: "", date, time: nowTime(), paidBy: "", owedBy: "", participants: [], paymentMethod: "UPI", notes: "" },
     category: { name: "Category", type: "Both", color: "#d8ff8f", icon: "spark" },
-    loan: { title: "Loan", bankName: "", totalAmount: 0, monthlyPayment: 0, totalMonths: 1, completedMonths: 0, emiDate: null, startDate: date, status: "Active", notes: "", foreclosurePaidAmount: 0, paidMonths: [] }
+    loan: { title: "Loan", bankName: "", totalAmount: 0, monthlyPayment: 0, totalMonths: 1, completedMonths: 0, interestRate: 0, interestPeriod: "Annually", emiDate: null, startDate: date, status: "Active", notes: "", foreclosurePaidAmount: 0, paidMonths: [] }
   };
 
   return { ...(defaults[kind] || {}), ...data };

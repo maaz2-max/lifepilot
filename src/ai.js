@@ -284,7 +284,7 @@ function compactState(state) {
     salaryExpenses: take(state.salaryExpenses, ["id", "salaryId", "title", "amount", "type", "category", "date", "paymentMethod"]),
     projectTransactions: take(state.projectTransactions, ["id", "projectId", "title", "amount", "type", "category", "date", "time", "paidBy", "owedBy", "splitMode", "participants", "paymentMethod"]),
     gmailRecords: take(state.gmailRecords || [], ["id", "subject", "title", "amount", "type", "category", "date", "time", "paymentMethod", "notes", "accountReference"]),
-    loans: take(state.loans || [], ["id", "title", "bankName", "totalAmount", "monthlyPayment", "totalMonths", "completedMonths", "emiDate", "startDate", "status", "notes", "paidMonths", "foreclosurePaidAmount"]),
+    loans: take(state.loans || [], ["id", "title", "bankName", "totalAmount", "monthlyPayment", "totalMonths", "completedMonths", "emiDate", "startDate", "status", "notes", "paidMonths", "foreclosurePaidAmount", "interestRate", "interestPeriod", "customPayments"]),
     pendingAiActions: (state.aiMessages || []).flatMap((message) =>
       (message.actions || [])
         .map((action, index) => ({
