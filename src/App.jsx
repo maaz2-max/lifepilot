@@ -36,7 +36,8 @@ import {
   Users,
   WalletCards,
   X,
-  Mail
+  Mail,
+  Inbox
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -83,6 +84,8 @@ const emptyState = {
   credentials: [],
   aiMessages: [],
   gmailRecords: [],
+  gmailInbox: [],
+  savedGmailRecords: [],
   aiMemory: {
     defaultPaymentMethod: "",
     commonParticipants: [],
@@ -129,6 +132,7 @@ const emptyState = {
     gmailAccessToken: "",
     gmailTokenExpiry: 0,
     gmailProcessedEmailIds: [],
+    gmailInboxProcessedIds: [],
     gmailLastSyncAt: "",
     gmailLastStatus: "",
     gmailLastError: "",
@@ -149,6 +153,7 @@ const navItems = [
   { key: "expenses", label: "Expenses", icon: WalletCards },
   { key: "vault", label: "Vault", icon: KeyRound },
   { key: "gmail", label: "Gmail Records", icon: Mail },
+  { key: "gmailInbox", label: "Gmail Inbox", icon: Inbox },
   { key: "settings", label: "Settings", icon: Settings }
 ];
 
@@ -170,6 +175,7 @@ const dashboardNavigationItems = [
   { key: "calendar", label: "Calendar", icon: CalendarDays },
   { key: "expenses", label: "Money & Expenses", icon: WalletCards },
   { key: "gmail", label: "Gmail Records", icon: Mail },
+  { key: "gmailInbox", label: "Gmail Inbox", icon: Inbox },
   { key: "vault", label: "Secure Vault", icon: KeyRound },
   { key: "tasks", label: "Tasks Manager", icon: ClipboardCheck },
   { key: "reminders", label: "Reminders", icon: Bell },
@@ -664,6 +670,87 @@ Return ONLY the raw JSON object. Do not include markdown code block formatting (
   };
 }
 
+async function parseGeneralEmailWithGemini({ model, subject, from, date, body }) {
+  const selectedModel = model || "gemini-2.5-flash-lite";
+  const prompt = `You are a helpful personal assistant. Analyze this general email (not a financial transaction) and extract a JSON summary.
+Your response MUST be a JSON object matching this structure:
+{
+  "summary": "A clear 1-2 sentence summary of what this email is about.",
+  "isImportant": true or false (true if this email contains an important personal notification, action item, or time-sensitive update; false otherwise),
+  "urls": ["array of any relevant action links or URLs found in the email, if none return empty array"]
+}
+
+Email Subject: ${subject}
+Sender (From): ${from}
+Email Date: ${date}
+Email Snippet/Body:
+${body.substring(0, 1500)}
+
+Return ONLY the raw JSON object. Do not include markdown code block formatting (like \`\`\`json).`;
+
+  let response;
+  let usedModel = selectedModel;
+
+  try {
+    response = await fetch("/api/ai", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: selectedModel,
+        prompt
+      })
+    });
+    if (!response.ok) throw new Error(`Primary AI request failed: ${response.status}`);
+  } catch (err) {
+    console.warn("Primary AI parsing failed for general email, attempting fallback (DeepSeek R1)...", err);
+    usedModel = "mlvoca:deepseek-r1:1.5b";
+    try {
+      response = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: usedModel,
+          prompt
+        })
+      });
+      if (!response.ok) throw new Error(`Fallback model failed: ${response.status}`);
+    } catch (fallbackErr) {
+      console.warn("DeepSeek fallback failed, trying secondary fallback (TinyLlama)...", fallbackErr);
+      usedModel = "mlvoca:tinyllama";
+      response = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: usedModel,
+          prompt
+        })
+      });
+    }
+  }
+
+  if (!response.ok) {
+    throw new Error("All AI parsing models failed for general email");
+  }
+
+  const rawResult = await response.text();
+  let result;
+  try {
+    result = JSON.parse(rawResult);
+  } catch (err) {
+    throw new Error(`AI API returned invalid JSON. Preview: ${rawResult.substring(0, 150)}`);
+  }
+  const data = result.data || result;
+  const text = data.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("") || "{}";
+  const cleanText = text.replace(/```json/gi, "").replace(/```/g, "").trim();
+  const parsed = JSON.parse(cleanText);
+  return {
+    summary: parsed.summary || "",
+    isImportant: !!parsed.isImportant,
+    urls: Array.isArray(parsed.urls) ? parsed.urls : [],
+    _usedModel: usedModel
+  };
+}
+
 
 
 function nextRepeatDate(date, repeat) {
@@ -922,6 +1009,8 @@ export default function App() {
 
   const [gmailSyncing, setGmailSyncing] = useState(false);
   const [gmailSyncStatus, setGmailSyncStatus] = useState("");
+  const [gmailInboxSyncing, setGmailInboxSyncing] = useState(false);
+  const [gmailInboxSyncStatus, setGmailInboxSyncStatus] = useState("");
 
   const fetchGmailTransactions = async (isBackground = false) => {
     const token = state.settings.gmailAccessToken;
@@ -1152,6 +1241,272 @@ export default function App() {
         setGmailSyncStatus("");
       }
     }
+  };
+
+  const fetchGmailInbox = async (isBackground = false) => {
+    const token = state.settings.gmailAccessToken;
+    const expiry = state.settings.gmailTokenExpiry;
+    if (!token || (expiry && expiry < Date.now())) {
+      if (!isBackground) {
+        setToast("Gmail connection expired. Please reconnect.");
+      }
+      return;
+    }
+
+    if (!isBackground) {
+      setGmailInboxSyncing(true);
+      setGmailInboxSyncStatus("Querying Google Inbox for emails...");
+    }
+
+    try {
+      const today = new Date();
+      const yyyy = today.getFullYear();
+      const mm = String(today.getMonth() + 1).padStart(2, '0');
+      const dd = String(today.getDate()).padStart(2, '0');
+      const afterStr = `${yyyy}/${mm}/${dd}`;
+      // Query for label:INBOX, starting from today, and excluding transactions
+      const query = encodeURIComponent(`label:INBOX after:${afterStr} -debit -credit -transaction -payment -spent -UPI -bank`);
+      const listRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${query}&maxResults=10`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      if (!listRes.ok) {
+        const errText = await listRes.text();
+        throw new Error(`Gmail API returned ${listRes.status}: ${errText.includes("disabled") ? "Gmail API not enabled" : listRes.statusText}`);
+      }
+
+      const listRawText = await listRes.text();
+      let listData;
+      try {
+        listData = JSON.parse(listRawText);
+      } catch (err) {
+        throw new Error(`Gmail Inbox API returned invalid JSON. Preview: ${listRawText.substring(0, 150)}`);
+      }
+      const messages = listData.messages || [];
+
+      if (!messages.length) {
+        if (!isBackground) {
+          setGmailInboxSyncStatus("No new emails found in Inbox.");
+          setTimeout(() => setGmailInboxSyncing(false), 2000);
+        }
+        return;
+      }
+
+      const existingInboxIds = new Set([
+        ...(state.settings.gmailInboxProcessedIds || []),
+        ...(state.gmailInbox || []).map((r) => r.emailId),
+        ...(state.savedGmailRecords || []).map((r) => r.emailId)
+      ]);
+
+      const unprocessedMessages = messages.filter((msg) => !existingInboxIds.has(msg.id));
+
+      if (!unprocessedMessages.length) {
+        if (!isBackground) {
+          setGmailInboxSyncStatus("No new unprocessed emails in Inbox.");
+          setTimeout(() => setGmailInboxSyncing(false), 2000);
+        }
+        return;
+      }
+
+      if (!isBackground) {
+        setGmailInboxSyncStatus(`Found ${unprocessedMessages.length} new email(s). Processing...`);
+      }
+      const newRecords = [];
+
+      for (let i = 0; i < unprocessedMessages.length; i++) {
+        const msg = unprocessedMessages[i];
+        if (!isBackground) {
+          setGmailInboxSyncStatus(`Fetching email ${i + 1} of ${unprocessedMessages.length}...`);
+        }
+
+        const msgRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=full`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+
+        if (!msgRes.ok) continue;
+
+        const msgRawText = await msgRes.text();
+        let msgData;
+        try {
+          msgData = JSON.parse(msgRawText);
+        } catch (err) {
+          throw new Error(`Gmail Message API returned invalid JSON. Preview: ${msgRawText.substring(0, 150)}`);
+        }
+        const payload = msgData.payload || {};
+        const headers = payload.headers || [];
+
+        const subject = headers.find((h) => h.name.toLowerCase() === "subject")?.value || "";
+        const from = headers.find((h) => h.name.toLowerCase() === "from")?.value || "";
+        const dateHeader = headers.find((h) => h.name.toLowerCase() === "date")?.value || "";
+
+        const snippet = msgData.snippet || "";
+        const bodyText = getGmailMessageBody(payload) || snippet;
+
+        // Run local regex safety check
+        const SECURE_EMAIL_REGEX = /\b(otp|one[- ]time[- ]password|verification[- ]code|security[- ]code|passcode|password[- ]reset|reset[- ]password|recovery[- ]link|account[- ]recovery|login[- ]credentials|login[- ]details|credentials|sign[- ]in[- ]code|verification[- ]link|2fa|mfa|two[- ]factor)\b/i;
+        const isSecure = SECURE_EMAIL_REGEX.test(subject) || SECURE_EMAIL_REGEX.test(snippet) || SECURE_EMAIL_REGEX.test(bodyText);
+
+        let emailDateStr = todayISO();
+        try {
+          if (dateHeader) {
+            const parsedDate = new Date(dateHeader);
+            if (!isNaN(parsedDate.getTime())) {
+              emailDateStr = parsedDate.toLocaleDateString("en-CA");
+            }
+          }
+        } catch (e) {
+          console.warn("Failed to parse date header", dateHeader);
+        }
+
+        // Detect attachments locally
+        const hasAttachments = (part) => {
+          if (part.filename && part.body && part.body.attachmentId) return true;
+          if (part.parts) {
+            for (const subPart of part.parts) {
+              if (hasAttachments(subPart)) return true;
+            }
+          }
+          return false;
+        };
+        const hasFiles = hasAttachments(payload);
+
+        if (isSecure) {
+          newRecords.push({
+            id: "gi-" + Math.random().toString(36).substring(2, 9),
+            emailId: msg.id,
+            subject,
+            sender: from,
+            emailDate: dateHeader,
+            snippet: "[🔒 Secure Content]",
+            summary: "Gmail is secured to view. See details in Gmail app.",
+            isImportant: false,
+            isSecure: true,
+            urls: [],
+            hasFiles,
+            date: emailDateStr
+          });
+        } else {
+          if (!isBackground) {
+            setGmailInboxSyncStatus(`Summarizing email ${i + 1} with Gemini...`);
+          }
+
+          try {
+            const parsed = await parseGeneralEmailWithGemini({
+              model: state.settings.aiModel,
+              subject,
+              from,
+              date: dateHeader,
+              body: bodyText
+            });
+
+            newRecords.push({
+              id: "gi-" + Math.random().toString(36).substring(2, 9),
+              emailId: msg.id,
+              subject,
+              sender: from,
+              emailDate: dateHeader,
+              snippet,
+              summary: parsed.summary || "No summary provided.",
+              isImportant: !!parsed.isImportant,
+              isSecure: false,
+              urls: parsed.urls || [],
+              hasFiles,
+              date: emailDateStr
+            });
+          } catch (err) {
+            console.warn(`Error summarizing email ${msg.id} with Gemini. Adding placeholder tag.`, err);
+            newRecords.push({
+              id: "gi-" + Math.random().toString(36).substring(2, 9),
+              emailId: msg.id,
+              subject,
+              sender: from,
+              emailDate: dateHeader,
+              snippet,
+              summary: "AI summary not available.",
+              isImportant: false,
+              isSecure: false,
+              urls: [],
+              hasFiles,
+              date: emailDateStr,
+              aiUnavailable: true
+            });
+          }
+        }
+      }
+
+      if (newRecords.length) {
+        setState((current) => {
+          const next = {
+            ...current,
+            gmailInbox: [...(current.gmailInbox || []), ...newRecords]
+          };
+          savePersistedState(STORE_KEY, next);
+          return next;
+        });
+        setToast(`Fetched ${newRecords.length} email(s) in Inbox!`);
+      } else {
+        if (!isBackground) {
+          setToast("No new emails found.");
+        }
+      }
+    } catch (err) {
+      console.error("Gmail Inbox sync failed", err);
+      if (!isBackground) {
+        setToast(`Gmail Inbox sync failed: ${err.message}`);
+      }
+    } finally {
+      if (!isBackground) {
+        setGmailInboxSyncing(false);
+        setGmailInboxSyncStatus("");
+      }
+    }
+  };
+
+  const ignoreGmailInbox = (emailId) => {
+    setState((current) => {
+      const next = {
+        ...current,
+        gmailInbox: (current.gmailInbox || []).filter((r) => r.emailId !== emailId),
+        settings: {
+          ...current.settings,
+          gmailInboxProcessedIds: [...(current.settings.gmailInboxProcessedIds || []), emailId]
+        }
+      };
+      savePersistedState(STORE_KEY, next);
+      return next;
+    });
+    setToast("Email ignored.");
+  };
+
+  const saveGmailInbox = (emailId) => {
+    setState((current) => {
+      const record = (current.gmailInbox || []).find((r) => r.emailId === emailId);
+      if (!record) return current;
+      const next = {
+        ...current,
+        gmailInbox: (current.gmailInbox || []).filter((r) => r.emailId !== emailId),
+        savedGmailRecords: [...(current.savedGmailRecords || []), { ...record, saved: true }]
+      };
+      savePersistedState(STORE_KEY, next);
+      return next;
+    });
+    setToast("Email saved.");
+  };
+
+  const deleteSavedGmail = (emailId) => {
+    setState((current) => {
+      const next = {
+        ...current,
+        savedGmailRecords: (current.savedGmailRecords || []).filter((r) => r.emailId !== emailId),
+        settings: {
+          ...current.settings,
+          gmailInboxProcessedIds: [...(current.settings.gmailInboxProcessedIds || []), emailId]
+        }
+      };
+      savePersistedState(STORE_KEY, next);
+      return next;
+    });
+    setToast("Saved email deleted.");
   };
 
   useEffect(() => {
@@ -1515,6 +1870,20 @@ export default function App() {
             connectGmail={connectGmail}
             gmailSyncing={gmailSyncing}
             gmailSyncStatus={gmailSyncStatus}
+          />
+        )}
+        {active === "gmailInbox" && (
+          <GmailInboxView
+            state={state}
+            setState={setState}
+            setToast={setToast}
+            fetchGmailInbox={fetchGmailInbox}
+            connectGmail={connectGmail}
+            gmailInboxSyncing={gmailInboxSyncing}
+            gmailInboxSyncStatus={gmailInboxSyncStatus}
+            ignoreGmailInbox={ignoreGmailInbox}
+            saveGmailInbox={saveGmailInbox}
+            deleteSavedGmail={deleteSavedGmail}
           />
         )}
       </main>
@@ -6276,4 +6645,293 @@ function GmailRecordsView({ state, setState, setToast, fetchGmailTransactions, c
     </div>
   );
 }
+
+function GmailInboxView({
+  state,
+  setState,
+  setToast,
+  fetchGmailInbox,
+  connectGmail,
+  gmailInboxSyncing,
+  gmailInboxSyncStatus,
+  ignoreGmailInbox,
+  saveGmailInbox,
+  deleteSavedGmail
+}) {
+  const [activeSubTab, setActiveSubTab] = useState("inbox"); // 'inbox' or 'saved'
+
+  const isConnected = state.settings.gmailAccessToken && (state.settings.gmailTokenExpiry > Date.now());
+
+  // Determine which records to display
+  const records = activeSubTab === "inbox" ? (state.gmailInbox || []) : (state.savedGmailRecords || []);
+
+  const groupEmailsByDate = (emails) => {
+    const groups = {};
+    const todayStr = todayISO();
+    const yesterdayStr = addDaysISO(todayStr, -1);
+
+    const sorted = [...emails].sort((a, b) => {
+      return b.date.localeCompare(a.date) || b.emailDate.localeCompare(a.emailDate);
+    });
+
+    sorted.forEach((email) => {
+      let key = email.date;
+      if (key === todayStr) {
+        key = "Today";
+      } else if (key === yesterdayStr) {
+        key = "Yesterday";
+      } else {
+        try {
+          const d = new Date(email.date);
+          if (!isNaN(d.getTime())) {
+            key = d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+          }
+        } catch (err) {
+          // fallback
+        }
+      }
+      if (!groups[key]) {
+        groups[key] = [];
+      }
+      groups[key].push(email);
+    });
+    return groups;
+  };
+
+  const grouped = groupEmailsByDate(records);
+
+  const sortedGroupKeys = useMemo(() => {
+    const uniqueKeys = [];
+    const todayStr = todayISO();
+    const yesterdayStr = addDaysISO(todayStr, -1);
+    const sorted = [...records].sort((a, b) => b.date.localeCompare(a.date));
+    sorted.forEach((email) => {
+      let key = email.date;
+      if (key === todayStr) key = "Today";
+      else if (key === yesterdayStr) key = "Yesterday";
+      else {
+        try {
+          const d = new Date(email.date);
+          if (!isNaN(d.getTime())) {
+            key = d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+          }
+        } catch (err) {
+          // fallback
+        }
+      }
+      if (!uniqueKeys.includes(key)) {
+        uniqueKeys.push(key);
+      }
+    });
+    return uniqueKeys;
+  }, [records]);
+
+  return (
+    <div className="gmail-inbox-container">
+      <section className="sub-panel gmail-records-header">
+        <SectionHeader 
+          title="Gmail Inbox & AI Summaries" 
+          action={
+            isConnected && activeSubTab === "inbox" && (
+              <button 
+                className={`primary tactile ${gmailInboxSyncing ? "loading" : ""}`} 
+                type="button" 
+                onClick={() => fetchGmailInbox(false)}
+                disabled={gmailInboxSyncing}
+              >
+                {gmailInboxSyncing ? "Syncing..." : "Sync Inbox"}
+              </button>
+            )
+          }
+        />
+        
+        {!state.settings.gmailClientId ? (
+          <div className="gmail-onboarding-panel">
+            <p>Connect your Google Account to automatically scan your emails and generate smart AI summaries.</p>
+            <div className="alert-box note">
+              <strong>Redirect URI whitelisting required:</strong>
+              <p>Go to Google Cloud Console and add this redirect URI: <code>{window.location.origin}</code></p>
+            </div>
+            <p className="helper-text">Configure your Client ID in Settings tab to start.</p>
+          </div>
+        ) : !isConnected ? (
+          <div className="gmail-connect-panel">
+            <p>Authorize LifePilot to securely scan your inbox emails locally.</p>
+            <button className="primary tactile spaced" type="button" onClick={connectGmail}>
+              Authorize Google Gmail
+            </button>
+          </div>
+        ) : (
+          <div className="gmail-status-panel">
+            <div className="cluster spaced">
+              <div>
+                <span className="gmail-badge connected">Connected</span>
+                <span className="gmail-meta-text">View and manage non-transactional inbox emails.</span>
+              </div>
+            </div>
+          </div>
+        )}
+      </section>
+
+      {gmailInboxSyncing && (
+        <div className="gmail-syncing-overlay">
+          <div className="loading-orbit" />
+          <p>{gmailInboxSyncStatus}</p>
+        </div>
+      )}
+
+      {isConnected && (
+        <>
+          <div className="gmail-inbox-tabs">
+            <button 
+              className={activeSubTab === "inbox" ? "active" : ""} 
+              onClick={() => setActiveSubTab("inbox")}
+            >
+              📥 Active Inbox ({state.gmailInbox?.length || 0})
+            </button>
+            <button 
+              className={activeSubTab === "saved" ? "active" : ""} 
+              onClick={() => setActiveSubTab("saved")}
+            >
+              ⭐ Saved ({state.savedGmailRecords?.length || 0})
+            </button>
+          </div>
+
+          <section className="panel gmail-records-list-panel">
+            {records.length === 0 ? (
+              <EmptyState 
+                text={
+                  activeSubTab === "inbox" 
+                    ? "No general emails found. Click 'Sync Inbox' to scan." 
+                    : "No saved emails yet. Save important emails from your active inbox."
+                } 
+              />
+            ) : (
+              <div className="gmail-date-group">
+                {sortedGroupKeys.map((groupKey) => (
+                  <div key={groupKey}>
+                    <h4 className="gmail-date-header">{groupKey}</h4>
+                    <div className="gmail-card-list">
+                      {(grouped[groupKey] || []).map((record) => (
+                        <div 
+                          className={`gmail-inbox-card ${record.isImportant ? "important" : ""} ${record.isSecure ? "secure" : ""}`} 
+                          key={record.id}
+                        >
+                          <div className="gmail-card-body">
+                            <div className="gmail-card-top-row">
+                              <span className="gmail-card-date">
+                                {new Date(record.emailDate).toLocaleTimeString("en-IN", { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                              <div className="cluster" style={{ gap: "0.25rem" }}>
+                                {record.isImportant && <span className="gmail-important-badge">⚠️ Important</span>}
+                                {record.isSecure && <span className="gmail-secure-badge">🔒 Secure</span>}
+                                {record.aiUnavailable && <span className="gmail-ai-unavailable-badge">AI Busy</span>}
+                              </div>
+                            </div>
+
+                            <h3 className="gmail-card-title">{record.subject}</h3>
+                            
+                            <div className="gmail-source-badge">
+                              <span>From: {record.sender}</span>
+                            </div>
+
+                            {record.isSecure ? (
+                              <div className="gmail-secure-lockout">
+                                <span className="gmail-secure-lockout-text">
+                                  🔒 Secure Content Locked
+                                </span>
+                                <p style={{ fontSize: "0.8rem", color: "#27ae60", margin: 0 }}>
+                                  {record.summary}
+                                </p>
+                              </div>
+                            ) : (
+                              <>
+                                <div className="gmail-inbox-summary-box">
+                                  <strong>AI Summary:</strong>
+                                  <p style={{ margin: "0.25rem 0 0 0" }}>{record.summary}</p>
+                                </div>
+                                
+                                {record.snippet && (
+                                  <p className="gmail-inbox-snippet" title={record.snippet}>
+                                    {record.snippet}
+                                  </p>
+                                )}
+
+                                {record.urls && record.urls.length > 0 && (
+                                  <div className="gmail-inbox-links-box">
+                                    <strong style={{ fontSize: "0.78rem", color: "var(--muted)" }}>Action Links:</strong>
+                                    {record.urls.map((url, idx) => (
+                                      <a 
+                                        href={url} 
+                                        target="_blank" 
+                                        rel="noopener noreferrer" 
+                                        className="gmail-inbox-link-item" 
+                                        key={idx}
+                                      >
+                                        🔗 {url.length > 50 ? url.substring(0, 50) + "..." : url}
+                                      </a>
+                                    ))}
+                                  </div>
+                                )}
+
+                                {record.hasFiles && (
+                                  <span className="gmail-attachment-badge">
+                                    📎 Contains attachments
+                                  </span>
+                                )}
+                              </>
+                            )}
+                          </div>
+
+                          <div className="gmail-card-actions cluster">
+                            <a 
+                              href={`https://mail.google.com/mail/u/0/#inbox/${record.emailId}`} 
+                              target="_blank" 
+                              rel="noopener noreferrer" 
+                              className="button secondary tactile"
+                              style={{ display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none", fontSize: "0.85rem", flex: 1, padding: "0.5rem" }}
+                            >
+                              Open in Gmail
+                            </a>
+                            {activeSubTab === "inbox" ? (
+                              <>
+                                <button 
+                                  className="primary tactile" 
+                                  type="button" 
+                                  onClick={() => saveGmailInbox(record.emailId)}
+                                >
+                                  Save
+                                </button>
+                                <button 
+                                  className="secondary danger tactile" 
+                                  type="button" 
+                                  onClick={() => ignoreGmailInbox(record.emailId)}
+                                >
+                                  Ignore
+                                </button>
+                              </>
+                            ) : (
+                              <button 
+                                className="secondary danger tactile" 
+                                type="button" 
+                                onClick={() => deleteSavedGmail(record.emailId)}
+                              >
+                                Delete
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        </>
+      )}
+    </div>
+  );
+}
+
 
