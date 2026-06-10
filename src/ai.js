@@ -261,7 +261,7 @@ function compactState(state) {
     notes: take(state.notes, ["id", "title", "date", "category", "pinned"]),
     events: take(state.events, ["id", "title", "startDate", "startTime", "endDate", "location"]),
     expenses: take(state.expenses, ["id", "title", "amount", "type", "category", "date", "time", "paymentMethod", "splitMode", "paidBy", "owedBy", "participants", "notes"]),
-    bills: take(state.bills || [], ["id", "title", "amount", "dueDate", "status", "reminderBefore", "category", "paymentMethod", "notes"]),
+    bills: take(state.bills || [], ["id", "title", "amount", "dueDate", "status", "reminderBefore", "category", "paymentMethod", "notes", "splits"]),
     salaries: take(state.salaries, ["id", "title", "amount", "receivedDate", "month", "source"]),
     projects: state.projects.map((project) => ({
       id: project.id,
@@ -600,6 +600,7 @@ Rules:
 - If the user asks about their running loans or EMIs, look at the "loans" array, calculate paid/outstanding amounts, status, and summarize them.
 - Salary records are automatically synced as credit transactions in the daily expenses (expenses) list under the "Salary" category. You can query and summarize salary usage, compare current salary with the previous month's salary and spending, and calculate how much is saved.
 - Reminders can be marked as money receivable (by setting isMoneyReceive to true). If isMoneyReceive is true, you must provide the payerName (name of the person to receive money from) and moneyAmount (amount to receive). When a money receivable reminder is marked completed, it automatically gets synced as a Credit transaction under category "Salary" in Daily Expenses.
+- Bills can have splits (array of contributor objects with name and amount). The remaining amount of the bill (amount minus total splits) is paid by the user. You can draft bills with custom splits if specified by the user.
 
 
 Allowed action types:
@@ -611,7 +612,7 @@ reminder: { title, description, date, time, repeat, priority, notificationEnable
 note: { title, content, date, category, reminder, pinned }
 event: { title, description, startDate, startTime, endDate, endTime, location, category, reminderBefore, repeat, status }
 expense: { title, amount, type, category, date, time, paymentMethod, splitMode, paidBy, owedBy, participants, notes, reminder }
-bill: { title, amount, dueDate, status, reminderBefore, category, paymentMethod, notes }
+bill: { title, amount, dueDate, status, reminderBefore, category, paymentMethod, notes, splits }
 salary: { title, amount, receivedDate, month, source, paymentMethod, notes, budgetPlan }
 salaryExpense: { salaryId, title, amount, type, category, date, paymentMethod, notes }
 project: { name, type, description, startDate, endDate, budget, participants, status, notes }

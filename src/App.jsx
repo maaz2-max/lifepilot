@@ -316,6 +316,10 @@ function readLegacyStore() {
 
 function formatDate(value) {
   if (!value) return "";
+  const today = todayISO();
+  if (value === today) return "Today";
+  if (value === addDaysISO(today, 1)) return "Tomorrow";
+  if (value === addDaysISO(today, -1)) return "Yesterday";
   return new Date(`${value}T12:00:00`).toLocaleDateString("en-IN", {
     weekday: "short",
     day: "numeric",
@@ -3266,10 +3270,45 @@ function BillsView({ state, openAdd, setModal, remove, upsert }) {
   const unpaid = state.bills.filter((bill) => bill.status !== "Paid");
   const overdue = unpaid.filter((bill) => bill.dueDate < todayISO());
   const dueSoon = unpaid.filter((bill) => bill.dueDate >= todayISO() && bill.dueDate <= addDaysISO(todayISO(), 7));
+
+  const unpaidWithSplits = unpaid.filter((bill) => bill.splits && bill.splits.length > 0);
+  const totalCollectable = unpaidWithSplits.reduce((sum, bill) => {
+    return sum + bill.splits.reduce((s, item) => s + amount(item.amount), 0);
+  }, 0);
+  const myTotalShare = sum(unpaid, (bill) => {
+    const collected = bill.splits ? bill.splits.reduce((s, item) => s + amount(item.amount), 0) : 0;
+    return Math.max(amount(bill.amount) - collected, 0);
+  });
+
   return (
     <div>
       <Toolbar query={query} setQuery={setQuery} filter={filter} setFilter={setFilter} options={["All", "Unpaid", "Paid", "Overdue", "Due soon", "This month"]} />
       <MetricGrid metrics={[["Unpaid bills", sum(unpaid)], ["Paid bills", sum(state.bills, (bill) => bill.status === "Paid")], ["Overdue", sum(overdue)], ["Due soon", sum(dueSoon)]]} />
+      
+      {unpaidWithSplits.length > 0 && (
+        <div className="bills-split-insights">
+          <div className="insight-card">
+            <Users size={18} className="insight-icon" />
+            <div className="insight-content">
+              <h4>Split Collections Insights</h4>
+              <p>
+                You have {unpaidWithSplits.length} unpaid bill{unpaidWithSplits.length === 1 ? "" : "s"} with active splits.
+              </p>
+              <div className="insight-stats">
+                <div>
+                  <span className="label">Total to collect:</span>
+                  <strong className="collect-amount">{rupee.format(totalCollectable)}</strong>
+                </div>
+                <div>
+                  <span className="label">Your remaining share:</span>
+                  <strong className="share-amount">{rupee.format(myTotalShare)}</strong>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <button className="primary tactile spaced" onClick={() => openAdd("bill")}><Plus size={18} />Add Bill</button>
       <div className="record-table">
         {list.length ? list.map((bill) => (
@@ -3277,6 +3316,22 @@ function BillsView({ state, openAdd, setModal, remove, upsert }) {
             <div>
               <strong>{bill.title}</strong>
               <small>{bill.status} - due {formatDate(bill.dueDate)} - reminder {bill.reminderBefore || "None"}</small>
+              {bill.splits && bill.splits.length > 0 && (() => {
+                const total = amount(bill.amount);
+                const collected = bill.splits.reduce((sum, item) => sum + amount(item.amount), 0);
+                const remaining = Math.max(total - collected, 0);
+                return (
+                  <div className="bill-card-splits-info">
+                    <span className="splits-detail">
+                      Collect: {bill.splits.map(item => `${item.name}: ${rupee.format(item.amount)}`).join(", ")}
+                    </span>
+                    <span className="splits-divider">|</span>
+                    <span className="my-share">
+                      My share: <strong>{rupee.format(remaining)}</strong>
+                    </span>
+                  </div>
+                );
+              })()}
             </div>
             <span className={bill.status === "Paid" ? "credit" : bill.dueDate < todayISO() ? "debit" : ""}>{rupee.format(amount(bill.amount))}</span>
             <button className="icon-button tactile" title="Mark paid" onClick={() => upsert("bills", { ...bill, status: bill.status === "Paid" ? "Unpaid" : "Paid" }, "bill")}><CheckCircle2 size={16} /></button>
@@ -4833,7 +4888,7 @@ function EntityModal({ state, modal, close, upsert, setState, setToast }) {
       <form className="modal" onSubmit={submit}>
         <SectionHeader title={modal.item ? `Edit ${kindLabel(modal.kind)}` : `Add ${kindLabel(modal.kind)}`} action={<button type="button" className="icon-button tactile" onClick={close}><X size={18} /></button>} />
         <div className="form-grid">
-          {fieldsForKind(modal.kind, state, form).map((field) => <Field key={field.name} field={field} value={form[field.name]} set={set} />)}
+          {fieldsForKind(modal.kind, state, form).map((field) => <Field key={field.name} field={field} value={form[field.name]} set={set} form={form} />)}
           {error && <p className="validation wide">{error}</p>}
         </div>
         <div className="modal-actions">
@@ -6366,7 +6421,10 @@ function actionDoneLabel(operation) {
   return { create: "Created", edit: "Updated", delete: "Deleted", created: "Created", updated: "Updated", deleted: "Deleted", cancelled: "Cancelled" }[operation] || "Done";
 }
 
-function Field({ field, value, set }) {
+function Field({ field, value, set, form }) {
+  if (field.type === "billSplits") {
+    return <BillSplitsEditor field={field} value={value} set={set} form={form} />;
+  }
   if (field.type === "subtasks") {
     const textValue = Array.isArray(value) ? normalizeSubtasks(value).map((item) => item.title).join("\n") : value || "";
     return <label className={field.wide ? "wide" : ""}>{field.label}<textarea value={textValue} onChange={(e) => set(field.name, e.target.value)} /></label>;
@@ -6400,6 +6458,71 @@ function Field({ field, value, set }) {
   const placeholder = field.type === "date" ? "YYYY-MM-DD" : field.type === "month" ? "YYYY-MM" : "";
   const pattern = field.type === "date" ? "\\d{4}-\\d{2}-\\d{2}" : field.type === "month" ? "\\d{4}-\\d{2}" : undefined;
   return <label className={field.wide ? "wide" : ""}>{field.label}<input type={normalizedType} inputMode={field.type === "date" || field.type === "month" ? "numeric" : undefined} placeholder={placeholder} pattern={pattern} min={field.min} step={field.step} value={value || ""} onChange={(e) => set(field.name, e.target.value)} required={field.required} /></label>;
+}
+
+function BillSplitsEditor({ field, value, set, form }) {
+  const splits = Array.isArray(value) ? value : [];
+  const [name, setName] = useState("");
+  const [amountVal, setAmountVal] = useState("");
+
+  const addSplit = () => {
+    const trimmedName = name.trim();
+    const parsedAmount = parseFloat(amountVal) || 0;
+    if (!trimmedName || parsedAmount <= 0) return;
+    const next = [...splits, { id: id("split"), name: trimmedName, amount: parsedAmount }];
+    set(field.name, next);
+    setName("");
+    setAmountVal("");
+  };
+
+  const removeSplit = (index) => {
+    const next = splits.filter((_, i) => i !== index);
+    set(field.name, next);
+  };
+
+  const totalBill = parseFloat(form.amount) || 0;
+  const collected = splits.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
+  const remaining = Math.max(totalBill - collected, 0);
+
+  return (
+    <div className="bill-splits-editor wide">
+      <span className="field-label-text" style={{ display: "block", marginBottom: "0.5rem", fontWeight: "bold", fontSize: "0.85rem" }}>{field.label}</span>
+      
+      {splits.length > 0 && (
+        <div className="bill-splits-list">
+          {splits.map((item, index) => (
+            <div className="bill-split-row" key={item.id || index}>
+              <span>{item.name}: <strong>{rupee.format(item.amount)}</strong></span>
+              <button type="button" className="icon-button danger tactile" onClick={() => removeSplit(index)}>
+                <Trash2 size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="bill-split-inputs inline-add">
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Person name" />
+        <input type="number" value={amountVal} onChange={(e) => setAmountVal(e.target.value)} placeholder="Amount" min="0" step="any" />
+        <button className="secondary tactile" type="button" onClick={addSplit}>Add Split</button>
+      </div>
+
+      <div className="bill-splits-summary">
+        <div className="summary-row">
+          <span>Total Bill:</span>
+          <span>{rupee.format(totalBill)}</span>
+        </div>
+        <div className="summary-row to-collect">
+          <span>To collect from others:</span>
+          <span>{rupee.format(collected)}</span>
+        </div>
+        <div className="summary-row to-pay">
+          <span>Remaining to be paid by me:</span>
+          <strong>{rupee.format(remaining)}</strong>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function ParticipantMultiCustom({ field, value, set }) {
@@ -7079,7 +7202,7 @@ function getInitialForm(kind, item, context = {}, state) {
     note: { title: "", content: "", date: baseDate, category: "", reminder: false, pinned: false },
     event: { title: "", description: "", startDate: baseDate, startTime: nowTime(), endDate: baseDate, endTime: "", location: "", category: "", reminderBefore: "", repeat: "No repeat", imported: false, status: "Scheduled" },
     expense: { title: "", amount: "", type: "Debit", category: "", date: baseDate, time: nowTime(), paymentMethod: "UPI", splitMode: "No split", paidBy: "", owedBy: "", participants: "", notes: "", reminder: false },
-    bill: { title: "", amount: "", dueDate: baseDate, status: "Unpaid", reminderBefore: "1 day", category: "Bills", paymentMethod: "", notes: "" },
+    bill: { title: "", amount: "", dueDate: baseDate, status: "Unpaid", reminderBefore: "1 day", category: "Bills", paymentMethod: "", notes: "", splits: [] },
     salary: { title: "Salary", amount: "", receivedDate: baseDate, month: baseDate.slice(0, 7), source: "", paymentMethod: "Bank transfer", notes: "", budgetPlan: "" },
     salaryExpense: { salaryId: context.salaryId || "", title: "", amount: "", type: "Debit", category: "", date: baseDate, paymentMethod: "UPI", notes: "" },
     project: { name: "", type: "Trip", description: "", startDate: baseDate, endDate: baseDate, budget: "", participants: "", newParticipant: "", status: "Active", notes: "" },
@@ -7210,6 +7333,7 @@ function fieldsForKind(kind, state, form = {}) {
       { name: "reminderBefore", label: "Reminder before due", type: "select", options: ["None", "Same day", "1 day", "2 days", "3 days", "1 week"] },
       { name: "category", label: "Category", type: "select", options: categoryOptions },
       { name: "paymentMethod", label: "Payment method" },
+      { name: "splits", label: "Bill Split / Contributions", type: "billSplits", wide: true },
       { name: "notes", label: "Notes", type: "textarea", wide: true }
     ],
     salary: [
@@ -7339,6 +7463,16 @@ function normalizeForm(kind, form) {
       participants: mode === "Equal split" ? splitParticipants(form.participants) : []
     };
   }
+  if (kind === "bill") {
+    return {
+      ...form,
+      splits: (Array.isArray(form.splits) ? form.splits : []).map(s => ({
+        id: s.id || id("split"),
+        name: String(s.name || "").trim(),
+        amount: amount(s.amount)
+      }))
+    };
+  }
   if (kind === "loan") {
     return {
       ...form,
@@ -7356,7 +7490,7 @@ function withAiDefaults(kind, data) {
     note: { title: "Note", content: "", date, category: "", reminder: false, pinned: false },
     event: { title: "Event", description: "", startDate: date, startTime: "", endDate: date, endTime: "", location: "", category: "", reminderBefore: "", repeat: "No repeat", status: "Scheduled", imported: false },
     expense: { title: "Expense", amount: 0, type: "Debit", category: "", date, time: nowTime(), paymentMethod: "UPI", splitMode: "No split", paidBy: "", owedBy: "", participants: [], notes: "", reminder: false },
-    bill: { title: "Bill", amount: 0, dueDate: date, status: "Unpaid", reminderBefore: "1 day", category: "Bills", paymentMethod: "", notes: "" },
+    bill: { title: "Bill", amount: 0, dueDate: date, status: "Unpaid", reminderBefore: "1 day", category: "Bills", paymentMethod: "", notes: "", splits: [] },
     salary: { title: "Salary", amount: 0, receivedDate: date, month: date.slice(0, 7), source: "", paymentMethod: "Bank transfer", notes: "", budgetPlan: "" },
     salaryExpense: { salaryId: "", title: "Salary expense", amount: 0, type: "Debit", category: "", date, paymentMethod: "UPI", notes: "" },
     project: { name: "Project", type: "Custom", description: "", startDate: date, endDate: date, budget: 0, participants: [], status: "Active", notes: "" },

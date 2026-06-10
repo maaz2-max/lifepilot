@@ -4843,3 +4843,168 @@ label {
   font-weight: 700;
 }
 
+/* Bill Splits Editor Styling */
+.bill-splits-editor {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+  padding: 0.85rem;
+  border-radius: 12px;
+  margin-top: 0.5rem;
+}
+
+.bill-splits-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.bill-split-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 0.45rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  font-size: 0.82rem;
+}
+
+.bill-split-row button {
+  padding: 0.2rem;
+}
+
+.bill-split-inputs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.85rem;
+}
+
+.bill-split-inputs input:first-child {
+  flex: 2;
+}
+
+.bill-split-inputs input:nth-child(2) {
+  flex: 1;
+}
+
+.bill-splits-summary {
+  background: rgba(0, 0, 0, 0.12);
+  padding: 0.75rem;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.82rem;
+}
+
+.summary-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.summary-row.to-collect {
+  color: #2b7d48;
+}
+
+.summary-row.to-pay {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 0.45rem;
+  margin-top: 0.25rem;
+}
+
+/* Bill Card Splits Info */
+.bill-card-splits-info {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  font-size: 0.76rem;
+  color: var(--ink-light);
+  margin-top: 0.35rem;
+  align-items: center;
+}
+
+.bill-card-splits-info .splits-detail {
+  color: #2b7d48;
+  font-weight: 500;
+}
+
+.bill-card-splits-info .splits-divider {
+  opacity: 0.3;
+}
+
+.bill-card-splits-info .my-share {
+  font-weight: 500;
+}
+
+.bill-card-splits-info .my-share strong {
+  font-weight: 700;
+  color: var(--ink);
+}
+
+/* Bill Split Insights Card */
+.bills-split-insights {
+  margin-bottom: 1.25rem;
+}
+
+.bills-split-insights .insight-card {
+  display: flex;
+  gap: 0.85rem;
+  padding: 1rem;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  align-items: flex-start;
+}
+
+.bills-split-insights .insight-icon {
+  color: #2b7d48;
+  flex-shrink: 0;
+  margin-top: 0.15rem;
+}
+
+.bills-split-insights .insight-content h4 {
+  margin: 0 0 0.25rem 0;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.bills-split-insights .insight-content p {
+  margin: 0 0 0.65rem 0;
+  font-size: 0.8rem;
+  color: var(--ink-light);
+}
+
+.bills-split-insights .insight-stats {
+  display: flex;
+  gap: 1.5rem;
+}
+
+.bills-split-insights .insight-stats > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.bills-split-insights .insight-stats .label {
+  font-size: 0.72rem;
+  color: var(--ink-light);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.bills-split-insights .insight-stats strong {
+  font-size: 1.05rem;
+  font-weight: 800;
+}
+
+.bills-split-insights .insight-stats .collect-amount {
+  color: #2b7d48;
+}
+
+.bills-split-insights .insight-stats .share-amount {
+  color: var(--ink);
+}
+
+
