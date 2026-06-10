@@ -3162,7 +3162,7 @@ function ExpenseView({ state, expenseTab, setExpenseTab, selectedSalary, setSele
       {expenseTab === "daily" && <DailyExpenses state={state} openAdd={openAdd} setModal={setModal} remove={remove} setToast={setToast} />}
       {expenseTab === "bills" && <BillsView state={state} openAdd={openAdd} setModal={setModal} remove={remove} upsert={upsert} />}
       {expenseTab === "salary" && <SalaryView state={state} selectedSalary={selectedSalary} setSelectedSalary={setSelectedSalary} openAdd={openAdd} setModal={setModal} remove={remove} />}
-      {expenseTab === "projects" && <ProjectsView state={state} selectedProject={selectedProject} setSelectedProject={setSelectedProject} openAdd={openAdd} setModal={setModal} remove={remove} upsert={upsert} requestConfirm={requestConfirm} setToast={setToast} />}
+      {expenseTab === "projects" && <ProjectsView state={state} selectedProject={selectedProject} setSelectedProject={setSelectedProject} openAdd={openAdd} setModal={setModal} remove={remove} upsert={upsert} requestConfirm={requestConfirm} setToast={setToast} setState={setState} />}
       {expenseTab === "analytics" && <Analytics state={state} />}
     </section>
   );
@@ -4260,16 +4260,19 @@ function SalaryView({ state, selectedSalary, setSelectedSalary, openAdd, setModa
   );
 }
 
-function ProjectsView({ state, selectedProject, setSelectedProject, openAdd, setModal, remove, upsert, requestConfirm, setToast }) {
+function ProjectsView({ state, selectedProject, setSelectedProject, openAdd, setModal, remove, upsert, requestConfirm, setToast, setState }) {
   const active = state.projects.find((project) => project.id === selectedProject) || null;
   const transactions = active ? state.projectTransactions.filter((item) => item.projectId === active.id).sort(sortByDateDesc) : [];
   const [projectTab, setProjectTab] = useState("transactions");
   const shareText = active ? buildProjectShareText(active, transactions) : "";
+  const fileInputRef = useRef(null);
+
   const downloadProjectReport = () => {
     if (!active) return;
     openExpensePdfReport(state, { mode: "project", title: `${active.name} Expense Project Report`, project: active });
     setToast("Project PDF report opened");
   };
+
   const copyShare = async () => {
     if (!shareText) return;
     try {
@@ -4279,6 +4282,7 @@ function ProjectsView({ state, selectedProject, setSelectedProject, openAdd, set
       setToast("Copy failed");
     }
   };
+
   const nativeShare = async () => {
     if (!shareText) return;
     if (navigator.share) {
@@ -4292,10 +4296,89 @@ function ProjectsView({ state, selectedProject, setSelectedProject, openAdd, set
     await copyShare();
   };
 
+  const triggerImport = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleImportTripJson = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const parsed = JSON.parse(event.target.result);
+        if (!parsed.trip || !parsed.trip.name) {
+          setToast("Invalid JSON: trip object is missing or has no name.");
+          return;
+        }
+        
+        const tripData = parsed.trip;
+        const projectRecord = {
+          id: tripData.tripId || id("project"),
+          name: tripData.name,
+          type: "Trip",
+          description: tripData.notes || "",
+          startDate: tripData.startDate ? tripData.startDate.slice(0, 10) : todayISO(),
+          endDate: tripData.endedAt ? tripData.endedAt.slice(0, 10) : todayISO(),
+          budget: tripData.budget || 0,
+          participants: (tripData.participants || []).map(p => p.name),
+          status: tripData.status === "ended" ? "Completed" : "Active",
+          notes: tripData.notes || "",
+          updatedAt: new Date().toISOString()
+        };
+
+        const transactionRecords = (parsed.expenses || []).map(exp => ({
+          id: exp.expenseId || id("projectTransaction"),
+          projectId: projectRecord.id,
+          title: exp.title || "Expense",
+          amount: amount(exp.amount),
+          type: "Debit",
+          splitMode: "Equal split",
+          category: exp.categoryId || "Custom",
+          date: exp.date ? exp.date.slice(0, 10) : todayISO(),
+          time: exp.date ? exp.date.slice(11, 16) : "",
+          paidBy: exp.paidBy?.name || "",
+          owedBy: "",
+          participants: projectRecord.participants,
+          paymentMethod: "UPI",
+          notes: exp.notes || "",
+          updatedAt: new Date().toISOString()
+        }));
+
+        setState((current) => {
+          const exists = current.projects.some(p => p.id === projectRecord.id);
+          const nextProjects = exists
+            ? current.projects.map(p => p.id === projectRecord.id ? projectRecord : p)
+            : [projectRecord, ...current.projects];
+          
+          const cleanTransactions = current.projectTransactions.filter(t => t.projectId !== projectRecord.id);
+          const nextTransactions = [...transactionRecords, ...cleanTransactions];
+
+          return {
+            ...current,
+            projects: nextProjects,
+            projectTransactions: nextTransactions
+          };
+        });
+        
+        setToast(`Trip "${projectRecord.name}" imported with ${transactionRecords.length} expenses!`);
+        setSelectedProject(projectRecord.id);
+      } catch (err) {
+        console.error(err);
+        setToast("Failed to parse JSON file.");
+      }
+    };
+    reader.readAsText(file);
+  };
+
   return (
     <div className="split-view">
       <div>
-        <button className="primary tactile spaced" onClick={() => openAdd("project")}><Plus size={18} />Create Project</button>
+        <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.85rem" }}>
+          <button className="primary tactile" onClick={() => openAdd("project")} style={{ margin: 0 }}><Plus size={18} />Create Project</button>
+          <button className="secondary tactile" onClick={triggerImport} style={{ margin: 0 }}><Upload size={18} />Import Trip</button>
+          <input type="file" ref={fileInputRef} accept=".json" onChange={handleImportTripJson} style={{ display: "none" }} />
+        </div>
         <div className="list-grid project-card-grid">
           {state.projects.length ? state.projects.map((project) => <ProjectCard key={project.id} state={state} project={project} active={active?.id === project.id} onClick={() => setSelectedProject(active?.id === project.id ? "" : project.id)} />) : <EmptyState text="No active expense projects. Create a trip, renovation, or custom project." />}
         </div>
@@ -7102,11 +7185,19 @@ function ProjectCard({ state, project, active, onClick }) {
 
 function ProjectRow({ state, project }) {
   const stats = projectStats(state, project);
+  const isEnded = !["Active", "Paused"].includes(project.status);
   return (
     <div className="project-row">
       <div>
         <strong>{project.name}</strong>
-        <small>{project.status} - {stats.daysRemaining} days remaining</small>
+        <small>
+          {project.status} 
+          {!isEnded && (
+            stats.daysRemaining >= 0 
+              ? ` - ${stats.daysRemaining} days remaining` 
+              : ` - ${Math.abs(stats.daysRemaining)} days overdue`
+          )}
+        </small>
       </div>
       <Progress value={stats.usage} />
       <span>{Math.round(stats.usage)}%</span>
@@ -7116,9 +7207,20 @@ function ProjectRow({ state, project }) {
 
 function ProjectDashboard({ state, project }) {
   const stats = projectStats(state, project);
+  const isEnded = !["Active", "Paused"].includes(project.status);
+  const metrics = [
+    ["Budget", amount(project.budget)],
+    ["Total credit", stats.credit],
+    ["Total debit", stats.debit],
+    ["Remaining", stats.remaining],
+    ["Overspent", stats.overspent],
+    ["Participants", `${project.participants?.length || 0}`],
+    isEnded ? ["Status", project.status] : ["Days remaining", stats.daysRemaining >= 0 ? `${stats.daysRemaining}` : "Overdue"],
+    ["Usage", `${Math.round(stats.usage)}%`]
+  ];
   return (
     <>
-      <MetricGrid metrics={[["Budget", amount(project.budget)], ["Total credit", stats.credit], ["Total debit", stats.debit], ["Remaining", stats.remaining], ["Overspent", stats.overspent], ["Participants", `${project.participants?.length || 0}`], ["Days remaining", `${stats.daysRemaining}`], ["Usage", `${Math.round(stats.usage)}%`]]} />
+      <MetricGrid metrics={metrics} />
       <div className="project-progress">
         <Progress value={stats.usage} />
       </div>
@@ -7758,7 +7860,9 @@ function projectAlerts(state) {
     else if (stats.usage >= 90) alerts.push({ id: `${project.id}-90`, title: `${project.name} is at 90% budget`, message: "Please maintain your spending.", level: "warn" });
     else if (stats.usage >= 80) alerts.push({ id: `${project.id}-80`, title: `${project.name} is at 80% budget`, message: "You are close to your budget limit.", level: "warn" });
     else if (stats.usage >= 70) alerts.push({ id: `${project.id}-70`, title: `${project.name} is at 70% budget`, message: "Good time to review spending.", level: "soft" });
-    if ([3, 1, 0].includes(stats.daysRemaining)) alerts.push({ id: `${project.id}-end-${stats.daysRemaining}`, title: `${project.name} ending soon`, message: `${stats.daysRemaining === 0 ? "Ends today" : `${stats.daysRemaining} day(s) remaining`}.`, level: "soft" });
+    if (["Active", "Paused"].includes(project.status) && [3, 1, 0].includes(stats.daysRemaining)) {
+      alerts.push({ id: `${project.id}-end-${stats.daysRemaining}`, title: `${project.name} ending soon`, message: `${stats.daysRemaining === 0 ? "Ends today" : `${stats.daysRemaining} day(s) remaining`}.`, level: "soft" });
+    }
     return alerts;
   });
 }
