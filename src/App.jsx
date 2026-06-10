@@ -23,6 +23,7 @@ import {
   ListPlus,
   NotebookPen,
   Plus,
+  Percent,
   Search,
   SendHorizontal,
   Settings,
@@ -82,6 +83,7 @@ const emptyState = {
   projects: [],
   projectTransactions: [],
   credentials: [],
+  loans: [],
   aiMessages: [],
   gmailRecords: [],
   gmailInbox: [],
@@ -138,7 +140,10 @@ const emptyState = {
     gmailLastError: "",
     weatherEnabled: false,
     weatherLocation: "",
-    modernTheme: false
+    modernTheme: false,
+    localLlmEnabled: false,
+    localLlmUrl: "http://localhost:11434",
+    localModelName: "llama3.2"
   }
 };
 
@@ -151,6 +156,7 @@ const navItems = [
   { key: "notes", label: "Notes", icon: NotebookPen },
   { key: "events", label: "Events", icon: Sparkles },
   { key: "expenses", label: "Expenses", icon: WalletCards },
+  { key: "loans", label: "EMI / Loans", icon: Percent },
   { key: "vault", label: "Vault", icon: KeyRound },
   { key: "gmail", label: "Gmail Records", icon: Mail },
   { key: "gmailInbox", label: "Gmail Inbox", icon: Inbox },
@@ -167,7 +173,8 @@ const quickActions = [
   { kind: "bill", label: "Add Bill", icon: Bell },
   { kind: "salary", label: "Add Salary", icon: CircleDollarSign },
   { kind: "project", label: "Add Expense Project", icon: BriefcaseBusiness },
-  { kind: "credential", label: "Add Secure Credential", icon: KeyRound }
+  { kind: "credential", label: "Add Secure Credential", icon: KeyRound },
+  { kind: "loan", label: "Add EMI / Loan", icon: Percent }
 ];
 
 const dashboardNavigationItems = [
@@ -291,7 +298,8 @@ function mergeState(parsed) {
     aiMemory: { ...emptyState.aiMemory, ...(parsed?.aiMemory || {}) },
     categories: parsed?.categories?.length ? parsed.categories : DEFAULT_CATEGORIES,
     credentials: parsed?.credentials || [],
-    bills: parsed?.bills || []
+    bills: parsed?.bills || [],
+    loans: parsed?.loans || []
   };
 }
 
@@ -576,7 +584,51 @@ function getGmailMessageBody(payload) {
   return "";
 }
 
-async function parseEmailWithGemini({ model, subject, from, date, body }) {
+async function callLocalLlm({ url, model, prompt }) {
+  const endpoint = `${url}/api/generate`;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 2000); // 2-second timeout
+
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: model || "llama3.2",
+        prompt: prompt,
+        stream: false,
+        options: {
+          temperature: 0.2
+        }
+      }),
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      throw new Error(`Local LLM returned status ${response.status}`);
+    }
+
+    const data = await response.json();
+    const responseText = data.response || "";
+    
+    return {
+      candidates: [
+        {
+          content: {
+            parts: [{ text: responseText }]
+          }
+        }
+      ]
+    };
+  } catch (err) {
+    clearTimeout(timeoutId);
+    throw err;
+  }
+}
+
+async function parseEmailWithGemini({ model, subject, from, date, body, localLlm }) {
   const selectedModel = model || "gemini-2.5-flash-lite";
   const prompt = `You are a financial parsing assistant. Analyze this email and extract the transaction details if it represents a financial purchase, payment, debit, credit, refund, bill, or money transfer. 
 If it is NOT a financial transaction (e.g., promotional mail, password reset, login alert, shipping notice, newsletter), return a JSON object with "isTransaction": false.
@@ -603,6 +655,26 @@ Email Snippet/Body:
 ${body.substring(0, 1500)}
 
 Return ONLY the raw JSON object. Do not include markdown code block formatting (like \`\`\`json).`;
+
+  if (localLlm && localLlm.enabled) {
+    try {
+      const localResult = await callLocalLlm({
+        url: localLlm.url,
+        model: localLlm.model,
+        prompt
+      });
+      const data = localResult.data || localResult;
+      const text = data.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("") || "{}";
+      const cleanText = text.replace(/```json/gi, "").replace(/```/g, "").trim();
+      const parsed = JSON.parse(cleanText);
+      return {
+        ...parsed,
+        _usedModel: "local:" + (localLlm.model || "llama3.2")
+      };
+    } catch (err) {
+      console.warn("Local LLM parsing failed or offline, falling back to Gemini/Public AI...", err);
+    }
+  }
 
   let response;
   let usedModel = selectedModel;
@@ -670,7 +742,7 @@ Return ONLY the raw JSON object. Do not include markdown code block formatting (
   };
 }
 
-async function parseGeneralEmailWithGemini({ model, subject, from, date, body }) {
+async function parseGeneralEmailWithGemini({ model, subject, from, date, body, localLlm }) {
   const selectedModel = model || "gemini-2.5-flash-lite";
   const prompt = `You are a helpful personal assistant. Analyze this general email (not a financial transaction) and extract a JSON summary.
 Your response MUST be a JSON object matching this structure:
@@ -687,6 +759,28 @@ Email Snippet/Body:
 ${body.substring(0, 1500)}
 
 Return ONLY the raw JSON object. Do not include markdown code block formatting (like \`\`\`json).`;
+
+  if (localLlm && localLlm.enabled) {
+    try {
+      const localResult = await callLocalLlm({
+        url: localLlm.url,
+        model: localLlm.model,
+        prompt
+      });
+      const data = localResult.data || localResult;
+      const text = data.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("") || "{}";
+      const cleanText = text.replace(/```json/gi, "").replace(/```/g, "").trim();
+      const parsed = JSON.parse(cleanText);
+      return {
+        summary: parsed.summary || "",
+        isImportant: !!parsed.isImportant,
+        urls: Array.isArray(parsed.urls) ? parsed.urls : [],
+        _usedModel: "local:" + (localLlm.model || "llama3.2")
+      };
+    } catch (err) {
+      console.warn("Local LLM parsing failed or offline for general email, falling back to Gemini...", err);
+    }
+  }
 
   let response;
   let usedModel = selectedModel;
@@ -767,6 +861,38 @@ function nextRepeatDate(date, repeat) {
     else next.setDate(next.getDate() + 1);
   }
   return localDateISO(next);
+}
+
+function getNextUnpaidEmiDate(loan) {
+  if (!loan.emiDate || loan.status !== "Active") return null;
+  const now = new Date();
+  let currentYear = now.getFullYear();
+  let currentMonth = now.getMonth();
+  
+  for (let i = 0; i < 24; i++) {
+    const monthStr = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}`;
+    const emiDateStr = `${monthStr}-${String(loan.emiDate).padStart(2, "0")}`;
+    
+    const isPaid = (loan.paidMonths || []).includes(monthStr);
+    if (!isPaid) {
+      if (loan.startDate && emiDateStr < loan.startDate) {
+        currentMonth++;
+        if (currentMonth > 11) {
+          currentMonth = 0;
+          currentYear++;
+        }
+        continue;
+      }
+      return emiDateStr;
+    }
+    
+    currentMonth++;
+    if (currentMonth > 11) {
+      currentMonth = 0;
+      currentYear++;
+    }
+  }
+  return null;
 }
 
 function isBirthday(profile, iso) {
@@ -1160,7 +1286,12 @@ export default function App() {
             subject,
             from,
             date: dateHeader,
-            body: bodyText
+            body: bodyText,
+            localLlm: {
+              enabled: state.settings.localLlmEnabled,
+              url: state.settings.localLlmUrl,
+              model: state.settings.localModelName
+            }
           });
 
           if (parsed && parsed.isTransaction) {
@@ -1434,7 +1565,12 @@ export default function App() {
               subject,
               from,
               date: dateHeader,
-              body: bodyText
+              body: bodyText,
+              localLlm: {
+                enabled: state.settings.localLlmEnabled,
+                url: state.settings.localLlmUrl,
+                model: state.settings.localModelName
+              }
             });
 
             newRecords.push({
@@ -1600,11 +1736,30 @@ export default function App() {
         reminder.notificationEnabled
       );
       const dueBills = (state.bills || []).filter((bill) => bill.status !== "Paid" && billReminderDate(bill) <= today);
-      [...dueTasks, ...dueReminders, ...dueBills].forEach((item) => {
+      const dueLoans = (state.loans || []).filter((loan) => {
+        if (loan.status !== "Active" || !loan.emiDate) return false;
+        const nextDate = getNextUnpaidEmiDate(loan);
+        if (!nextDate) return false;
+        const reminderStart = addDaysISO(nextDate, -5);
+        return today >= reminderStart && today <= nextDate;
+      });
+      [...dueTasks, ...dueReminders, ...dueBills, ...dueLoans].forEach((item) => {
         const key = `${item.id}-${today}-${hhmm.slice(0, 2)}`;
         if (notified.current.has(key)) return;
         notified.current.add(key);
-        new Notification(item.title, { body: item.dueDate ? `Bill due ${formatDate(item.dueDate)}.` : "LifePilot reminder for today.", icon: "/icons/icon.svg" });
+        
+        let body = "LifePilot reminder.";
+        if (item.emiDate && item.status && (item.status === "Active" || item.status === "Pending")) {
+          const nextDate = getNextUnpaidEmiDate(item);
+          const daysLeft = Math.ceil((new Date(`${nextDate}T12:00:00`) - new Date(`${today}T12:00:00`)) / (1000 * 60 * 60 * 24));
+          body = daysLeft === 0 ? "EMI due today!" : `EMI due in ${daysLeft} days (on ${formatDate(nextDate)}).`;
+        } else if (item.dueDate) {
+          body = `Bill due ${formatDate(item.dueDate)}.`;
+        } else {
+          body = "LifePilot reminder for today.";
+        }
+        
+        new Notification(item.title, { body, icon: "/icons/icon.svg" });
       });
       const recurringDue = dueReminders.filter((reminder) => reminder.repeat && reminder.repeat !== "No repeat");
       if (recurringDue.length) {
@@ -1883,6 +2038,17 @@ export default function App() {
             setToast={setToast}
           />
         )}
+        {active === "loans" && (
+          <LoansView
+            state={state}
+            openAdd={openAdd}
+            setModal={setModal}
+            remove={remove}
+            upsert={upsert}
+            requestConfirm={requestConfirm}
+            setToast={setToast}
+          />
+        )}
         {active === "vault" && (
           <VaultView
             state={state}
@@ -1944,6 +2110,7 @@ export default function App() {
         <button className={active === "calendar" ? "active" : ""} onClick={() => showView("calendar")}><CalendarDays size={21} /><span>Calendar</span></button>
         <button className={`bottom-add ${quickOpen ? "open" : ""}`} onClick={() => setQuickOpen((value) => !value)}>{quickOpen ? <X size={24} /> : <Plus size={24} />}</button>
         <button className={active === "expenses" ? "active" : ""} onClick={() => showView("expenses")}><WalletCards size={21} /><span>Money</span></button>
+        <button className={active === "loans" ? "active" : ""} onClick={() => showView("loans")}><Percent size={21} /><span>Loans</span></button>
         <button className={active === "vault" ? "active" : ""} onClick={() => showView("vault")}><KeyRound size={21} /><span>Vault</span></button>
       </nav>
 
@@ -2334,6 +2501,12 @@ function homeInsightCards(state) {
       detail: `${rupee.format(monthCredit)} in - ${rupee.format(monthDebit)} out this month`,
       target: "expenses",
       tone: monthCredit - monthDebit < 0 ? "warn" : "good"
+    },
+    {
+      title: "Loans & EMIs",
+      value: (state.loans || []).filter(l => l.status === "Active").length ? `${(state.loans || []).filter(l => l.status === "Active").length} Active` : "No loans",
+      detail: `${rupee.format(sum((state.loans || []).filter(l => l.status === "Active"), l => l.monthlyPayment))} active EMI`,
+      target: "loans"
     },
     {
       title: "Overdue",
@@ -2990,6 +3163,351 @@ function BillsView({ state, openAdd, setModal, remove, upsert }) {
   );
 }
 
+function LoansView({ state, openAdd, setModal, remove, upsert, requestConfirm, setToast }) {
+  const [selectedLoanId, setSelectedLoanId] = useState(null);
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState("Active");
+
+  const loans = (state.loans || [])
+    .filter((item) => matchesQuery(item, query))
+    .filter((item) => {
+      if (filter === "All") return true;
+      return item.status === filter;
+    });
+
+  const activeLoans = (state.loans || []).filter(loan => loan.status === "Active");
+  const totalActiveEmi = sum(activeLoans, loan => loan.monthlyPayment);
+  
+  const totalPaid = (state.loans || []).reduce((acc, loan) => {
+    const regularPaid = amount(loan.completedMonths) * amount(loan.monthlyPayment);
+    const foreclosurePaid = amount(loan.foreclosurePaidAmount);
+    return acc + regularPaid + foreclosurePaid;
+  }, 0);
+
+  const totalOutstanding = activeLoans.reduce((acc, loan) => {
+    const remainingMonths = Math.max(0, amount(loan.totalMonths) - amount(loan.completedMonths));
+    return acc + (remainingMonths * amount(loan.monthlyPayment));
+  }, 0);
+
+  const selectedLoan = (state.loans || []).find(l => l.id === selectedLoanId);
+
+  const handleMarkPaid = (loan) => {
+    const today = todayISO();
+    const currentMonth = today.slice(0, 7);
+    const paidMonths = loan.paidMonths || [];
+    
+    if (paidMonths.includes(currentMonth)) {
+      setToast("EMI for this month is already marked as paid!");
+      return;
+    }
+    
+    const nextCompleted = amount(loan.completedMonths) + 1;
+    const nextStatus = nextCompleted >= amount(loan.totalMonths) ? "Completed" : loan.status;
+    const nextPaidMonths = [...paidMonths, currentMonth];
+    
+    upsert("loans", {
+      ...loan,
+      completedMonths: nextCompleted,
+      status: nextStatus,
+      paidMonths: nextPaidMonths
+    }, "loan");
+    setToast("EMI marked as paid for this month!");
+  };
+
+  const handleForeclose = (loan) => {
+    const remainingAmountStr = String(amount(loan.monthlyPayment) * Math.max(0, amount(loan.totalMonths) - amount(loan.completedMonths)));
+    const input = window.prompt(`Foreclosing "${loan.title}".\nEnter total foreclosure amount paid (including all settlements):`, remainingAmountStr);
+    if (input === null) return;
+    const paidAmount = Number(input);
+    if (isNaN(paidAmount) || paidAmount < 0) {
+      alert("Please enter a valid amount.");
+      return;
+    }
+
+    upsert("loans", {
+      ...loan,
+      status: "Foreclosed",
+      foreclosurePaidAmount: paidAmount
+    }, "loan");
+    setToast("Loan foreclosed successfully!");
+  };
+
+  return (
+    <div className="loans-container split-view">
+      <div className="loans-main">
+        <div className="insights-panel">
+          <h3>EMI & Loan Insights</h3>
+          <div className="insights-grid">
+            <div className="insight-item">
+              <span className="insight-label">Active Monthly EMI</span>
+              <strong className="insight-value text-primary">{rupee.format(totalActiveEmi)}</strong>
+            </div>
+            <div className="insight-item">
+              <span className="insight-label">Total Paid Till Now</span>
+              <strong className="insight-value text-success">{rupee.format(totalPaid)}</strong>
+            </div>
+            <div className="insight-item">
+              <span className="insight-label">Total Outstanding</span>
+              <strong className="insight-value text-warning">{rupee.format(totalOutstanding)}</strong>
+            </div>
+          </div>
+          {(totalPaid + totalOutstanding) > 0 && (
+            <div className="loan-progress-bar-wrap">
+              <div className="loan-progress-labels">
+                <span>Paid Off ({Math.round(totalPaid / (totalPaid + totalOutstanding) * 100)}%)</span>
+                <span>Outstanding</span>
+              </div>
+              <div className="progress-bar-track">
+                <div 
+                  className="progress-bar-fill fill-success" 
+                  style={{ width: `${(totalPaid / (totalPaid + totalOutstanding)) * 100}%` }} 
+                />
+              </div>
+            </div>
+          )}
+        </div>
+
+        <Toolbar 
+          query={query} 
+          setQuery={setQuery} 
+          filter={filter} 
+          setFilter={setFilter} 
+          options={["Active", "Completed", "Foreclosed", "All"]} 
+        />
+
+        <button className="primary tactile spaced" onClick={() => openAdd("loan")}>
+          <Plus size={18} />Add EMI / Loan
+        </button>
+
+        <div className="loans-grid">
+          {loans.length ? loans.map((loan) => {
+            const nextDate = getNextUnpaidEmiDate(loan);
+            
+            let daysLeft = null;
+            let overdueDays = null;
+            if (nextDate) {
+              const diffTime = new Date(`${nextDate}T12:00:00`) - new Date(`${todayISO()}T12:00:00`);
+              const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+              if (diffDays >= 0) {
+                daysLeft = diffDays;
+              } else {
+                overdueDays = Math.abs(diffDays);
+              }
+            }
+
+            const percent = Math.round((amount(loan.completedMonths) / amount(loan.totalMonths)) * 100) || 0;
+
+            return (
+              <button 
+                key={loan.id} 
+                className={`loan-card record-card tactile ${selectedLoanId === loan.id ? "selected" : ""}`}
+                onClick={() => setSelectedLoanId(loan.id)}
+              >
+                <div className="loan-card-header">
+                  <div>
+                    <h3>{loan.title}</h3>
+                    {loan.bankName && <p className="bank-name">{loan.bankName}</p>}
+                  </div>
+                  <span className={`status-badge badge-${loan.status.toLowerCase()}`}>{loan.status}</span>
+                </div>
+                
+                <div className="loan-card-body">
+                  <div className="emi-amount-row">
+                    <span>Monthly EMI:</span>
+                    <strong>{rupee.format(amount(loan.monthlyPayment))}</strong>
+                  </div>
+                  
+                  <div className="progress-labels">
+                    <span>{loan.completedMonths} / {loan.totalMonths} months paid</span>
+                    <span>{percent}%</span>
+                  </div>
+                  <div className="progress-bar-track">
+                    <div className="progress-bar-fill" style={{ width: `${percent}%` }} />
+                  </div>
+
+                  {loan.status === "Active" && nextDate && (
+                    <div className="next-emi-info">
+                      <Bell size={14} className="next-emi-icon" />
+                      <span>
+                        {daysLeft === 0 ? "EMI due today!" : 
+                         daysLeft !== null ? `Next EMI: ${loan.emiDate ? nextDate.split("-")[2] : ""} (in ${daysLeft} days)` : 
+                         `EMI Overdue by ${overdueDays} days!`}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </button>
+            );
+          }) : <EmptyState text="No loans match this filter." />}
+        </div>
+      </div>
+
+      <div className="sub-panel loan-detail-panel">
+        {selectedLoan ? (
+          <div className="loan-details">
+            <div className="loan-details-header">
+              <h2>{selectedLoan.title}</h2>
+              {selectedLoan.bankName && <p className="bank-subtitle">{selectedLoan.bankName}</p>}
+              <span className={`status-badge badge-${selectedLoan.status.toLowerCase()}`}>{selectedLoan.status}</span>
+            </div>
+
+            <div className="loan-details-grid card-grid-2">
+              <div className="detail-stat">
+                <span>Monthly Payment</span>
+                <strong>{rupee.format(amount(selectedLoan.monthlyPayment))}</strong>
+              </div>
+              <div className="detail-stat">
+                <span>Total Term</span>
+                <strong>{selectedLoan.totalMonths} Months</strong>
+              </div>
+              <div className="detail-stat">
+                <span>Paid Months</span>
+                <strong>{selectedLoan.completedMonths} Months</strong>
+              </div>
+              <div className="detail-stat">
+                <span>Remaining Months</span>
+                <strong>{Math.max(0, amount(selectedLoan.totalMonths) - amount(selectedLoan.completedMonths))} Months</strong>
+              </div>
+              {selectedLoan.totalAmount && (
+                <div className="detail-stat">
+                  <span>Total Principal</span>
+                  <strong>{rupee.format(amount(selectedLoan.totalAmount))}</strong>
+                </div>
+              )}
+              {selectedLoan.emiDate && (
+                <div className="detail-stat">
+                  <span>EMI Day</span>
+                  <strong>Day {selectedLoan.emiDate}</strong>
+                </div>
+              )}
+              {selectedLoan.startDate && (
+                <div className="detail-stat">
+                  <span>Start Date</span>
+                  <strong>{formatDate(selectedLoan.startDate)}</strong>
+                </div>
+              )}
+              {selectedLoan.foreclosurePaidAmount && (
+                <div className="detail-stat highlight-stat">
+                  <span>Foreclosure Paid</span>
+                  <strong>{rupee.format(amount(selectedLoan.foreclosurePaidAmount))}</strong>
+                </div>
+              )}
+            </div>
+
+            {selectedLoan.notes && (
+              <div className="loan-details-notes">
+                <h4>Notes</h4>
+                <p>{selectedLoan.notes}</p>
+              </div>
+            )}
+
+            <div className="loan-actions-bar">
+              {selectedLoan.status === "Active" && (
+                <>
+                  <button 
+                    className="primary tactile" 
+                    onClick={() => handleMarkPaid(selectedLoan)}
+                  >
+                    <CheckCircle2 size={16} /> Mark Month Paid
+                  </button>
+                  <button 
+                    className="secondary tactile warn-button" 
+                    onClick={() => handleForeclose(selectedLoan)}
+                  >
+                    <ShieldCheck size={16} /> Foreclose Loan
+                  </button>
+                </>
+              )}
+              <button 
+                className="secondary tactile" 
+                onClick={() => setModal({ kind: "loan", item: selectedLoan })}
+              >
+                <Edit3 size={16} /> Edit
+              </button>
+              <button 
+                className="secondary tactile danger" 
+                onClick={() => remove("loans", selectedLoan.id, "loan", {
+                  apply: (current) => {
+                    setSelectedLoanId(null);
+                    return {
+                      ...current,
+                      loans: current.loans.filter(l => l.id !== selectedLoan.id)
+                    };
+                  }
+                })}
+              >
+                <Trash2 size={16} /> Delete
+              </button>
+            </div>
+
+            <div className="payment-history-section">
+              <h3>Payment Schedule / History</h3>
+              <div className="payment-history-list">
+                {Array.from({ length: amount(selectedLoan.totalMonths) }, (_, index) => {
+                  const emiNum = index + 1;
+                  let monthNameStr = `EMI #${emiNum}`;
+                  let monthYearStr = "";
+                  
+                  if (selectedLoan.startDate) {
+                    const start = new Date(`${selectedLoan.startDate}T12:00:00`);
+                    start.setMonth(start.getMonth() + index);
+                    monthYearStr = start.toLocaleDateString("en-IN", { month: "short", year: "numeric" });
+                    monthNameStr = `${monthYearStr} (EMI #${emiNum})`;
+                  }
+
+                  let isPaid = false;
+                  let monthKey = "";
+                  if (selectedLoan.startDate) {
+                    const start = new Date(`${selectedLoan.startDate}T12:00:00`);
+                    start.setMonth(start.getMonth() + index);
+                    monthKey = start.toISOString().slice(0, 7);
+                    isPaid = (selectedLoan.paidMonths || []).includes(monthKey);
+                  } else {
+                    isPaid = emiNum <= amount(selectedLoan.completedMonths);
+                  }
+
+                  const today = todayISO();
+                  const currentMonthKey = today.slice(0, 7);
+                  const isCurrentMonth = monthKey === currentMonthKey;
+
+                  return (
+                    <div className={`payment-history-row ${isPaid ? "paid" : "pending"} ${isCurrentMonth ? "current" : ""}`} key={emiNum}>
+                      <div className="payment-info">
+                        <strong>EMI #{emiNum}</strong>
+                        {monthYearStr && <span className="payment-date">{monthYearStr}</span>}
+                        {isCurrentMonth && <span className="current-badge">Current Month</span>}
+                      </div>
+                      <div className="payment-status-row">
+                        <span className={`status-text ${isPaid ? "text-success" : "text-muted"}`}>
+                          {isPaid ? "Paid" : "Pending"}
+                        </span>
+                        {!isPaid && isCurrentMonth && selectedLoan.status === "Active" && (
+                          <button 
+                            className="mini-pay-button tactile"
+                            onClick={() => handleMarkPaid(selectedLoan)}
+                          >
+                            Pay
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+          </div>
+        ) : (
+          <div className="empty-subpanel">
+            <Percent size={40} />
+            <p>Select a loan to view full payment history and actions.</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function SalaryView({ state, selectedSalary, setSelectedSalary, openAdd, setModal, remove }) {
   const active = state.salaries.find((salary) => salary.id === selectedSalary) || state.salaries[0];
   const linked = active ? state.salaryExpenses.filter((expense) => expense.salaryId === active.id) : [];
@@ -3449,6 +3967,30 @@ function SettingsView({ state, setState, setToast, requestNotifications, setModa
         <Toggle label="AI monthly summary" checked={state.settings.aiMonthlySummary} onChange={(value) => setSetting("aiMonthlySummary", value)} />
         <Toggle label="AI reminder suggestions" checked={state.settings.aiReminderSuggestions} onChange={(value) => setSetting("aiReminderSuggestions", value)} />
         <Toggle label="AI task breakdown" checked={state.settings.aiTaskBreakdown} onChange={(value) => setSetting("aiTaskBreakdown", value)} />
+        <div style={{ marginTop: "1rem", borderTop: "1px dashed var(--line)", paddingTop: "1rem" }}>
+          <Toggle label="Enable Local LLM (Ollama/LM Studio)" checked={state.settings.localLlmEnabled} onChange={(value) => setSetting("localLlmEnabled", value)} />
+          {state.settings.localLlmEnabled && (
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem", marginTop: "0.75rem" }}>
+              <label>Local LLM Endpoint URL
+                <input
+                  value={state.settings.localLlmUrl || "http://localhost:11434"}
+                  onChange={(e) => setSetting("localLlmUrl", e.target.value)}
+                  placeholder="e.g. http://localhost:11434 or Ngrok URL"
+                />
+              </label>
+              <label>Local Model Name
+                <input
+                  value={state.settings.localModelName || "llama3.2"}
+                  onChange={(e) => setSetting("localModelName", e.target.value)}
+                  placeholder="e.g. llama3.2, mistral, qwen2.5-coder"
+                />
+              </label>
+              <p className="helper-text" style={{ margin: 0 }}>
+                If enabled, LifePilot will attempt to route AI tasks (chat & summaries) directly to your local endpoint first. If it is offline or times out (1.5s), it will automatically fallback to Gemini.
+              </p>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="panel">
@@ -5779,6 +6321,7 @@ function Chart({ title, data, type = "bar" }) {
 function getInitialForm(kind, item, context = {}, state) {
   const baseDate = context.date || todayISO();
   const defaults = {
+    loan: { title: "", bankName: "", totalAmount: "", monthlyPayment: "", totalMonths: "", completedMonths: 0, emiDate: "", startDate: baseDate, status: "Active", notes: "", foreclosurePaidAmount: "", paidMonths: [] },
     task: { title: "", description: "", dueDate: baseDate, startTime: "", endTime: "", dueTime: nowTime(), todayOnly: false, priority: state.settings.defaultTaskPriority, category: "", status: "Pending", reminder: false, notes: "", subtasks: [] },
     reminder: { title: "", description: "", date: baseDate, time: state.settings.defaultReminderTime, repeat: "No repeat", priority: "Medium", notificationEnabled: true, status: "Active" },
     note: { title: "", content: "", date: baseDate, category: "", reminder: false, pinned: false },
@@ -5825,6 +6368,18 @@ function fieldsForKind(kind, state, form = {}) {
     { name: "notes", label: "Notes", type: "textarea", wide: true }
   ];
   return {
+    loan: [
+      { name: "title", label: "Loan Name", required: true },
+      { name: "bankName", label: "Bank / Lender Name" },
+      { name: "totalAmount", label: "Total Loan Amount", type: "number", min: 0 },
+      { name: "monthlyPayment", label: "Monthly EMI", type: "number", min: 0, required: true },
+      { name: "totalMonths", label: "Total Duration (Months)", type: "number", min: 1, required: true },
+      { name: "completedMonths", label: "EMIs Paid Till Now (Months)", type: "number", min: 0, required: true },
+      { name: "emiDate", label: "EMI Day of Month (Optional, 1-31)", type: "number", min: 1, max: 31 },
+      { name: "startDate", label: "Start Date (Optional)", type: "date" },
+      { name: "status", label: "Status", type: "select", options: ["Active", "Foreclosed", "Completed"] },
+      { name: "notes", label: "Notes", type: "textarea", wide: true }
+    ],
     task: [
       { name: "title", label: "Task title", required: true },
       { name: "description", label: "Description", type: "textarea", wide: true },
@@ -5972,7 +6527,9 @@ function fieldsForKind(kind, state, form = {}) {
 }
 
 function validateForm(kind, form) {
-  if (["task", "reminder", "note", "event", "expense", "bill", "salary", "salaryExpense", "projectTransaction"].includes(kind) && !form.title?.trim()) return "Title is required.";
+  if (["task", "reminder", "note", "event", "expense", "bill", "salary", "salaryExpense", "projectTransaction", "loan"].includes(kind) && !form.title?.trim()) return "Title is required.";
+  if (kind === "loan" && amount(form.monthlyPayment) <= 0) return "Monthly payment must be greater than zero.";
+  if (kind === "loan" && Number(form.totalMonths || 0) <= 0) return "Total months must be greater than zero.";
   if (kind === "project" && !form.name?.trim()) return "Project name is required.";
   if (kind === "category" && !form.name?.trim()) return "Category name is required.";
   if (kind === "credential" && !form.title?.trim()) return "Credential name is required.";
@@ -6017,6 +6574,12 @@ function normalizeForm(kind, form) {
       participants: mode === "Equal split" ? splitParticipants(form.participants) : []
     };
   }
+  if (kind === "loan") {
+    return {
+      ...form,
+      paidMonths: Array.isArray(form.paidMonths) ? form.paidMonths : []
+    };
+  }
   return form;
 }
 
@@ -6033,7 +6596,8 @@ function withAiDefaults(kind, data) {
     salaryExpense: { salaryId: "", title: "Salary expense", amount: 0, type: "Debit", category: "", date, paymentMethod: "UPI", notes: "" },
     project: { name: "Project", type: "Custom", description: "", startDate: date, endDate: date, budget: 0, participants: [], status: "Active", notes: "" },
     projectTransaction: { projectId: "", title: "Project transaction", amount: 0, type: "Debit", splitMode: "No split", category: "", date, time: nowTime(), paidBy: "", owedBy: "", participants: [], paymentMethod: "UPI", notes: "" },
-    category: { name: "Category", type: "Both", color: "#d8ff8f", icon: "spark" }
+    category: { name: "Category", type: "Both", color: "#d8ff8f", icon: "spark" },
+    loan: { title: "Loan", bankName: "", totalAmount: 0, monthlyPayment: 0, totalMonths: 1, completedMonths: 0, emiDate: null, startDate: date, status: "Active", notes: "", foreclosurePaidAmount: 0, paidMonths: [] }
   };
 
   return { ...(defaults[kind] || {}), ...data };
@@ -6082,7 +6646,8 @@ function collectionForKind(kind) {
     projectTransaction: "projectTransactions",
     projectSettlement: "projects",
     category: "categories",
-    credential: "credentials"
+    credential: "credentials",
+    loan: "loans"
   }[kind];
 }
 
@@ -6103,7 +6668,8 @@ function kindLabel(kind) {
     category: "Category",
     credential: "Credential",
     profile: "Profile",
-    participants: "Participants"
+    participants: "Participants",
+    loan: "EMI / Loan"
   }[kind] || "Item";
 }
 
@@ -6163,10 +6729,44 @@ function markersForDate(state, date) {
   if (state.projectTransactions.some((item) => item.date === date)) markers.push("project");
   if (state.projects.some((item) => item.startDate === date || item.endDate === date)) markers.push("project");
   if (isBirthday(state.profile, date)) markers.push("birthday");
+  
+  const dayOfMonth = new Date(`${date}T12:00:00`).getDate();
+  const yearMonth = date.slice(0, 7);
+  if ((state.loans || []).some((loan) => 
+    loan.status === "Active" && 
+    Number(loan.emiDate) === dayOfMonth && 
+    (!loan.startDate || date.slice(0, 7) >= loan.startDate.slice(0, 7)) &&
+    !(loan.paidMonths || []).includes(yearMonth)
+  )) {
+    markers.push("emi");
+  }
+  
   return markers;
 }
 
 function itemsForDate(state, date) {
+  const dayOfMonth = new Date(`${date}T12:00:00`).getDate();
+  const yearMonth = date.slice(0, 7);
+  const loanEmis = (state.loans || [])
+    .filter((loan) => 
+      loan.status === "Active" && 
+      Number(loan.emiDate) === dayOfMonth && 
+      (!loan.startDate || date.slice(0, 7) >= loan.startDate.slice(0, 7))
+    )
+    .map((loan) => {
+      const isPaid = (loan.paidMonths || []).includes(yearMonth);
+      return {
+        ...loan,
+        id: `${loan.id}-${yearMonth}`,
+        loanId: loan.id,
+        kind: "loan",
+        title: `${loan.title} EMI`,
+        amount: loan.monthlyPayment,
+        date: date,
+        status: isPaid ? "Paid" : "Pending"
+      };
+    });
+
   return {
     tasks: state.tasks.filter((item) => item.dueDate === date).map((item) => ({ ...item, kind: "task" })),
     reminders: state.reminders.filter((item) => item.date === date).map((item) => ({ ...item, kind: "reminder" })),
@@ -6174,6 +6774,7 @@ function itemsForDate(state, date) {
     notes: state.notes.filter((item) => item.date === date).map((item) => ({ ...item, kind: "note" })),
     dailyTransactions: state.expenses.filter((item) => item.date === date).map((item) => ({ ...item, kind: "expense" })),
     bills: state.bills.filter((item) => item.dueDate === date).map((item) => ({ ...item, title: item.title, date: item.dueDate, kind: "bill" })),
+    loans: loanEmis,
     salaries: state.salaries.filter((item) => item.receivedDate === date).map((item) => ({ ...item, title: item.title, date: item.receivedDate, kind: "salary" })),
     salaryExpenses: state.salaryExpenses.filter((item) => item.date === date).map((item) => ({ ...item, kind: "salaryExpense" })),
     projectTransactions: state.projectTransactions.filter((item) => item.date === date).map((item) => ({ ...item, kind: "projectTransaction" })),
@@ -6193,6 +6794,7 @@ function sectionLabel(key) {
     notes: "Notes",
     dailyTransactions: "Daily Credit and Debit",
     bills: "Bills Due",
+    loans: "EMI Payments Due",
     salaries: "Salary Credits",
     salaryExpenses: "Salary-Linked Expenses",
     projectTransactions: "Project Transactions",

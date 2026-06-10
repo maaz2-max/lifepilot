@@ -20,7 +20,8 @@ const ACTION_TYPES = [
   "project",
   "projectTransaction",
   "projectSettlement",
-  "category"
+  "category",
+  "loan"
 ];
 
 export const AI_JSON_REFERENCE = `{
@@ -204,6 +205,22 @@ export const AI_JSON_REFERENCE = `{
         "icon": "book"
       }
     },
+      "operation": "create",
+      "type": "loan",
+      "summary": "Add home loan EMI info",
+      "data": {
+        "title": "Home Loan",
+        "bankName": "SBI Bank",
+        "totalAmount": 5000000,
+        "monthlyPayment": 35000,
+        "totalMonths": 240,
+        "completedMonths": 12,
+        "emiDate": 5,
+        "startDate": "2025-06-01",
+        "status": "Active",
+        "notes": "SBI Maxgain home loan account"
+      }
+    },
     {
       "operation": "edit",
       "type": "expense",
@@ -267,6 +284,7 @@ function compactState(state) {
     salaryExpenses: take(state.salaryExpenses, ["id", "salaryId", "title", "amount", "type", "category", "date", "paymentMethod"]),
     projectTransactions: take(state.projectTransactions, ["id", "projectId", "title", "amount", "type", "category", "date", "time", "paidBy", "owedBy", "splitMode", "participants", "paymentMethod"]),
     gmailRecords: take(state.gmailRecords || [], ["id", "subject", "title", "amount", "type", "category", "date", "time", "paymentMethod", "notes", "accountReference"]),
+    loans: take(state.loans || [], ["id", "title", "bankName", "totalAmount", "monthlyPayment", "totalMonths", "completedMonths", "emiDate", "startDate", "status", "notes", "paidMonths", "foreclosurePaidAmount"]),
     pendingAiActions: (state.aiMessages || []).flatMap((message) =>
       (message.actions || [])
         .map((action, index) => ({
@@ -578,6 +596,8 @@ Rules:
 - If information is missing, make a reasonable draft and mention what can be edited before confirming.
 - If user asks about extracted Gmail transactions, read the 'gmailRecords' array. These are un-imported transactions. You can suggest creating daily/project expenses from them.
 - You have access to recent conversation history in this prompt, including the status of any actions you previously proposed (e.g. 'applied', 'cancelled', or 'Pending'). If the user confirmed or cancelled an action, acknowledge it accurately.
+- For loan and EMI actions, output type "loan". You can create, edit, delete active loans, record monthly EMI payments, or mark a loan foreclosed or completed.
+- If the user asks about their running loans or EMIs, look at the "loans" array, calculate paid/outstanding amounts, status, and summarize them.
 
 Allowed action types:
 ${ACTION_TYPES.join(", ")}
@@ -595,6 +615,7 @@ project: { name, type, description, startDate, endDate, budget, participants, st
 projectTransaction: { projectId, title, amount, type, category, date, time, paidBy, splitMode, owedBy, participants, paymentMethod, notes }
 projectSettlement: { projectId, projectName, from, to, amount, paymentType, paidAt }
 category: { name, type, color, icon }
+loan: { title, bankName, totalAmount, monthlyPayment, totalMonths, completedMonths, emiDate, startDate, status, notes, foreclosurePaidAmount }
 
 Output JSON shape:
 {
@@ -627,6 +648,40 @@ function extractJson(text) {
   }
 }
 
+async function callLocalLlm({ url, model, prompt }) {
+  const endpoint = `${url}/api/generate`;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 2000); // 2-second timeout
+
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: model || "llama3.2",
+        prompt: prompt,
+        stream: false,
+        options: {
+          temperature: 0.2
+        }
+      }),
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      throw new Error(`Local LLM returned status ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.response || "";
+  } catch (err) {
+    clearTimeout(timeoutId);
+    throw err;
+  }
+}
+
 export async function askGeminiAssistant({ state, model, message }) {
   const selectedModel = FREE_GEMINI_MODELS.some((entry) => entry.id === model)
     ? model
@@ -646,6 +701,29 @@ export async function askGeminiAssistant({ state, model, message }) {
   const promptBody = recentHistory
     ? `${systemPrompt(state)}\n\n--- Recent Conversation History ---\n${recentHistory}\n\nUser message: ${message}`
     : `${systemPrompt(state)}\n\nUser message: ${message}`;
+
+  if (state.settings?.localLlmEnabled) {
+    try {
+      const responseText = await callLocalLlm({
+        url: state.settings.localLlmUrl,
+        model: state.settings.localModelName,
+        prompt: promptBody
+      });
+      const parsed = extractJson(responseText);
+      return {
+        reply: parsed.reply || "I prepared a response.",
+        actions: Array.isArray(parsed.actions)
+          ? parsed.actions.filter((action) =>
+              ACTION_TYPES.includes(action.type) &&
+              ["create", "edit", "delete"].includes(action.operation || "create") &&
+              ((action.operation || "create") === "delete" ? action.id : action.data)
+            )
+          : []
+      };
+    } catch (err) {
+      console.warn("Local LLM failed for assistant chat, falling back to Gemini...", err);
+    }
+  }
 
   const response = await fetch("/api/ai", {
     method: "POST",
