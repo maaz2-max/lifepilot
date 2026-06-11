@@ -8960,6 +8960,8 @@ function AutoTrackView({ state, setState, upsert, remove, setToast, setCarLoadin
   const [editor, setEditor] = useState(null); // { kind: 'vehicle'|'fuelLog'|'serviceLog'|'chargingLog'|'vehicleReminder'|'vehicleDocument', item: null|object }
   const [importText, setImportText] = useState("");
   const [importOpen, setImportOpen] = useState(false);
+  const [logFilterId, setLogFilterId] = useState("all");
+  const [serviceFilterId, setServiceFilterId] = useState("all");
 
   // Mileage Calculator State
   const [calcVehicleId, setCalcVehicleId] = useState("");
@@ -9002,9 +9004,26 @@ function AutoTrackView({ state, setState, upsert, remove, setToast, setCarLoadin
       serviceCost,
       chargingCost,
       totalCost,
-      autoMileage
+      calculatedMileage: autoMileage,
     };
   });
+
+  const getGroupedLogs = (logs, filterId) => {
+    let filtered = logs || [];
+    if (filterId !== "all") {
+      filtered = filtered.filter(l => l.vehicleId === filterId);
+    }
+    filtered = [...filtered].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+    
+    const groups = {};
+    filtered.forEach(l => {
+      const d = new Date(l.date);
+      const monthYear = isNaN(d) ? "Unknown Date" : d.toLocaleString('default', { month: 'long', year: 'numeric' });
+      if (!groups[monthYear]) groups[monthYear] = [];
+      groups[monthYear].push(l);
+    });
+    return groups;
+  };
 
   // Calculate Interactive Mileage
   const handleCalculateMileage = (e) => {
@@ -9117,7 +9136,6 @@ function AutoTrackView({ state, setState, upsert, remove, setToast, setCarLoadin
               </button>
             ))}
           </div>
-          <button className="primary tactile" onClick={() => setImportOpen(true)}>Import JSON</button>
         </div>
       </div>
 
@@ -9296,54 +9314,64 @@ function AutoTrackView({ state, setState, upsert, remove, setToast, setCarLoadin
       {/* REFUEL & CHARGE TAB */}
       {tab === "logs" && (
         <>
+          <div className="autotrack-nav-container" style={{ marginBottom: "1rem", justifyContent: "flex-end" }}>
+             <select value={logFilterId} onChange={(e) => setLogFilterId(e.target.value)} style={{ width: "auto", minWidth: "150px" }}>
+               <option value="all">All Vehicles</option>
+               {vehicles.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+             </select>
+          </div>
+
           {/* Refuel Logs (Petrol/Diesel) */}
-          <div className="panel">
+          <div className="panel" style={{ marginBottom: "1.5rem" }}>
             <SectionHeader
               title="Fuel Refill Logs (Combustion)"
               action={<button className="primary tactile" onClick={() => setEditor({ kind: "fuelLog", item: null })}>+ Add Fuel Log</button>}
             />
-            <div className="autotrack-table-container" style={{ marginTop: "1rem" }}>
-              <table className="autotrack-table">
-                <thead>
-                  <tr>
-                    <th>Vehicle</th>
-                    <th>Date</th>
-                    <th>Odometer</th>
-                    <th>Litres</th>
-                    <th>Price/L</th>
-                    <th>Amount</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(state.fuelLogs || []).length === 0 ? (
-                    <tr>
-                      <td colSpan="7" style={{ textAlign: "center", color: "var(--muted)", padding: "1.5rem" }}>No refuel logs recorded yet.</td>
-                    </tr>
-                  ) : (
-                    (state.fuelLogs || []).map((log) => {
-                      const v = vehicles.find((x) => x.id === log.vehicleId);
-                      return (
-                        <tr key={log.id}>
-                          <td><strong>{v ? v.name : "Unknown"}</strong></td>
-                          <td>{formatDate(log.date?.slice(0, 10))}<br /><small>{log.date?.slice(11)}</small></td>
-                          <td>{log.odometer ? `${log.odometer.toLocaleString()} km` : "-"}</td>
-                          <td>{log.litres} L</td>
-                          <td>₹{log.pricePerLitre}</td>
-                          <td><strong>₹{log.amount}</strong></td>
-                          <td>
-                            <div className="autotrack-flex-row" style={{ gap: "0.25rem", flexWrap: "nowrap" }}>
-                              <button className="icon-button tactile" onClick={() => setEditor({ kind: "fuelLog", item: log })}><Edit3 size={15} /></button>
-                              <button className="icon-button tactile danger" onClick={() => remove("fuelLogs", log.id, "fuel log")}><Trash2 size={15} /></button>
-                            </div>
-                          </td>
+            {Object.entries(getGroupedLogs(state.fuelLogs, logFilterId)).length === 0 ? (
+              <p style={{ textAlign: "center", color: "var(--muted)", padding: "1.5rem" }}>No refuel logs recorded yet.</p>
+            ) : (
+              Object.entries(getGroupedLogs(state.fuelLogs, logFilterId)).map(([month, logs]) => (
+                <div key={month} style={{ marginTop: "1rem" }}>
+                  <h4 style={{ margin: "0 0 0.5rem 0", color: "var(--muted)", textTransform: "uppercase", fontSize: "0.85rem", letterSpacing: "0.5px" }}>{month}</h4>
+                  <div className="autotrack-table-container">
+                    <table className="autotrack-table">
+                      <thead>
+                        <tr>
+                          <th>Vehicle</th>
+                          <th>Date</th>
+                          <th>Odometer</th>
+                          <th>Litres</th>
+                          <th>Price/L</th>
+                          <th>Amount</th>
+                          <th>Actions</th>
                         </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
+                      </thead>
+                      <tbody>
+                        {logs.map((log) => {
+                          const v = vehicles.find((x) => x.id === log.vehicleId);
+                          return (
+                            <tr key={log.id}>
+                              <td data-label="Vehicle"><strong>{v ? v.name : "Unknown"}</strong></td>
+                              <td data-label="Date">{formatDate(log.date?.slice(0, 10))} <small>{log.date?.slice(11)}</small></td>
+                              <td data-label="Odometer">{log.odometer ? `${log.odometer.toLocaleString()} km` : "-"}</td>
+                              <td data-label="Litres">{log.litres} L</td>
+                              <td data-label="Price/L">₹{log.pricePerLitre}</td>
+                              <td data-label="Amount"><strong>₹{log.amount}</strong></td>
+                              <td data-label="Actions">
+                                <div className="autotrack-flex-row" style={{ gap: "0.25rem", flexWrap: "nowrap" }}>
+                                  <button className="icon-button tactile" onClick={() => setEditor({ kind: "fuelLog", item: log })}><Edit3 size={15} /></button>
+                                  <button className="icon-button tactile danger" onClick={() => remove("fuelLogs", log.id, "fuel log")}><Trash2 size={15} /></button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
 
           {/* Charging Logs (Electric) */}
@@ -9352,46 +9380,49 @@ function AutoTrackView({ state, setState, upsert, remove, setToast, setCarLoadin
               title="EV Charging Logs (Electric)"
               action={<button className="primary tactile" onClick={() => setEditor({ kind: "chargingLog", item: null })}>+ Add Charging Log</button>}
             />
-            <div className="autotrack-table-container" style={{ marginTop: "1rem" }}>
-              <table className="autotrack-table">
-                <thead>
-                  <tr>
-                    <th>Vehicle</th>
-                    <th>Date</th>
-                    <th>Location/Type</th>
-                    <th>Cost</th>
-                    <th>Notes</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(state.chargingLogs || []).length === 0 ? (
-                    <tr>
-                      <td colSpan="6" style={{ textAlign: "center", color: "var(--muted)", padding: "1.5rem" }}>No charging logs recorded yet.</td>
-                    </tr>
-                  ) : (
-                    (state.chargingLogs || []).map((log) => {
-                      const v = vehicles.find((x) => x.id === log.vehicleId);
-                      return (
-                        <tr key={log.id}>
-                          <td><strong>{v ? v.name : "Unknown"}</strong></td>
-                          <td>{formatDate(log.date?.slice(0, 10))}<br /><small>{log.date?.slice(11)}</small></td>
-                          <td><span className="badge-tag">{log.chargingType}</span></td>
-                          <td><strong>₹{log.amountSpent}</strong></td>
-                          <td style={{ maxWidth: "150px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={log.notes}>{log.notes || "-"}</td>
-                          <td>
-                            <div className="autotrack-flex-row" style={{ gap: "0.25rem", flexWrap: "nowrap" }}>
-                              <button className="icon-button tactile" onClick={() => setEditor({ kind: "chargingLog", item: log })}><Edit3 size={15} /></button>
-                              <button className="icon-button tactile danger" onClick={() => remove("chargingLogs", log.id, "charging log")}><Trash2 size={15} /></button>
-                            </div>
-                          </td>
+            {Object.entries(getGroupedLogs(state.chargingLogs, logFilterId)).length === 0 ? (
+              <p style={{ textAlign: "center", color: "var(--muted)", padding: "1.5rem" }}>No charging logs recorded yet.</p>
+            ) : (
+              Object.entries(getGroupedLogs(state.chargingLogs, logFilterId)).map(([month, logs]) => (
+                <div key={month} style={{ marginTop: "1rem" }}>
+                  <h4 style={{ margin: "0 0 0.5rem 0", color: "var(--muted)", textTransform: "uppercase", fontSize: "0.85rem", letterSpacing: "0.5px" }}>{month}</h4>
+                  <div className="autotrack-table-container">
+                    <table className="autotrack-table">
+                      <thead>
+                        <tr>
+                          <th>Vehicle</th>
+                          <th>Date</th>
+                          <th>Location/Type</th>
+                          <th>Cost</th>
+                          <th>Notes</th>
+                          <th>Actions</th>
                         </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
+                      </thead>
+                      <tbody>
+                        {logs.map((log) => {
+                          const v = vehicles.find((x) => x.id === log.vehicleId);
+                          return (
+                            <tr key={log.id}>
+                              <td data-label="Vehicle"><strong>{v ? v.name : "Unknown"}</strong></td>
+                              <td data-label="Date">{formatDate(log.date?.slice(0, 10))} <small>{log.date?.slice(11)}</small></td>
+                              <td data-label="Location/Type"><span className="badge-tag">{log.chargingType}</span></td>
+                              <td data-label="Cost"><strong>₹{log.amountSpent}</strong></td>
+                              <td data-label="Notes" style={{ maxWidth: "150px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={log.notes}>{log.notes || "-"}</td>
+                              <td data-label="Actions">
+                                <div className="autotrack-flex-row" style={{ gap: "0.25rem", flexWrap: "nowrap" }}>
+                                  <button className="icon-button tactile" onClick={() => setEditor({ kind: "chargingLog", item: log })}><Edit3 size={15} /></button>
+                                  <button className="icon-button tactile danger" onClick={() => remove("chargingLogs", log.id, "charging log")}><Trash2 size={15} /></button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </>
       )}
@@ -9399,52 +9430,61 @@ function AutoTrackView({ state, setState, upsert, remove, setToast, setCarLoadin
       {/* SERVICE LOGS TAB */}
       {tab === "service" && (
         <div className="panel span-2">
-          <SectionHeader
-            title="Service & Repair History"
-            action={<button className="primary tactile" onClick={() => setEditor({ kind: "serviceLog", item: null })}>+ Add Service Record</button>}
-          />
-          <div className="autotrack-table-container" style={{ marginTop: "1rem" }}>
-            <table className="autotrack-table">
-              <thead>
-                <tr>
-                  <th>Vehicle</th>
-                  <th>Date</th>
-                  <th>Service Type</th>
-                  <th>Odometer Reading</th>
-                  <th>Expense Amount</th>
-                  <th>Work Summary / Notes</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(state.serviceLogs || []).length === 0 ? (
-                  <tr>
-                    <td colSpan="7" style={{ textAlign: "center", color: "var(--muted)", padding: "2rem" }}>No service records found.</td>
-                  </tr>
-                ) : (
-                  (state.serviceLogs || []).map((log) => {
-                    const v = vehicles.find((x) => x.id === log.vehicleId);
-                    return (
-                      <tr key={log.id}>
-                        <td><strong>{v ? v.name : "Unknown"}</strong></td>
-                        <td>{formatDate(log.date)}</td>
-                        <td><span className="badge-tag" style={{ background: "var(--lavender)" }}>{log.serviceType}</span></td>
-                        <td>{log.odometer ? `${log.odometer.toLocaleString()} km` : "-"}</td>
-                        <td><strong>₹{log.expense.toLocaleString()}</strong></td>
-                        <td style={{ fontSize: "0.85rem", maxWidth: "250px" }}>{log.notes || "-"}</td>
-                        <td>
-                          <div className="autotrack-flex-row" style={{ gap: "0.25rem", flexWrap: "nowrap" }}>
-                            <button className="icon-button tactile" onClick={() => setEditor({ kind: "serviceLog", item: log })}><Edit3 size={15} /></button>
-                            <button className="icon-button tactile danger" onClick={() => remove("serviceLogs", log.id, "service record")}><Trash2 size={15} /></button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
+          <div className="autotrack-nav-container" style={{ marginBottom: "1rem", justifyContent: "space-between", alignItems: "flex-end" }}>
+            <SectionHeader
+              title="Service & Repair History"
+              action={<button className="primary tactile" onClick={() => setEditor({ kind: "serviceLog", item: null })}>+ Add Service Record</button>}
+            />
+            <select value={serviceFilterId} onChange={(e) => setServiceFilterId(e.target.value)} style={{ width: "auto", minWidth: "150px", marginBottom: "0.5rem" }}>
+              <option value="all">All Vehicles</option>
+              {vehicles.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+            </select>
           </div>
+          {Object.entries(getGroupedLogs(state.serviceLogs, serviceFilterId)).length === 0 ? (
+            <p style={{ textAlign: "center", color: "var(--muted)", padding: "2rem" }}>No service records found.</p>
+          ) : (
+            Object.entries(getGroupedLogs(state.serviceLogs, serviceFilterId)).map(([month, logs]) => (
+              <div key={month} style={{ marginTop: "1.5rem" }}>
+                <h4 style={{ margin: "0 0 0.5rem 0", color: "var(--muted)", textTransform: "uppercase", fontSize: "0.85rem", letterSpacing: "0.5px" }}>{month}</h4>
+                <div className="autotrack-table-container">
+                  <table className="autotrack-table">
+                    <thead>
+                      <tr>
+                        <th>Vehicle</th>
+                        <th>Date</th>
+                        <th>Service Type</th>
+                        <th>Odometer Reading</th>
+                        <th>Expense Amount</th>
+                        <th>Work Summary / Notes</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {logs.map((log) => {
+                        const v = vehicles.find((x) => x.id === log.vehicleId);
+                        return (
+                          <tr key={log.id}>
+                            <td data-label="Vehicle"><strong>{v ? v.name : "Unknown"}</strong></td>
+                            <td data-label="Date">{formatDate(log.date)}</td>
+                            <td data-label="Service Type"><span className="badge-tag" style={{ background: "var(--lavender)" }}>{log.serviceType}</span></td>
+                            <td data-label="Odometer">{log.odometer ? `${log.odometer.toLocaleString()} km` : "-"}</td>
+                            <td data-label="Expense"><strong>₹{log.expense.toLocaleString()}</strong></td>
+                            <td data-label="Notes" style={{ fontSize: "0.85rem", maxWidth: "250px" }}>{log.notes || "-"}</td>
+                            <td data-label="Actions">
+                              <div className="autotrack-flex-row" style={{ gap: "0.25rem", flexWrap: "nowrap" }}>
+                                <button className="icon-button tactile" onClick={() => setEditor({ kind: "serviceLog", item: log })}><Edit3 size={15} /></button>
+                                <button className="icon-button tactile danger" onClick={() => remove("serviceLogs", log.id, "service record")}><Trash2 size={15} /></button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))
+          )}
         </div>
       )}
 

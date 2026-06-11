@@ -5161,10 +5161,11 @@ label {
 
 /* AutoTrack Tables */
 .autotrack-table-container {
-  overflow-x: auto;
-  border: 2px solid var(--ink);
-  border-radius: 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
   background: var(--paper);
+  box-shadow: var(--shadow);
+  overflow: hidden;
 }
 .autotrack-table {
   width: 100%;
@@ -5175,16 +5176,64 @@ label {
   background: var(--cream);
   color: var(--ink);
   font-weight: 800;
-  padding: 0.8rem 1rem;
-  border-bottom: 2px solid var(--ink);
+  padding: 0.9rem 1rem;
+  border-bottom: 2px solid var(--line);
 }
 .autotrack-table td {
-  padding: 0.8rem 1rem;
+  padding: 0.9rem 1rem;
   border-bottom: 1px solid var(--line);
   color: var(--ink);
+  transition: background 150ms ease;
+}
+.autotrack-table tr:hover td {
+  background: rgba(0,0,0,0.02);
 }
 .autotrack-table tr:last-child td {
   border-bottom: none;
+}
+
+@media (max-width: 720px) {
+  .autotrack-table-container {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    overflow: visible;
+  }
+  .autotrack-table, .autotrack-table tbody, .autotrack-table tr, .autotrack-table td {
+    display: block;
+    width: 100%;
+  }
+  .autotrack-table thead {
+    display: none;
+  }
+  .autotrack-table tr {
+    margin-bottom: 1rem;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    box-shadow: var(--shadow);
+    padding: 0.25rem 0;
+  }
+  .autotrack-table td {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.6rem 1rem;
+    border-bottom: 1px solid rgba(0,0,0,0.04);
+    text-align: right;
+  }
+  .autotrack-table td::before {
+    content: attr(data-label);
+    font-weight: 700;
+    color: var(--muted);
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    text-align: left;
+    margin-right: 1rem;
+  }
+  .autotrack-table td:last-child {
+    border-bottom: none;
+  }
 }
 
 /* Modals & Overlays */
@@ -5332,11 +5381,9 @@ label {
 .autotrack-tab-list {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  overflow-x: auto;
-  scrollbar-width: none;
-  -webkit-overflow-scrolling: touch;
-  flex-wrap: nowrap;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: flex-start;
   min-width: 0;
   flex: 1;
 }
