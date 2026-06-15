@@ -10301,7 +10301,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
     return sessionStorage.getItem(`lifepilot.project.${projectId}.name`) || "";
   });
 
-  const [enteredPin, setEnteredPin] = useState("2002"); // default prefill
+  const [enteredPin, setEnteredPin] = useState(""); // empty by default
   const [enteredName, setEnteredName] = useState("");
   const [wrongPinAttempts, setWrongPinAttempts] = useState(0);
   const [cooldownRemaining, setCooldownRemaining] = useState(0);
@@ -10326,11 +10326,17 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [categoryFilter, setCategoryFilter] = useState("All");
   const [participantFilter, setParticipantFilter] = useState("All");
+  const [searchQuery, setSearchQuery] = useState("");
 
   // Add Form Modals
   const [showAddExpense, setShowAddExpense] = useState(false);
   const [showAddTask, setShowAddTask] = useState(false);
   const [showAddDoc, setShowAddDoc] = useState(false);
+
+  // Loading indicator states
+  const [savingExpense, setSavingExpense] = useState(false);
+  const [savingTask, setSavingTask] = useState(false);
+  const [sharingDoc, setSharingDoc] = useState(false);
 
   // Welcome message banner
   const [welcomeMessage, setWelcomeMessage] = useState(null);
@@ -10602,26 +10608,32 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
       return;
     }
 
+    setSavingExpense(true);
+    const expenseId = "projectTransaction-" + Math.random().toString(36).substring(2, 11);
+    const finalPaidBy = expForm.paidBy || displayName;
+    const newExpense = {
+      id: expenseId,
+      project_id: projectId,
+      title: expForm.title.trim(),
+      amount: Number(expForm.amount),
+      category: expForm.category,
+      date: expForm.date,
+      time: expForm.time || "",
+      paid_by: finalPaidBy,
+      owed_by: expForm.splitMode === "Direct owed" ? expForm.owedBy : "",
+      participants: expForm.splitMode === "Equal split" ? expForm.participants : [],
+      payment_method: expForm.paymentMethod || "UPI",
+      notes: expForm.notes || "",
+      created_by: displayName,
+      created_at: new Date().toISOString()
+    };
+
+    // Optimistically update the UI immediately
+    setExpenses(prev => [newExpense, ...prev]);
+    setShowAddExpense(false);
+
     try {
-      const expenseId = "projectTransaction-" + Math.random().toString(36).substring(2, 11);
-      const finalPaidBy = expForm.paidBy || displayName;
-
-      await upsertCloudExpense({
-        id: expenseId,
-        project_id: projectId,
-        title: expForm.title.trim(),
-        amount: Number(expForm.amount),
-        category: expForm.category,
-        date: expForm.date,
-        time: expForm.time || "",
-        paid_by: finalPaidBy,
-        owed_by: expForm.splitMode === "Direct owed" ? expForm.owedBy : "",
-        participants: expForm.splitMode === "Equal split" ? expForm.participants : [],
-        payment_method: expForm.paymentMethod || "UPI",
-        notes: expForm.notes || "",
-        created_by: displayName
-      });
-
+      await upsertCloudExpense(newExpense);
       await addCloudActivity(
         projectId,
         "add_expense",
@@ -10644,7 +10656,6 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
         }
       }
 
-      setShowAddExpense(false);
       setToast("Expense added!");
       setExpForm({
         title: "",
@@ -10660,6 +10671,10 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
       });
     } catch (err) {
       setToast("Failed to add expense: " + err.message);
+      // Re-fetch latest from database on failure
+      getCloudExpenses(projectId).then(setExpenses).catch(console.error);
+    } finally {
+      setSavingExpense(false);
     }
   };
 
@@ -10669,6 +10684,21 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
       setToast("Title and URL are required.");
       return;
     }
+    setSharingDoc(true);
+    const docId = "doc-" + Math.random().toString(36).substring(2, 11);
+    const newDoc = {
+      id: docId,
+      project_id: projectId,
+      title: docForm.title.trim(),
+      url: docForm.url.trim(),
+      created_by: displayName,
+      created_at: new Date().toISOString()
+    };
+
+    // Optimistic update
+    setDocuments(prev => [...prev, newDoc]);
+    setShowAddDoc(false);
+
     try {
       await addCloudDocument(projectId, docForm.title.trim(), docForm.url.trim(), displayName);
       await addCloudActivity(
@@ -10677,11 +10707,13 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
         `${displayName} shared drive document "${docForm.title.trim()}"`,
         displayName
       );
-      setShowAddDoc(false);
       setToast("Document shared!");
       setDocForm({ title: "", url: "" });
     } catch (err) {
       setToast("Failed to share document: " + err.message);
+      getCloudDocuments(projectId).then(setDocuments).catch(console.error);
+    } finally {
+      setSharingDoc(false);
     }
   };
 
@@ -10691,30 +10723,40 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
       setToast("Title and due date are required.");
       return;
     }
+    setSavingTask(true);
+    const taskId = "task-" + Math.random().toString(36).substring(2, 11);
+    const newTask = {
+      id: taskId,
+      project_id: projectId,
+      title: taskForm.title.trim(),
+      due_date: taskForm.dueDate,
+      due_time: taskForm.dueTime || "",
+      status: "Pending",
+      priority: taskForm.priority,
+      notes: taskForm.notes || "",
+      created_by: displayName,
+      created_at: new Date().toISOString()
+    };
+
+    // Optimistic update
+    setTasks(prev => [...prev, newTask]);
+    setShowAddTask(false);
+
     try {
-      const taskId = "task-" + Math.random().toString(36).substring(2, 11);
-      await upsertCloudTask({
-        id: taskId,
-        project_id: projectId,
-        title: taskForm.title.trim(),
-        due_date: taskForm.dueDate,
-        due_time: taskForm.dueTime || "",
-        status: "Pending",
-        priority: taskForm.priority,
-        notes: taskForm.notes || "",
-        created_by: displayName
-      });
+      await upsertCloudTask(newTask);
       await addCloudActivity(
         projectId,
         "add_task",
         `${displayName} added task reminder: "${taskForm.title.trim()}"`,
         displayName
       );
-      setShowAddTask(false);
       setToast("Reminder task added!");
       setTaskForm({ title: "", dueDate: todayISO(), dueTime: "", priority: "Medium", notes: "" });
     } catch (err) {
       setToast("Failed to add task: " + err.message);
+      getCloudTasks(projectId).then(setTasks).catch(console.error);
+    } finally {
+      setSavingTask(false);
     }
   };
 
@@ -10731,11 +10773,13 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
 
   const handleToggleTask = async (taskItem) => {
     const nextStatus = taskItem.status === "Completed" ? "Pending" : "Completed";
+    const updatedTask = { ...taskItem, status: nextStatus };
+
+    // Optimistic update
+    setTasks(prev => prev.map(t => t.id === taskItem.id ? updatedTask : t));
+
     try {
-      await upsertCloudTask({
-        ...taskItem,
-        status: nextStatus
-      });
+      await upsertCloudTask(updatedTask);
       await addCloudActivity(
         projectId,
         "toggle_task",
@@ -10745,10 +10789,13 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
       setToast(`Task marked as ${nextStatus}`);
     } catch (err) {
       setToast("Failed to update task: " + err.message);
+      getCloudTasks(projectId).then(setTasks).catch(console.error);
     }
   };
 
   const handleDeleteTask = async (taskId, taskTitle) => {
+    // Optimistic delete
+    setTasks(prev => prev.filter(t => t.id !== taskId));
     try {
       await deleteCloudTask(taskId);
       await addCloudActivity(
@@ -10760,10 +10807,13 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
       setToast("Task deleted");
     } catch (err) {
       setToast("Failed to delete task: " + err.message);
+      getCloudTasks(projectId).then(setTasks).catch(console.error);
     }
   };
 
   const handleDeleteDoc = async (docId, docTitle) => {
+    // Optimistic delete
+    setDocuments(prev => prev.filter(d => d.id !== docId));
     try {
       await deleteCloudDocument(docId);
       await addCloudActivity(
@@ -10775,10 +10825,13 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
       setToast("Document link deleted");
     } catch (err) {
       setToast("Failed to delete document: " + err.message);
+      getCloudDocuments(projectId).then(setDocuments).catch(console.error);
     }
   };
 
   const handleDeleteExpense = async (expId, expTitle) => {
+    // Optimistic delete
+    setExpenses(prev => prev.filter(e => e.id !== expId));
     try {
       await deleteCloudExpense(expId);
       await addCloudActivity(
@@ -10790,6 +10843,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
       setToast("Expense deleted");
     } catch (err) {
       setToast("Failed to delete: " + err.message);
+      getCloudExpenses(projectId).then(setExpenses).catch(console.error);
     }
   };
 
@@ -10804,7 +10858,30 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
   // Filtered expenses
   const filteredExpenses = expenses
     .filter(item => categoryFilter === "All" || item.category === categoryFilter)
-    .filter(item => participantFilter === "All" || item.paid_by === participantFilter);
+    .filter(item => participantFilter === "All" || item.paid_by === participantFilter)
+    .filter(item => {
+      if (!searchQuery.trim()) return true;
+      const q = searchQuery.toLowerCase();
+      return (
+        item.title.toLowerCase().includes(q) ||
+        (item.notes || "").toLowerCase().includes(q) ||
+        item.category.toLowerCase().includes(q) ||
+        item.paid_by.toLowerCase().includes(q)
+      );
+    });
+
+  // Calculate project split summary dynamically
+  const mappedExpensesForSplit = expenses.map(e => ({
+    ...e,
+    paidBy: e.paid_by,
+    splitMode: e.participants && e.participants.length > 0 ? "Equal split" : "No split",
+    participants: e.participants || []
+  }));
+  const mappedProjectForSplit = {
+    participants: participantNamesList,
+    paidSettlements: project?.paid_settlements || []
+  };
+  const splitSummary = projectSplitSummary(mappedProjectForSplit, mappedExpensesForSplit);
 
   // Categories list
   const categoriesOptions = ["Food", "Travel", "Bills", "Health", "Shopping", "Entertainment", "Custom"];
@@ -10902,30 +10979,53 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                 <label style={{ display: "block", marginBottom: "0.5rem", fontWeight: "800", fontSize: "0.85rem", color: "var(--ink)", textAlign: "left" }}>
                   Who are you? Select your name:
                 </label>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(90px, 1fr))", gap: "0.5rem", maxHeight: "120px", overflowY: "auto", padding: "4px", marginBottom: "0.5rem", border: "1px solid var(--line, #e2d9c2)", borderRadius: "10px", background: "rgba(0,0,0,0.01)" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(100px, 1fr))", gap: "0.6rem", maxHeight: "180px", overflowY: "auto", padding: "0.5rem", marginBottom: "0.5rem", border: "2px solid var(--line, #111111)", borderRadius: "16px", background: "var(--cream, #fffdf7)" }}>
                   {roomParticipants.map((p) => {
                     const isSel = enteredName === p.name && !showCustomNameInput;
+                    const initials = p.name.split(" ").map(n => n[0]).join("").substring(0, 2).toUpperCase() || "?";
                     return (
                       <button
                         key={p.id}
                         type="button"
                         className={`secondary tactile ${isSel ? "active" : ""}`}
                         style={{
-                          padding: "0.45rem",
+                          padding: "0.5rem 0.35rem",
                           fontSize: "0.82rem",
-                          border: isSel ? "2px solid var(--brand, #6f68d8)" : "1px solid var(--line, #e2d9c2)",
-                          background: isSel ? "rgba(111, 104, 216, 0.12)" : "var(--paper, #fffdf7)",
+                          border: isSel ? "2px solid var(--brand, #6f68d8)" : "2px solid var(--line, #e2d9c2)",
+                          background: isSel ? "rgba(111, 104, 216, 0.08)" : "var(--paper, #ffffff)",
                           color: "var(--ink)",
-                          borderRadius: "8px",
-                          fontWeight: isSel ? "800" : "500",
-                          transition: "all 0.2s ease"
+                          borderRadius: "12px",
+                          fontWeight: isSel ? "800" : "600",
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: "center",
+                          gap: "0.3rem",
+                          transition: "all 0.15s ease",
+                          cursor: "pointer"
                         }}
                         onClick={() => {
                           setEnteredName(p.name);
                           setShowCustomNameInput(false);
                         }}
                       >
-                        {p.name}
+                        <div style={{
+                          width: "32px",
+                          height: "32px",
+                          borderRadius: "50%",
+                          background: isSel ? "var(--brand, #6f68d8)" : "rgba(0,0,0,0.06)",
+                          color: isSel ? "#ffffff" : "var(--ink)",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          fontWeight: "800",
+                          fontSize: "0.75rem",
+                          border: "1px solid var(--line)"
+                        }}>
+                          {initials}
+                        </div>
+                        <span style={{ textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap", width: "100%", textAlign: "center" }}>
+                          {p.name}
+                        </span>
                       </button>
                     );
                   })}
@@ -10933,21 +11033,41 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                     type="button"
                     className={`secondary tactile ${showCustomNameInput ? "active" : ""}`}
                     style={{
-                      padding: "0.45rem",
+                      padding: "0.5rem 0.35rem",
                       fontSize: "0.82rem",
-                      border: showCustomNameInput ? "2px solid var(--brand, #6f68d8)" : "1px solid var(--line, #e2d9c2)",
-                      background: showCustomNameInput ? "rgba(111, 104, 216, 0.12)" : "var(--paper, #fffdf7)",
+                      border: showCustomNameInput ? "2px solid var(--brand, #6f68d8)" : "2px solid var(--line, #e2d9c2)",
+                      background: showCustomNameInput ? "rgba(111, 104, 216, 0.08)" : "var(--paper, #ffffff)",
                       color: "var(--ink)",
-                      borderRadius: "8px",
-                      fontWeight: showCustomNameInput ? "800" : "500",
-                      transition: "all 0.2s ease"
+                      borderRadius: "12px",
+                      fontWeight: showCustomNameInput ? "800" : "600",
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      gap: "0.3rem",
+                      transition: "all 0.15s ease",
+                      cursor: "pointer"
                     }}
                     onClick={() => {
                       setEnteredName("");
                       setShowCustomNameInput(true);
                     }}
                   >
-                    ✏️ Other
+                    <div style={{
+                      width: "32px",
+                      height: "32px",
+                      borderRadius: "50%",
+                      background: showCustomNameInput ? "var(--brand, #6f68d8)" : "rgba(0,0,0,0.06)",
+                      color: showCustomNameInput ? "#ffffff" : "var(--ink)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontWeight: "800",
+                      fontSize: "1.1rem",
+                      border: "1px solid var(--line)"
+                    }}>
+                      +
+                    </div>
+                    <span>Other</span>
                   </button>
                 </div>
                 {showCustomNameInput && (
@@ -11117,19 +11237,115 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                   <button className="secondary tactile" onClick={() => setShowAddDoc(true)}><Plus size={18} />Share Drive Doc</button>
                 </div>
 
-                {/* TIMELINE SUMMARY */}
+                {/* RECENT TRANSACTIONS */}
                 <div className="panel">
-                  <SectionHeader title="Recent Room Activities" />
+                  <SectionHeader title="Recent Transactions" action={<button className="secondary tactile" style={{ padding: "2px 8px", fontSize: "0.75rem" }} onClick={() => setActiveTab("expenses")}>View All</button>} />
                   <div style={{ display: "grid", gap: "0.65rem", marginTop: "0.5rem" }}>
-                    {activities.slice(0, 4).map(act => (
-                      <div key={act.id} style={{ display: "flex", justifyContent: "space-between", fontSize: "0.88rem", paddingBottom: "0.45rem", borderBottom: "1px dashed rgba(0,0,0,0.06)" }}>
-                        <span>{act.description}</span>
-                        <span style={{ color: "var(--muted)", fontSize: "0.78rem" }}>
-                          {new Date(act.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </span>
+                    {expenses.slice(0, 5).map(item => (
+                      <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.9rem", paddingBottom: "0.45rem", borderBottom: "1px dashed rgba(0,0,0,0.06)" }}>
+                        <div>
+                          <strong style={{ fontWeight: 800 }}>{item.title}</strong>
+                          <span style={{ fontSize: "0.75rem", color: "var(--muted)", marginLeft: "0.5rem" }}>{item.category} | by {item.paid_by}</span>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                          <strong style={{ color: "var(--ink)" }}>{rupee.format(item.amount)}</strong>
+                          {item.created_by === displayName && (
+                            <button 
+                              className="icon-button tactile danger" 
+                              style={{ padding: "2px", border: "none", background: "transparent" }}
+                              onClick={() => handleDeleteExpense(item.id, item.title)}
+                              title="Delete"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          )}
+                        </div>
                       </div>
                     ))}
-                    {activities.length === 0 && <EmptyState text="No activities logged yet." />}
+                    {expenses.length === 0 && <EmptyState text="No expenses added yet." />}
+                  </div>
+                </div>
+
+                {/* SETTLEMENTS & INSIGHTS */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "1rem" }}>
+                  {/* Ledger */}
+                  <div className="panel" style={{ padding: "1.2rem" }}>
+                    <SectionHeader title="Owes & Settlement Ledger" />
+                    <div style={{ display: "grid", gap: "0.80rem", marginTop: "0.55rem", maxHeight: "200px", overflowY: "auto" }}>
+                      {splitSummary.stats.map(item => (
+                        <div key={item.name} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.92rem", paddingBottom: "0.4rem", borderBottom: "1px dashed rgba(0,0,0,0.06)" }}>
+                          <strong>{item.name}</strong>
+                          <span className={item.balance >= 0 ? "credit" : "debit"} style={{ fontWeight: "800" }}>
+                            {item.balance >= 0 ? "Gets" : "Owes"} {rupee.format(Math.abs(item.balance))}
+                          </span>
+                        </div>
+                      ))}
+                      {splitSummary.stats.length === 0 && <EmptyState text="Add project participants to calculate owes." small />}
+                    </div>
+                  </div>
+
+                  {/* Who Pays Whom */}
+                  <div className="panel" style={{ padding: "1.2rem" }}>
+                    <SectionHeader title="Pending Payments" />
+                    <div style={{ display: "grid", gap: "0.80rem", marginTop: "0.55rem", maxHeight: "200px", overflowY: "auto" }}>
+                      {splitSummary.settlements.map((item, index) => (
+                        <div key={`${item.from}-${item.to}-${index}`} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.92rem", paddingBottom: "0.4rem", borderBottom: "1px dashed rgba(0,0,0,0.06)" }}>
+                          <span>{item.from} ➔ {item.to}</span>
+                          <strong style={{ color: "var(--brand)" }}>pays {rupee.format(item.amount)}</strong>
+                        </div>
+                      ))}
+                      {splitSummary.settlements.length === 0 && <EmptyState text="All settled up! No pending payments." small />}
+                    </div>
+                  </div>
+                </div>
+
+                {/* QUICK CHAT WIDGET & TIMELINE */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "1rem" }}>
+                  {/* TIMELINE SUMMARY */}
+                  <div className="panel" style={{ padding: "1.2rem" }}>
+                    <SectionHeader title="Recent Room Activities" />
+                    <div style={{ display: "grid", gap: "0.65rem", marginTop: "0.55rem" }}>
+                      {activities.slice(0, 4).map(act => (
+                        <div key={act.id} style={{ display: "flex", justifyContent: "space-between", fontSize: "0.88rem", paddingBottom: "0.45rem", borderBottom: "1px dashed rgba(0,0,0,0.06)" }}>
+                          <span>{act.description}</span>
+                          <span style={{ color: "var(--muted)", fontSize: "0.78rem" }}>
+                            {new Date(act.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                      ))}
+                      {activities.length === 0 && <EmptyState text="No activities logged yet." />}
+                    </div>
+                  </div>
+
+                  {/* MINI CHAT WIDGET */}
+                  <div className="panel" style={{ padding: "1.2rem", display: "flex", flexDirection: "column", justifyItems: "space-between" }}>
+                    <SectionHeader title="Quick Chat Room" action={<button className="secondary tactile" style={{ padding: "2px 8px", fontSize: "0.75rem" }} onClick={() => setActiveTab("chat")}>Open Chat</button>} />
+                    <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "0.5rem", maxHeight: "150px", overflowY: "auto", margin: "0.5rem 0", padding: "0.25rem", background: "var(--cream, #fffdf7)", borderRadius: "10px", border: "1px solid rgba(0,0,0,0.05)" }}>
+                      {messages.slice(-3).map(msg => {
+                        const isSelf = msg.sender_name === displayName;
+                        return (
+                          <div key={msg.id} style={{ fontSize: "0.85rem", padding: "0.35rem 0.5rem", borderRadius: "8px", background: isSelf ? "rgba(111,104,216,0.06)" : "#ffffff", border: "1px solid rgba(0,0,0,0.03)" }}>
+                            <strong style={{ color: "var(--brand, #6f68d8)" }}>{isSelf ? "You" : msg.sender_name}: </strong>
+                            <span>{msg.message}</span>
+                          </div>
+                        );
+                      })}
+                      {messages.length === 0 && <EmptyState text="No messages yet." small />}
+                    </div>
+                    <form onSubmit={handleSendChat} style={{ display: "flex", gap: "0.4rem" }}>
+                      <input 
+                        type="text" 
+                        value={chatText} 
+                        onChange={(e) => setChatText(e.target.value)} 
+                        placeholder="Type message..." 
+                        maxLength={200}
+                        required
+                        style={{ flex: 1, padding: "0.45rem 0.75rem", fontSize: "0.85rem", border: "2px solid var(--line)", borderRadius: "10px", background: "var(--cream)" }}
+                      />
+                      <button type="submit" className="primary icon-button tactile" style={{ padding: "0.45rem", borderRadius: "10px", background: "var(--brand, #6f68d8)", color: "#fff" }}>
+                        <SendHorizontal size={14} />
+                      </button>
+                    </form>
                   </div>
                 </div>
               </div>
@@ -11143,63 +11359,102 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                   <button className="primary tactile" onClick={() => setShowAddExpense(true)}><Plus size={18} />Add Expense</button>
                 </div>
 
-                {/* FILTERS */}
-                <div className="filter-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))" }}>
-                  <label>Category
-                    <Select 
-                      value={categoryFilter} 
-                      onChange={setCategoryFilter} 
-                      options={["All", ...categoriesOptions]} 
+                {/* SEARCH & FILTERS */}
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.85rem", background: "var(--cream, #fffdf7)", padding: "1.2rem", borderRadius: "20px", border: "2px solid var(--line)" }}>
+                  <div style={{ display: "flex", gap: "0.5rem" }}>
+                    <input 
+                      type="text" 
+                      value={searchQuery} 
+                      onChange={(e) => setSearchQuery(e.target.value)} 
+                      placeholder="Search expenses by title, notes, category, or paid by..." 
+                      style={{ flex: 1, padding: "0.75rem", border: "2px solid var(--line)", borderRadius: "12px", background: "var(--paper, #fff)" }}
                     />
-                  </label>
-                  <label>Paid By
-                    <Select 
-                      value={participantFilter} 
-                      onChange={setParticipantFilter} 
-                      options={["All", ...participantNamesList]} 
-                    />
-                  </label>
+                  </div>
+                  <div className="filter-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "0.85rem" }}>
+                    <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem", fontSize: "0.85rem", fontWeight: "800" }}>Category
+                      <Select 
+                        value={categoryFilter} 
+                        onChange={setCategoryFilter} 
+                        options={["All", ...categoriesOptions]} 
+                      />
+                    </label>
+                    <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem", fontSize: "0.85rem", fontWeight: "800" }}>Paid By
+                      <Select 
+                        value={participantFilter} 
+                        onChange={setParticipantFilter} 
+                        options={["All", ...participantNamesList]} 
+                      />
+                    </label>
+                  </div>
                 </div>
 
                 {/* LIST */}
-                <div className="list-grid">
-                  {filteredExpenses.map(item => (
-                    <div className="panel" key={item.id} style={{ padding: "1rem", position: "relative" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                        <div>
-                          <h3 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 900 }}>{item.title}</h3>
-                          <small style={{ color: "var(--muted)" }}>
-                            {item.date} {item.time} | <strong>{item.category}</strong>
-                          </small>
+                <div className="list-grid" style={{ display: "grid", gap: "1rem" }}>
+                  {filteredExpenses.map(item => {
+                    const categoryIcons = {
+                      Food: "🍔",
+                      Travel: "✈️",
+                      Bills: "⚡",
+                      Health: "🏥",
+                      Shopping: "🛍️",
+                      Entertainment: "🎬",
+                      Custom: "🏷️"
+                    };
+                    const icon = categoryIcons[item.category] || "🏷️";
+                    return (
+                      <div className="panel" key={item.id} style={{ padding: "1.2rem", position: "relative", display: "flex", gap: "1rem", alignItems: "center" }}>
+                        <div style={{
+                          width: "50px",
+                          height: "50px",
+                          borderRadius: "15px",
+                          background: "var(--cream, #fffdf7)",
+                          border: "2px solid var(--line)",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          fontSize: "1.6rem",
+                          boxShadow: "2px 3px 0 var(--line)"
+                        }}>
+                          {icon}
                         </div>
-                        <strong style={{ fontSize: "1.25rem", color: "var(--ink)" }}>{rupee.format(item.amount)}</strong>
-                      </div>
-                      
-                      <div style={{ marginTop: "0.65rem", fontSize: "0.85rem", display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center" }}>
-                        <span>Paid by: <strong>{item.paid_by}</strong></span>
-                        {item.participants && item.participants.length > 0 && (
-                          <span style={{ color: "var(--muted)" }}>
-                            (Split: {item.participants.join(", ")})
-                          </span>
-                        )}
-                        {item.notes && <span style={{ fontStyle: "italic", background: "rgba(0,0,0,0.03)", padding: "2px 6px", borderRadius: "6px" }}>"{item.notes}"</span>}
-                        <span className="creator-tag">Created by {item.created_by}</span>
-                      </div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                            <div>
+                              <h3 style={{ margin: 0, fontSize: "1.15rem", fontWeight: 950, color: "var(--ink)" }}>{item.title}</h3>
+                              <div style={{ color: "var(--muted)", fontSize: "0.82rem", marginTop: "0.15rem" }}>
+                                {item.date} {item.time} | <strong>{item.category}</strong>
+                              </div>
+                            </div>
+                            <strong style={{ fontSize: "1.3rem", color: "var(--ink)", fontWeight: 950 }}>{rupee.format(item.amount)}</strong>
+                          </div>
+                          
+                          <div style={{ marginTop: "0.8rem", fontSize: "0.82rem", display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center" }}>
+                            <span style={{ background: "rgba(0,0,0,0.04)", padding: "3px 8px", borderRadius: "8px", border: "1px solid rgba(0,0,0,0.06)" }}>Paid by: <strong>{item.paid_by}</strong></span>
+                            {item.participants && item.participants.length > 0 && (
+                              <span style={{ background: "rgba(111, 104, 216, 0.08)", color: "var(--brand, #6f68d8)", padding: "3px 8px", borderRadius: "8px", border: "1px solid rgba(111, 104, 216, 0.12)" }}>
+                                👥 Split ({item.participants.join(", ")})
+                              </span>
+                            )}
+                            {item.notes && <span style={{ fontStyle: "italic", opacity: 0.8 }}>"{item.notes}"</span>}
+                            <span className="creator-tag" style={{ marginLeft: "auto" }}>Created by {item.created_by}</span>
+                          </div>
+                        </div>
 
-                      {item.created_by === displayName && (
-                        <div style={{ position: "absolute", bottom: "0.8rem", right: "0.8rem" }}>
-                          <button 
-                            className="icon-button tactile danger" 
-                            style={{ padding: "0.25rem" }} 
-                            onClick={() => handleDeleteExpense(item.id, item.title)}
-                            title="Delete"
-                          >
-                            <Trash2 size={15} />
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  ))}
+                        {item.created_by === displayName && (
+                          <div style={{ marginLeft: "0.5rem" }}>
+                            <button 
+                              className="icon-button tactile danger" 
+                              style={{ padding: "0.4rem" }} 
+                              onClick={() => handleDeleteExpense(item.id, item.title)}
+                              title="Delete"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                   {filteredExpenses.length === 0 && <EmptyState text="No expenses match the filters." />}
                 </div>
               </div>
@@ -11331,50 +11586,84 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
             {/* 6. ANALYTICS TAB */}
             {activeTab === "analytics" && (
               <div style={{ display: "grid", gap: "1rem" }}>
-                <h2>Cloud Analytics Dashboard</h2>
+                <h2>Cloud Analytics & Split Ledger</h2>
 
-                {/* PARTICIPANT SPLITS */}
-                <div className="panel" style={{ padding: "1.2rem" }}>
-                  <SectionHeader title="Spending by Participant" />
-                  <div style={{ display: "grid", gap: "0.8rem", marginTop: "0.75rem" }}>
-                    {participantSpendSummary.map(item => {
-                      const maxSpent = Math.max(...participantSpendSummary.map(p => p.spent), 1);
-                      const barWidth = (item.spent / maxSpent) * 100;
-                      return (
-                        <div key={item.name}>
-                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.9rem", fontWeight: 800 }}>
-                            <span>{item.name}</span>
-                            <strong>{rupee.format(item.spent)}</strong>
+                {/* LEDGER GRID */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "1.2rem" }}>
+                  {/* PARTICIPANT SPLITS */}
+                  <div className="panel" style={{ padding: "1.2rem" }}>
+                    <SectionHeader title="Spending by Participant" />
+                    <div style={{ display: "grid", gap: "0.8rem", marginTop: "0.75rem" }}>
+                      {participantSpendSummary.map(item => {
+                        const maxSpent = Math.max(...participantSpendSummary.map(p => p.spent), 1);
+                        const barWidth = (item.spent / maxSpent) * 100;
+                        return (
+                          <div key={item.name}>
+                            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.9rem", fontWeight: 800 }}>
+                              <span>{item.name}</span>
+                              <strong>{rupee.format(item.spent)}</strong>
+                            </div>
+                            <div style={{ height: "12px", background: "rgba(0,0,0,0.06)", borderRadius: "6px", overflow: "hidden", marginTop: "0.25rem" }}>
+                              <div style={{ background: "var(--brand, #6f68d8)", width: `${barWidth}%`, height: "100%", borderRadius: "6px" }}></div>
+                            </div>
                           </div>
-                          <div style={{ height: "12px", background: "rgba(0,0,0,0.06)", borderRadius: "6px", overflow: "hidden", marginTop: "0.25rem" }}>
-                            <div style={{ background: "var(--brand, #6f68d8)", width: `${barWidth}%`, height: "100%", borderRadius: "6px" }}></div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* CATEGORY SPEND */}
+                  <div className="panel" style={{ padding: "1.2rem" }}>
+                    <SectionHeader title="Category Breakdown" />
+                    <div style={{ display: "grid", gap: "0.8rem", marginTop: "0.75rem" }}>
+                      {categorySpendSummary.map(item => {
+                        const maxCat = Math.max(...categorySpendSummary.map(c => c.spent), 1);
+                        const barWidth = (item.spent / maxCat) * 100;
+                        return (
+                          <div key={item.name}>
+                            <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.9rem", fontWeight: 800 }}>
+                              <span>{item.name}</span>
+                              <strong>{rupee.format(item.spent)}</strong>
+                            </div>
+                            <div style={{ height: "12px", background: "rgba(0,0,0,0.06)", borderRadius: "6px", overflow: "hidden", marginTop: "0.25rem" }}>
+                              <div style={{ background: "var(--orange, #f4d06f)", width: `${barWidth}%`, height: "100%", borderRadius: "6px" }}></div>
+                            </div>
                           </div>
-                        </div>
-                      );
-                    })}
+                        );
+                      })}
+                      {categorySpendSummary.length === 0 && <EmptyState text="Add expenses to see categories." />}
+                    </div>
                   </div>
                 </div>
 
-                {/* CATEGORY SPEND */}
-                <div className="panel" style={{ padding: "1.2rem" }}>
-                  <SectionHeader title="Category Breakdown" />
-                  <div style={{ display: "grid", gap: "0.8rem", marginTop: "0.75rem" }}>
-                    {categorySpendSummary.map(item => {
-                      const maxCat = Math.max(...categorySpendSummary.map(c => c.spent), 1);
-                      const barWidth = (item.spent / maxCat) * 100;
-                      return (
-                        <div key={item.name}>
-                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.9rem", fontWeight: 800 }}>
-                            <span>{item.name}</span>
-                            <strong>{rupee.format(item.spent)}</strong>
-                          </div>
-                          <div style={{ height: "12px", background: "rgba(0,0,0,0.06)", borderRadius: "6px", overflow: "hidden", marginTop: "0.25rem" }}>
-                            <div style={{ background: "var(--orange, #f4d06f)", width: `${barWidth}%`, height: "100%", borderRadius: "6px" }}></div>
-                          </div>
+                {/* WHO PAYS WHOM INSIGHTS */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "1.2rem" }}>
+                  <div className="panel" style={{ padding: "1.2rem" }}>
+                    <SectionHeader title="Participant Net Balances (Owes / Gets)" />
+                    <div style={{ display: "grid", gap: "0.75rem", marginTop: "0.75rem" }}>
+                      {splitSummary.stats.map(item => (
+                        <div key={item.name} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.92rem", paddingBottom: "0.4rem", borderBottom: "1px dashed rgba(0,0,0,0.06)" }}>
+                          <strong>{item.name}</strong>
+                          <span className={item.balance >= 0 ? "credit" : "debit"} style={{ fontWeight: "800" }}>
+                            {item.balance >= 0 ? "Gets" : "Owes"} {rupee.format(Math.abs(item.balance))}
+                          </span>
                         </div>
-                      );
-                    })}
-                    {categorySpendSummary.length === 0 && <EmptyState text="Add expenses to see categories." />}
+                      ))}
+                      {splitSummary.stats.length === 0 && <EmptyState text="No participant data found." small />}
+                    </div>
+                  </div>
+
+                  <div className="panel" style={{ padding: "1.2rem" }}>
+                    <SectionHeader title="Suggested Debts Settlements" />
+                    <div style={{ display: "grid", gap: "0.75rem", marginTop: "0.75rem" }}>
+                      {splitSummary.settlements.map((item, index) => (
+                        <div key={`${item.from}-${item.to}-${index}`} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.92rem", paddingBottom: "0.4rem", borderBottom: "1px dashed rgba(0,0,0,0.06)" }}>
+                          <span>{item.from} ➔ {item.to}</span>
+                          <strong style={{ color: "var(--brand)" }}>pays {rupee.format(item.amount)}</strong>
+                        </div>
+                      ))}
+                      {splitSummary.settlements.length === 0 && <EmptyState text="Everything settled! No debts to pay." small />}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -11517,8 +11806,10 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                </label>
              </div>
              <div className="modal-actions">
-               <button type="button" className="secondary tactile" onClick={() => setShowAddExpense(false)}>Cancel</button>
-               <button className="primary tactile" type="submit">Submit Expense</button>
+               <button type="button" className="secondary tactile" onClick={() => setShowAddExpense(false)} disabled={savingExpense}>Cancel</button>
+               <button className="primary tactile" type="submit" disabled={savingExpense}>
+                 {savingExpense ? "Syncing..." : "Submit Expense"}
+               </button>
              </div>
            </form>
          </div>
@@ -11551,8 +11842,10 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                </label>
              </div>
              <div className="modal-actions">
-               <button type="button" className="secondary tactile" onClick={() => setShowAddDoc(false)}>Cancel</button>
-               <button className="primary tactile" type="submit">Share Link</button>
+               <button type="button" className="secondary tactile" onClick={() => setShowAddDoc(false)} disabled={sharingDoc}>Cancel</button>
+               <button className="primary tactile" type="submit" disabled={sharingDoc}>
+                 {sharingDoc ? "Sharing..." : "Share Link"}
+               </button>
              </div>
            </form>
          </div>
@@ -11605,8 +11898,10 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                </label>
              </div>
              <div className="modal-actions">
-               <button type="button" className="secondary tactile" onClick={() => setShowAddTask(false)}>Cancel</button>
-               <button className="primary tactile" type="submit">Add Task</button>
+               <button type="button" className="secondary tactile" onClick={() => setShowAddTask(false)} disabled={savingTask}>Cancel</button>
+               <button className="primary tactile" type="submit" disabled={savingTask}>
+                 {savingTask ? "Saving..." : "Add Task"}
+               </button>
              </div>
            </form>
          </div>
