@@ -7550,7 +7550,10 @@ function ExpenseSplitInlineDetails({ expense, project, isCloud, onMarkPaid, onDe
                       </button>
                     </div>
                   ) : (
-                    <div style={{ display: "flex", gap: "0.3rem" }}>
+                    <div style={{ display: "flex", gap: "0.3rem", alignItems: "center" }}>
+                      <span style={{ color: "#e76f51", fontWeight: "bold", background: "rgba(231, 111, 81, 0.08)", padding: "2px 8px", borderRadius: "8px", border: "1px solid rgba(231, 111, 81, 0.12)", fontSize: "0.8rem", marginRight: "0.2rem" }}>
+                        ⏳ Pending
+                      </span>
                       <button 
                         className="secondary tactile" 
                         style={{ padding: "2px 6px", fontSize: "0.72rem" }} 
@@ -10698,6 +10701,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
 
   // Workspace navigation
   const [activeTab, setActiveTab] = useState("dashboard");
+  const [dashboardFilter, setDashboardFilter] = useState("All");
   const [categoryFilter, setCategoryFilter] = useState("All");
   const [participantFilter, setParticipantFilter] = useState("All");
   const [searchQuery, setSearchQuery] = useState("");
@@ -11895,9 +11899,30 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
 
                 {/* RECENT TRANSACTIONS */}
                 <div className="panel">
-                  <SectionHeader title="Recent Transactions" action={<button className="secondary tactile" style={{ padding: "2px 8px", fontSize: "0.75rem" }} onClick={() => setActiveTab("expenses")}>View All</button>} />
+                  <SectionHeader title="Recent Transactions" action={
+                    <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                      <select 
+                        value={dashboardFilter} 
+                        onChange={(e) => setDashboardFilter(e.target.value)}
+                        style={{ padding: "2px 6px", fontSize: "0.75rem", borderRadius: "6px", border: "1px solid var(--line)" }}
+                      >
+                        <option value="All">All</option>
+                        <option value="Normal">Normal Payments</option>
+                        <option value="Split">Splits</option>
+                      </select>
+                      <button className="secondary tactile" style={{ padding: "2px 8px", fontSize: "0.75rem" }} onClick={() => setActiveTab("expenses")}>View All</button>
+                    </div>
+                  } />
                   <div style={{ display: "grid", gap: "0", marginTop: "0.5rem" }}>
-                    {expenses.slice(0, 5).map(item => (
+                    {expenses.filter(item => {
+                      if (dashboardFilter === "Normal") {
+                        return !(item.participants?.length > 0) && !item.owed_by && item.category !== "Settlement";
+                      }
+                      if (dashboardFilter === "Split") {
+                        return (item.participants?.length > 0) || item.owed_by || item.category === "Settlement";
+                      }
+                      return true;
+                    }).slice(0, 5).map(item => (
                       <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0.7rem 0", borderBottom: "1px solid rgba(0,0,0,0.05)" }}>
                         <span style={{ fontWeight: 700, fontSize: "0.92rem", color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, marginRight: "1rem" }}>{item.title}</span>
                         <strong style={{ fontSize: "0.95rem", color: "var(--ink)", fontWeight: 900, flexShrink: 0 }}>{rupee.format(item.amount)}</strong>
