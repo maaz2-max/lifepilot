@@ -261,6 +261,18 @@ export async function addCloudDocument(projectId, title, url, createdBy) {
   return data;
 }
 
+export async function updateCloudDocument(documentId, title, url) {
+  if (!supabase) throw new Error("Supabase client is not configured");
+  const { data, error } = await supabase
+    .from("cloud_documents")
+    .update({ title, url })
+    .eq("id", documentId)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
 export async function deleteCloudDocument(documentId) {
   if (!supabase) throw new Error("Supabase client is not configured");
   const { error } = await supabase

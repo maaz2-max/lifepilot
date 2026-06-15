@@ -84,6 +84,7 @@ import {
   getCloudDocuments,
   addCloudDocument,
   deleteCloudDocument,
+  updateCloudDocument,
   supabase
 } from "./supabase.js";
 
@@ -7445,6 +7446,25 @@ function MiniList({ title, items, empty, field }) {
     </div>
   );
 }
+function Linkify({ children }) {
+  if (typeof children !== "string" || !children) return children;
+  const urlRegex = /(https?:\/\/[^\s]+)/g;
+  const parts = children.split(urlRegex);
+  return (
+    <>
+      {parts.map((part, i) => {
+        if (part.match(urlRegex)) {
+          return (
+            <a key={i} href={part} target="_blank" rel="noopener noreferrer" style={{ color: "var(--brand)", textDecoration: "underline", wordBreak: "break-all" }}>
+              {part}
+            </a>
+          );
+        }
+        return part;
+      })}
+    </>
+  );
+}
 
 function EmptyState({ text, small = false }) {
   return <div className={`empty-state ${small ? "small" : ""}`}><NotebookPen size={small ? 18 : 28} /><p>{text}</p></div>;
@@ -10726,7 +10746,9 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
   // Add Form Modals
   const [showAddExpense, setShowAddExpense] = useState(false);
   const [showAddTask, setShowAddTask] = useState(false);
+  const [editTask, setEditTask] = useState(null);
   const [showAddDoc, setShowAddDoc] = useState(false);
+  const [editDoc, setEditDoc] = useState(null);
 
   // Loading indicator states
   const [savingExpense, setSavingExpense] = useState(false);
@@ -11273,29 +11295,39 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
       return;
     }
     setSharingDoc(true);
-    const docId = "doc-" + Math.random().toString(36).substring(2, 11);
+    const isEdit = !!editDoc;
+    const docId = isEdit ? editDoc.id : "doc-" + Math.random().toString(36).substring(2, 11);
     const newDoc = {
       id: docId,
       project_id: projectId,
       title: docForm.title.trim(),
       url: docForm.url.trim(),
-      created_by: displayName,
-      created_at: new Date().toISOString()
+      created_by: isEdit ? editDoc.created_by : displayName,
+      created_at: isEdit ? editDoc.created_at : new Date().toISOString()
     };
 
     // Optimistic update
-    setDocuments(prev => [...prev, newDoc]);
+    if (isEdit) {
+      setDocuments(prev => prev.map(d => d.id === docId ? newDoc : d));
+    } else {
+      setDocuments(prev => [...prev, newDoc]);
+    }
     setShowAddDoc(false);
+    setEditDoc(null);
 
     try {
-      await addCloudDocument(projectId, docForm.title.trim(), docForm.url.trim(), displayName);
+      if (isEdit) {
+        await updateCloudDocument(docId, docForm.title.trim(), docForm.url.trim());
+      } else {
+        await addCloudDocument(projectId, docForm.title.trim(), docForm.url.trim(), displayName);
+      }
       await addCloudActivity(
         projectId,
-        "add_doc",
-        `${displayName} shared drive document "${docForm.title.trim()}"`,
+        isEdit ? "edit_doc" : "add_doc",
+        `${displayName} ${isEdit ? "edited" : "shared"} drive document "${docForm.title.trim()}"`,
         displayName
       );
-      setToast("Document shared!");
+      setToast(isEdit ? "Document updated!" : "Document shared!");
       setDocForm({ title: "", url: "" });
     } catch (err) {
       setToast("Failed to share document: " + err.message);
@@ -11312,33 +11344,39 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
       return;
     }
     setSavingTask(true);
-    const taskId = "task-" + Math.random().toString(36).substring(2, 11);
+    const isEdit = !!editTask;
+    const taskId = isEdit ? editTask.id : "task-" + Math.random().toString(36).substring(2, 11);
     const newTask = {
       id: taskId,
       project_id: projectId,
       title: taskForm.title.trim(),
       due_date: taskForm.dueDate,
       due_time: taskForm.dueTime || "",
-      status: "Pending",
+      status: isEdit ? editTask.status : "Pending",
       priority: taskForm.priority,
       notes: taskForm.notes || "",
-      created_by: displayName,
-      created_at: new Date().toISOString()
+      created_by: isEdit ? editTask.created_by : displayName,
+      created_at: isEdit ? editTask.created_at : new Date().toISOString()
     };
 
     // Optimistic update
-    setTasks(prev => [...prev, newTask]);
+    if (isEdit) {
+      setTasks(prev => prev.map(t => t.id === taskId ? newTask : t));
+    } else {
+      setTasks(prev => [...prev, newTask]);
+    }
     setShowAddTask(false);
+    setEditTask(null);
 
     try {
       await upsertCloudTask(newTask);
       await addCloudActivity(
         projectId,
-        "add_task",
-        `${displayName} added task reminder: "${taskForm.title.trim()}"`,
+        isEdit ? "edit_task" : "add_task",
+        `${displayName} ${isEdit ? "edited" : "added"} task reminder: "${taskForm.title.trim()}"`,
         displayName
       );
-      setToast("Reminder task added!");
+      setToast(isEdit ? "Reminder task updated!" : "Reminder task added!");
       setTaskForm({ title: "", dueDate: todayISO(), dueTime: "", priority: "Medium", notes: "" });
     } catch (err) {
       setToast("Failed to add task: " + err.message);
@@ -11936,8 +11974,8 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                       if (dashboardFilter === "Split") return item.category === "Settlement";
                       return true;
                     }).slice(0, 5).map(item => (
-                      <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0.7rem 0", borderBottom: "1px solid rgba(0,0,0,0.05)" }}>
-                        <span style={{ fontWeight: 700, fontSize: "0.92rem", color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0, marginRight: "1rem" }}>{item.title}</span>
+                      <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0.7rem 0", borderBottom: "1px solid rgba(0,0,0,0.05)", minWidth: 0 }}>
+                        <span style={{ fontWeight: 700, fontSize: "0.92rem", color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0, marginRight: "1rem", display: "block" }}>{item.title}</span>
                         <strong style={{ fontSize: "0.95rem", color: "var(--ink)", fontWeight: 900, flexShrink: 0 }}>{rupee.format(item.amount)}</strong>
                       </div>
                     ))}
@@ -12009,6 +12047,60 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                         </div>
                       ))}
                       {splitSummary.settlements.length === 0 && <EmptyState text="All settled up! No pending payments." small />}
+                    </div>
+                  </div>
+                </div>
+
+                {/* REMINDERS & DOCS WIDGETS */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "1rem" }}>
+                  {/* Reminders */}
+                  <div className="panel" style={{ padding: "1.2rem" }}>
+                    <SectionHeader title="Trip Reminders" action={<button className="secondary tactile" style={{ padding: "2px 8px", fontSize: "0.75rem" }} onClick={() => setActiveTab("tasks")}>View All</button>} />
+                    <div style={{ display: "grid", gap: "0.65rem", marginTop: "0.55rem" }}>
+                      {tasks.filter(t => {
+                        if (t.status === "Completed") return false;
+                        const due = new Date(t.due_date).getTime();
+                        const now = new Date(todayISO()).getTime();
+                        const days = (due - now) / (1000 * 3600 * 24);
+                        return days <= 3;
+                      }).slice(0, 4).map(item => (
+                        <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.88rem", paddingBottom: "0.45rem", borderBottom: "1px dashed rgba(0,0,0,0.06)" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flex: 1, minWidth: 0, marginRight: "0.5rem" }}>
+                            <input 
+                              type="checkbox" 
+                              checked={false} 
+                              onChange={() => handleToggleTask(item)}
+                              style={{ width: "16px", height: "16px", cursor: "pointer", flexShrink: 0 }}
+                            />
+                            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</span>
+                          </div>
+                          <span style={{ color: "var(--warn)", fontSize: "0.78rem", fontWeight: "bold", flexShrink: 0 }}>
+                            {item.due_date === todayISO() ? "Today" : item.due_date}
+                          </span>
+                        </div>
+                      ))}
+                      {tasks.filter(t => t.status !== "Completed" && ((new Date(t.due_date).getTime() - new Date(todayISO()).getTime()) / (1000 * 3600 * 24) <= 3)).length === 0 && <EmptyState text="No upcoming reminders in the next 3 days." small />}
+                    </div>
+                  </div>
+
+                  {/* Shared Docs */}
+                  <div className="panel" style={{ padding: "1.2rem" }}>
+                    <SectionHeader title="Shared Documents" action={<button className="secondary tactile" style={{ padding: "2px 8px", fontSize: "0.75rem" }} onClick={() => setActiveTab("docs")}>View All</button>} />
+                    <div style={{ display: "grid", gap: "0.65rem", marginTop: "0.55rem" }}>
+                      {documents.slice(0, 4).map(item => (
+                        <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.88rem", paddingBottom: "0.45rem", borderBottom: "1px dashed rgba(0,0,0,0.06)" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", flex: 1, minWidth: 0 }}>
+                            <FileText size={14} style={{ color: "var(--brand)", flexShrink: 0 }} />
+                            <a href={item.url.startsWith("http") ? item.url : `https://${item.url}`} target="_blank" rel="noopener noreferrer" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {item.title}
+                            </a>
+                          </div>
+                          <span style={{ color: "var(--muted)", fontSize: "0.78rem", flexShrink: 0, marginLeft: "0.5rem" }}>
+                            {item.created_by}
+                          </span>
+                        </div>
+                      ))}
+                      {documents.length === 0 && <EmptyState text="No shared documents yet." small />}
                     </div>
                   </div>
                 </div>
@@ -12195,7 +12287,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                                               Owed by: <strong>{item.owed_by}</strong>
                                             </span>
                                           )}
-                                          {item.notes && <span style={{ fontStyle: "italic", opacity: 0.7 }}>"{item.notes}"</span>}
+                                          {item.notes && <span style={{ fontStyle: "italic", opacity: 0.7 }}>"<Linkify>{item.notes}</Linkify>"</span>}
                                           <span style={{ color: "var(--muted)", opacity: 0.7, marginLeft: "auto" }}>by {item.created_by}</span>
                                         </div>
 
@@ -12283,18 +12375,30 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                             Due: {item.due_date} {item.due_time} | Priority: <strong>{item.priority}</strong>
                             <span className="creator-tag">Created by {item.created_by}</span>
                           </div>
-                          {item.notes && <p style={{ margin: "0.25rem 0 0", fontSize: "0.85rem", color: "#666" }}>{item.notes}</p>}
+                          {item.notes && <p style={{ margin: "0.25rem 0 0", fontSize: "0.85rem", color: "#666" }}><Linkify>{item.notes}</Linkify></p>}
                         </div>
                       </div>
-                      
                       {item.created_by === displayName && (
-                        <button 
-                          className="icon-button tactile danger" 
-                          onClick={() => handleDeleteTask(item.id, item.title)}
-                          title="Delete"
-                        >
-                          <Trash2 size={16} />
-                        </button>
+                        <div style={{ display: "flex", gap: "0.5rem" }}>
+                          <button 
+                            className="icon-button tactile" 
+                            onClick={() => {
+                              setEditTask(item);
+                              setTaskForm({ title: item.title, dueDate: item.due_date, dueTime: item.due_time || "", priority: item.priority || "Medium", notes: item.notes || "" });
+                              setShowAddTask(true);
+                            }}
+                            title="Edit"
+                          >
+                            <Edit3 size={16} />
+                          </button>
+                          <button 
+                            className="icon-button tactile danger" 
+                            onClick={() => handleDeleteTask(item.id, item.title)}
+                            title="Delete"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
                       )}
                     </div>
                   ))}
@@ -12327,13 +12431,26 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                       </div>
 
                       {item.created_by === displayName && (
-                        <button 
-                          className="icon-button tactile danger" 
-                          onClick={() => handleDeleteDoc(item.id, item.title)}
-                          title="Delete"
-                        >
-                          <Trash2 size={16} />
-                        </button>
+                        <div style={{ display: "flex", gap: "0.5rem" }}>
+                          <button 
+                            className="icon-button tactile" 
+                            onClick={() => {
+                              setEditDoc(item);
+                              setDocForm({ title: item.title, url: item.url });
+                              setShowAddDoc(true);
+                            }}
+                            title="Edit"
+                          >
+                            <Edit3 size={16} />
+                          </button>
+                          <button 
+                            className="icon-button tactile danger" 
+                            onClick={() => handleDeleteDoc(item.id, item.title)}
+                            title="Delete"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
                       )}
                     </div>
                   ))}
@@ -12353,7 +12470,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                         <span className="cloud-chat-msg-header">
                           {isSelf ? "You" : msg.sender_name}
                         </span>
-                        <span className="cloud-chat-msg-text">{msg.message}</span>
+                        <span className="cloud-chat-msg-text"><Linkify>{msg.message}</Linkify></span>
                         <span className="cloud-chat-msg-time">
                           {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </span>
