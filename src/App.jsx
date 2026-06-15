@@ -7513,7 +7513,7 @@ function ExpenseSplitInlineDetails({ expense, project, isCloud, onMarkPaid, onDe
             const linked = (project?.paidSettlements || []).find(s => 
               s.from === row.from &&
               s.to === row.to &&
-              (String(s.expenseId) === String(expense.id))
+              (!s.expenseId || String(s.expenseId) === String(expense.id))
             );
 
             return (
@@ -11915,12 +11915,10 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                   } />
                   <div style={{ display: "grid", gap: "0", marginTop: "0.5rem" }}>
                     {expenses.filter(item => {
-                      if (dashboardFilter === "Normal") {
-                        return !(item.participants?.length > 0) && !item.owed_by && item.category !== "Settlement";
-                      }
-                      if (dashboardFilter === "Split") {
-                        return (item.participants?.length > 0) || item.owed_by || item.category === "Settlement";
-                      }
+                      const sm = item.splitMode || (item.owed_by ? "Direct owed" : (item.participants && item.participants.filter(Boolean).length > 0 ? "Equal split" : "No split"));
+                      const isSplit = sm !== "No split" || item.category === "Settlement";
+                      if (dashboardFilter === "Normal") return !isSplit;
+                      if (dashboardFilter === "Split") return isSplit;
                       return true;
                     }).slice(0, 5).map(item => (
                       <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0.7rem 0", borderBottom: "1px solid rgba(0,0,0,0.05)" }}>
