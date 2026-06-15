@@ -92,7 +92,8 @@ const APP_PIN_HASH = "cc41d80b1697c04d19330fba23a82cfc68fb086e3445691578bfae3a3d
 const rupee = new Intl.NumberFormat("en-IN", {
   style: "currency",
   currency: "INR",
-  maximumFractionDigits: 0
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 2
 });
 
 function generateCloudProjectId(name, type) {
@@ -7443,7 +7444,7 @@ function ExpenseSplitInlineDetails({ expense, project, isCloud, onMarkPaid, onDe
   if (splitMode === "Direct owed") {
     const owedBy = expense.owedBy || expense.owed_by;
     if (paidBy && owedBy && paidBy !== owedBy) {
-      rows = [{ from: owedBy, to: paidBy, amount: Math.round(amtVal), label: "owes" }];
+      rows = [{ from: owedBy, to: paidBy, amount: Math.round(amtVal * 100) / 100, label: "owes" }];
     }
   } else if (splitMode === "Equal split") {
     const splitMembers = (expense.participants || []).filter(Boolean);
@@ -7451,7 +7452,7 @@ function ExpenseSplitInlineDetails({ expense, project, isCloud, onMarkPaid, onDe
       const share = amtVal / splitMembers.length;
       rows = splitMembers
         .filter((name) => name !== paidBy)
-        .map((name) => ({ from: name, to: paidBy, amount: Math.round(share), label: "owes" }));
+        .map((name) => ({ from: name, to: paidBy, amount: Math.round(share * 100) / 100, label: "owes" }));
     }
   }
 
@@ -7533,10 +7534,11 @@ function ExpenseSplitInlineDetails({ expense, project, isCloud, onMarkPaid, onDe
                   <div style={{ display: "flex", gap: "0.4rem", alignItems: "center", marginTop: "0.2rem", flexWrap: "wrap" }}>
                     <input
                       type="number"
+                      step="0.01"
                       value={customAmount}
                       onChange={(e) => setCustomAmount(e.target.value)}
                       placeholder={`Max ${row.amount}`}
-                      min="1"
+                      min="0.01"
                       max={row.amount}
                       style={{ padding: "2px 6px", width: "80px", fontSize: "0.8rem", border: "1px solid var(--line)", borderRadius: "6px" }}
                     />
@@ -7614,7 +7616,7 @@ function RecordTable({ list, type, setModal, remove, project, upsert }) {
                 if (existingSettlementId) {
                   const updatedSettlements = (project.paidSettlements || []).map(s => 
                     s.id === existingSettlementId 
-                      ? { ...s, amount: Math.round(amt), paymentType }
+                      ? { ...s, amount: Math.round(amt * 100) / 100, paymentType }
                       : s
                   );
                   upsert("projects", { ...project, paidSettlements: updatedSettlements }, "project");
@@ -7623,7 +7625,7 @@ function RecordTable({ list, type, setModal, remove, project, upsert }) {
                     id: id("settlement"),
                     from: row.from,
                     to: row.to,
-                    amount: Math.round(amt),
+                    amount: Math.round(amt * 100) / 100,
                     paymentType,
                     paidAt: new Date().toISOString(),
                     expenseId: item.id
@@ -7699,7 +7701,7 @@ function ProjectSplitView({ project, transactions, upsert, requestConfirm }) {
       id: id("settlement"),
       from: item.from,
       to: item.to,
-      amount: Math.round(safeAmount),
+      amount: Math.round(safeAmount * 100) / 100,
       paymentType,
       paidAt: new Date().toISOString()
     };
@@ -7773,11 +7775,12 @@ function ProjectSplitView({ project, transactions, upsert, requestConfirm }) {
     const safeAmount = Math.min(Math.max(amount(editingAmount), 0), max);
     if (safeAmount <= 0) return;
     if (project.isCloud && hasSupabase()) {
+      const roundedAmt = Math.round(safeAmount * 100) / 100;
       upsertCloudExpense({
         id: settlement.id,
         project_id: project.id,
         title: `Settlement: ${settlement.from} paid ${settlement.to}`,
-        amount: Math.round(safeAmount),
+        amount: roundedAmt,
         category: "Settlement",
         date: todayISO(),
         time: nowTime(),
@@ -7794,17 +7797,18 @@ function ProjectSplitView({ project, transactions, upsert, requestConfirm }) {
         addCloudActivity(
           project.id,
           "edit_settlement",
-          `Settlement payment from ${settlement.from} to ${settlement.to} was updated to ₹${Math.round(safeAmount)}`,
+          `Settlement payment from ${settlement.from} to ${settlement.to} was updated to ₹${roundedAmt}`,
           project.owner_name || "Owner"
         ).catch(console.error);
       })
       .catch(console.error);
     } else {
+      const roundedAmt = Math.round(safeAmount * 100) / 100;
       upsert("projects", {
         ...project,
         paidSettlements: (project.paidSettlements || []).map((item) =>
           item.id === settlement.id
-            ? { ...item, amount: Math.round(safeAmount), paymentType: safeAmount >= max ? "Full" : "Custom", updatedAt: new Date().toISOString() }
+            ? { ...item, amount: roundedAmt, paymentType: safeAmount >= max ? "Full" : "Custom", updatedAt: new Date().toISOString() }
             : item
         )
       }, "project");
@@ -7851,9 +7855,10 @@ function ProjectSplitView({ project, transactions, upsert, requestConfirm }) {
                     value={customAmount}
                     onChange={(event) => setCustomAmount(event.target.value)}
                     type="number"
-                    min="1"
-                    max={Math.round(item.amount)}
-                    placeholder={`Max ${Math.round(item.amount)}`}
+                    step="0.01"
+                    min="0.01"
+                    max={item.amount}
+                    placeholder={`Max ${item.amount}`}
                   />
                 </label>
                 <button className="primary tactile" type="button" onClick={() => markSettlementPaid(item, customAmount, "Custom")}>Save Payment</button>
@@ -7874,7 +7879,7 @@ function ProjectSplitView({ project, transactions, upsert, requestConfirm }) {
               <div className="settlement-actions">
                 <button className="secondary tactile" type="button" onClick={() => {
                   setEditingSettlementId(item.id);
-                  setEditingAmount(String(Math.round(amount(item.amount))));
+                  setEditingAmount(String(amount(item.amount)));
                 }}>Edit</button>
                 <button className="secondary danger tactile" type="button" onClick={() => deleteSettlementPaid(item)}>Delete</button>
               </div>
@@ -7887,9 +7892,10 @@ function ProjectSplitView({ project, transactions, upsert, requestConfirm }) {
                     value={editingAmount}
                     onChange={(event) => setEditingAmount(event.target.value)}
                     type="number"
-                    min="1"
-                    max={Math.round(editableMax(item))}
-                    placeholder={`Max ${Math.round(editableMax(item))}`}
+                    step="0.01"
+                    min="0.01"
+                    max={editableMax(item)}
+                    placeholder={`Max ${editableMax(item)}`}
                   />
                 </label>
                 <button className="primary tactile" type="button" onClick={() => saveSettlementEdit(item)}>Save Edit</button>
@@ -8039,7 +8045,7 @@ function buildExpenseSplits(transactions) {
         if (!item.paidBy || !item.owedBy) return null;
         return {
           ...item,
-          rows: [{ from: item.owedBy, to: item.paidBy, amount: Math.round(amount(item.amount)), label: "owes" }]
+          rows: [{ from: item.owedBy, to: item.paidBy, amount: Math.round(amount(item.amount) * 100) / 100, label: "owes" }]
         };
       }
       const splitMembers = (item.participants || []).filter(Boolean);
@@ -8047,7 +8053,7 @@ function buildExpenseSplits(transactions) {
       const share = amount(item.amount) / splitMembers.length;
       const rows = splitMembers
         .filter((name) => name !== item.paidBy)
-        .map((name) => ({ from: name, to: item.paidBy, amount: Math.round(share), label: "owes" }));
+        .map((name) => ({ from: name, to: item.paidBy, amount: Math.round(share * 100) / 100, label: "owes" }));
       return { ...item, rows };
     })
     .filter((item) => item && item.rows.length);
@@ -8060,11 +8066,11 @@ function splitModeOf(item) {
 
 function buildSettlements(stats) {
   const debtors = stats
-    .filter((item) => item.balance < -0.5)
+    .filter((item) => item.balance < -0.005)
     .map((item) => ({ name: item.name, amount: Math.abs(item.balance) }))
     .sort((a, b) => b.amount - a.amount);
   const creditors = stats
-    .filter((item) => item.balance > 0.5)
+    .filter((item) => item.balance > 0.005)
     .map((item) => ({ name: item.name, amount: item.balance }))
     .sort((a, b) => b.amount - a.amount);
   const settlements = [];
@@ -8072,13 +8078,13 @@ function buildSettlements(stats) {
   let c = 0;
   while (d < debtors.length && c < creditors.length) {
     const amountToSettle = Math.min(debtors[d].amount, creditors[c].amount);
-    if (amountToSettle > 0.5) {
-      settlements.push({ from: debtors[d].name, to: creditors[c].name, amount: Math.round(amountToSettle) });
+    if (amountToSettle > 0.005) {
+      settlements.push({ from: debtors[d].name, to: creditors[c].name, amount: Math.round(amountToSettle * 100) / 100 });
     }
     debtors[d].amount -= amountToSettle;
     creditors[c].amount -= amountToSettle;
-    if (debtors[d].amount <= 0.5) d += 1;
-    if (creditors[c].amount <= 0.5) c += 1;
+    if (debtors[d].amount <= 0.005) d += 1;
+    if (creditors[c].amount <= 0.005) c += 1;
   }
   return settlements;
 }
@@ -8125,10 +8131,10 @@ function buildProjectShareText(project, transactions) {
     ]);
   const participantRows = split.stats.map((item) => [
     item.name,
-    `INR ${Math.round(item.paid)}`,
-    `INR ${Math.round(item.share)}`,
+    `INR ${Number(item.paid).toFixed(2)}`,
+    `INR ${Number(item.share).toFixed(2)}`,
     item.balance >= 0 ? "Gets" : "Owes",
-    `INR ${Math.round(Math.abs(item.balance))}`
+    `INR ${Number(Math.abs(item.balance)).toFixed(2)}`
   ]);
   const settlementRows = split.settlements.map((item) => [item.from, item.to, `INR ${item.amount}`]);
   const equalRows = split.equalSplits.flatMap((expense) =>
@@ -8960,7 +8966,7 @@ function groupParticipantBalances(state, projectId = "All") {
       const transactions = state.projectTransactions.filter((item) => item.projectId === project.id);
       const { stats } = projectSplitSummary(project, transactions);
       stats.forEach((row) => {
-        acc[`${project.name}: ${row.name}`] = Math.round(Math.abs(row.balance || 0));
+        acc[`${project.name}: ${row.name}`] = Math.round(Math.abs(row.balance || 0) * 100) / 100;
       });
       return acc;
     }, {});
@@ -11836,9 +11842,10 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                                 value={customAmount}
                                 onChange={(event) => setCustomAmount(event.target.value)}
                                 type="number"
-                                min="1"
-                                max={Math.round(item.amount)}
-                                placeholder={`Max ${Math.round(item.amount)}`}
+                                step="0.01"
+                                min="0.01"
+                                max={item.amount}
+                                placeholder={`Max ${item.amount}`}
                                 style={{ padding: "2px 6px", width: "80px", fontSize: "0.8rem", border: "1px solid var(--line)", borderRadius: "6px" }}
                               />
                               <button className="primary tactile" style={{ padding: "2px 8px", fontSize: "0.72rem" }} type="button" onClick={() => {
@@ -12245,9 +12252,10 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                                 value={customAmount}
                                 onChange={(event) => setCustomAmount(event.target.value)}
                                 type="number"
-                                min="1"
-                                max={Math.round(item.amount)}
-                                placeholder={`Max ${Math.round(item.amount)}`}
+                                step="0.01"
+                                min="0.01"
+                                max={item.amount}
+                                placeholder={`Max ${item.amount}`}
                                 style={{ padding: "2px 6px", width: "80px", fontSize: "0.8rem", border: "1px solid var(--line)", borderRadius: "6px" }}
                               />
                               <button className="primary tactile" style={{ padding: "2px 8px", fontSize: "0.72rem" }} type="button" onClick={() => {
