@@ -5413,6 +5413,7 @@ function EntityModal({ state, modal, close, upsert, setState, setToast }) {
   const initial = getInitialForm(modal.kind, modal.item, modal.context, state);
   const [form, setForm] = useState(initial);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
   const set = (key, value) => setForm((current) => ({ ...current, [key]: value }));
   const submit = async (event) => {
     event.preventDefault();
@@ -5430,6 +5431,7 @@ function EntityModal({ state, modal, close, upsert, setState, setToast }) {
     if (modal.kind === "participants") {
       const parsedParticipants = splitParticipants(form.participants);
       if (modal.item?.isCloud && hasSupabase()) {
+        setLoading(true);
         try {
           const prjId = modal.item.id;
           const existingParticipants = await getCloudParticipants(prjId);
@@ -5453,6 +5455,8 @@ function EntityModal({ state, modal, close, upsert, setState, setToast }) {
           );
         } catch (err) {
           console.error("Failed to sync participants to cloud", err);
+        } finally {
+          setLoading(false);
         }
       }
       upsert("projects", { ...modal.item, participants: parsedParticipants }, "project");
@@ -5466,6 +5470,7 @@ function EntityModal({ state, modal, close, upsert, setState, setToast }) {
           setError("Supabase backend is not configured in the environment.");
           return;
         }
+        setLoading(true);
         try {
           const isEdit = Boolean(modal.item);
           const prjId = modal.item?.id || generateCloudProjectId(normalized.name, normalized.type);
@@ -5538,6 +5543,8 @@ function EntityModal({ state, modal, close, upsert, setState, setToast }) {
           console.error("Cloud project creation failed", err);
           setError("Failed to sync project to Supabase: " + err.message);
           return;
+        } finally {
+          setLoading(false);
         }
       }
     }
@@ -5545,6 +5552,7 @@ function EntityModal({ state, modal, close, upsert, setState, setToast }) {
       const normalized = normalizeForm("projectTransaction", form);
       const parentProject = state.projects.find(p => p.id === normalized.projectId);
       if (parentProject?.isCloud && hasSupabase()) {
+        setLoading(true);
         try {
           const syncId = normalized.id || ("projectTransaction-" + Math.random().toString(36).substring(2, 11));
           normalized.id = syncId;
@@ -5581,6 +5589,8 @@ function EntityModal({ state, modal, close, upsert, setState, setToast }) {
           console.error("Cloud transaction creation failed", err);
           setError("Failed to sync transaction to Supabase: " + err.message);
           return;
+        } finally {
+          setLoading(false);
         }
       }
     }
@@ -5615,14 +5625,31 @@ function EntityModal({ state, modal, close, upsert, setState, setToast }) {
   return (
     <div className="modal-backdrop">
       <form className="modal" onSubmit={submit}>
-        <SectionHeader title={modal.item ? `Edit ${kindLabel(modal.kind)}` : `Add ${kindLabel(modal.kind)}`} action={<button type="button" className="icon-button tactile" onClick={close}><X size={18} /></button>} />
+        <SectionHeader title={modal.item ? `Edit ${kindLabel(modal.kind)}` : `Add ${kindLabel(modal.kind)}`} action={<button type="button" className="icon-button tactile" onClick={close} disabled={loading}><X size={18} /></button>} />
         <div className="form-grid">
-          {fieldsForKind(modal.kind, state, form).map((field) => <Field key={field.name} field={field} value={form[field.name]} set={set} form={form} />)}
+          {fieldsForKind(modal.kind, state, form).map((field) => <Field key={field.name} field={field} value={form[field.name]} set={set} form={form} disabled={loading} />)}
           {error && <p className="validation wide">{error}</p>}
+          {loading && (
+            <p className="wide" style={{
+              color: "var(--ink)",
+              background: "linear-gradient(135deg, #e3f2fd, #bbdefb)",
+              padding: "0.75rem",
+              borderRadius: "13px",
+              margin: 0,
+              fontSize: "0.9rem",
+              textAlign: "center",
+              fontWeight: "600",
+              boxShadow: "var(--shadow-inset)"
+            }}>
+              🔄 Syncing with cloud database, please wait...
+            </p>
+          )}
         </div>
         <div className="modal-actions">
-          <button type="button" className="secondary tactile" onClick={close}>Cancel</button>
-          <button className="primary tactile" type="submit">{modal.item ? "Save Changes" : "Add"}</button>
+          <button type="button" className="secondary tactile" onClick={close} disabled={loading}>Cancel</button>
+          <button className="primary tactile" type="submit" disabled={loading}>
+            {loading ? "Syncing..." : (modal.item ? "Save Changes" : "Add")}
+          </button>
         </div>
       </form>
     </div>
@@ -10280,6 +10307,11 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
   const [cooldownRemaining, setCooldownRemaining] = useState(0);
   const [authError, setAuthError] = useState("");
 
+  const [roomParticipants, setRoomParticipants] = useState([]);
+  const [showConfirmJoin, setShowConfirmJoin] = useState(false);
+  const [showCustomNameInput, setShowCustomNameInput] = useState(false);
+  const [joiningRoom, setJoiningRoom] = useState(false);
+
   // Supabase Room states
   const [project, setProject] = useState(null);
   const [expenses, setExpenses] = useState([]);
@@ -10337,14 +10369,18 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
   // Lockout check key
   const lockoutKey = `lifepilot.lockout.${projectId}`;
 
-  // Check metadata initially
+  // Check metadata and participants initially
   useEffect(() => {
     if (!projectId) return;
     setLoadingMetadata(true);
-    getCloudProject(projectId)
-      .then((data) => {
+    Promise.all([
+      getCloudProject(projectId),
+      getCloudParticipants(projectId)
+    ])
+      .then(([data, parts]) => {
         setProjectMetadata(data);
-        if (!data.sharing_enabled) {
+        setRoomParticipants(parts || []);
+        if (data && !data.sharing_enabled) {
           setSharingDisabled(true);
         }
       })
@@ -10459,12 +10495,11 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, activeTab]);
 
-  // Authentication Flow (Join Room)
-  const handleJoin = async (e) => {
+  // Pre-join form submit (validation -> confirm dialog)
+  const handlePreJoin = (e) => {
     e.preventDefault();
     setAuthError("");
 
-    // Check brute force
     const currentLock = Number(localStorage.getItem(lockoutKey) || 0);
     if (currentLock > Date.now()) {
       setAuthError(`Too many incorrect attempts. Try again later.`);
@@ -10472,7 +10507,28 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
     }
 
     if (!enteredName.trim()) {
-      setAuthError("Display name is required.");
+      setAuthError("Please select or enter your name.");
+      return;
+    }
+    if (!enteredPin.trim()) {
+      setAuthError("PIN is required.");
+      return;
+    }
+    
+    setShowConfirmJoin(true);
+  };
+
+  // Authentication Flow (Join Room)
+  const handleJoin = async () => {
+    setShowConfirmJoin(false);
+    setJoiningRoom(true);
+    setAuthError("");
+
+    // Check brute force
+    const currentLock = Number(localStorage.getItem(lockoutKey) || 0);
+    if (currentLock > Date.now()) {
+      setAuthError(`Too many incorrect attempts. Try again later.`);
+      setJoiningRoom(false);
       return;
     }
 
@@ -10487,7 +10543,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
 
       const cleanName = enteredName.trim();
       
-      // Add participant in DB
+      // Add participant in DB if not already present
       await addCloudParticipant(projectId, cleanName, "participant");
       
       // Log join activity
@@ -10525,6 +10581,8 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
       } else {
         setAuthError("Incorrect PIN. Please try again.");
       }
+    } finally {
+      setJoiningRoom(false);
     }
   };
 
@@ -10813,16 +10871,21 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
     return (
       <div className="cloud-landing-container">
         <div className="cloud-landing-card">
-          <span style={{ fontSize: "2.5rem" }}>🚀</span>
-          <h1>Join Shared Room</h1>
-          <p>You have been invited to collaborate in <strong>{projectMetadata?.name}</strong> room.</p>
+          <div className="brand" style={{ justifyContent: "center", marginBottom: "1.25rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
+            <span className="logo" style={{ fontSize: "2.2rem" }}>🧭</span>
+            <h1 style={{ fontSize: "1.8rem", fontWeight: 950, margin: 0, color: "var(--ink)" }}>LifePilot</h1>
+          </div>
+          <h2 style={{ fontSize: "1.3rem", fontWeight: "950", margin: "0 0 0.5rem 0", color: "var(--ink)", textAlign: "center" }}>Join Shared Room</h2>
+          <p style={{ fontSize: "0.9rem", textAlign: "center", margin: "0 0 1.25rem 0", color: "#666" }}>
+            You have been invited to collaborate in <strong>{projectMetadata?.name}</strong> room.
+          </p>
 
           {cooldownRemaining > 0 ? (
-            <div className="warning">
+            <div className="warning" style={{ textAlign: "center" }}>
               🔒 Locked out due to too many failed PIN entries. Try again in {cooldownRemaining}s.
             </div>
           ) : (
-            <form onSubmit={handleJoin} className="cloud-landing-form">
+            <form onSubmit={handlePreJoin} className="cloud-landing-form">
               <div className="cloud-landing-input-group hide-label">
                 <label>Room PIN</label>
                 <input 
@@ -10834,23 +10897,105 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                   required
                 />
               </div>
-              <div className="cloud-landing-input-group">
-                <input 
-                  type="text" 
-                  value={enteredName} 
-                  onChange={(e) => setEnteredName(e.target.value)} 
-                  placeholder="Enter your name (e.g. Ahmed)" 
-                  maxLength={20}
-                  required
-                />
+              
+              <div className="cloud-landing-input-group" style={{ marginBottom: "1.25rem" }}>
+                <label style={{ display: "block", marginBottom: "0.5rem", fontWeight: "800", fontSize: "0.85rem", color: "var(--ink)", textAlign: "left" }}>
+                  Who are you? Select your name:
+                </label>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(90px, 1fr))", gap: "0.5rem", maxHeight: "120px", overflowY: "auto", padding: "4px", marginBottom: "0.5rem", border: "1px solid var(--line, #e2d9c2)", borderRadius: "10px", background: "rgba(0,0,0,0.01)" }}>
+                  {roomParticipants.map((p) => {
+                    const isSel = enteredName === p.name && !showCustomNameInput;
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        className={`secondary tactile ${isSel ? "active" : ""}`}
+                        style={{
+                          padding: "0.45rem",
+                          fontSize: "0.82rem",
+                          border: isSel ? "2px solid var(--brand, #6f68d8)" : "1px solid var(--line, #e2d9c2)",
+                          background: isSel ? "rgba(111, 104, 216, 0.12)" : "var(--paper, #fffdf7)",
+                          color: "var(--ink)",
+                          borderRadius: "8px",
+                          fontWeight: isSel ? "800" : "500",
+                          transition: "all 0.2s ease"
+                        }}
+                        onClick={() => {
+                          setEnteredName(p.name);
+                          setShowCustomNameInput(false);
+                        }}
+                      >
+                        {p.name}
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    className={`secondary tactile ${showCustomNameInput ? "active" : ""}`}
+                    style={{
+                      padding: "0.45rem",
+                      fontSize: "0.82rem",
+                      border: showCustomNameInput ? "2px solid var(--brand, #6f68d8)" : "1px solid var(--line, #e2d9c2)",
+                      background: showCustomNameInput ? "rgba(111, 104, 216, 0.12)" : "var(--paper, #fffdf7)",
+                      color: "var(--ink)",
+                      borderRadius: "8px",
+                      fontWeight: showCustomNameInput ? "800" : "500",
+                      transition: "all 0.2s ease"
+                    }}
+                    onClick={() => {
+                      setEnteredName("");
+                      setShowCustomNameInput(true);
+                    }}
+                  >
+                    ✏️ Other
+                  </button>
+                </div>
+                {showCustomNameInput && (
+                  <input 
+                    type="text" 
+                    value={enteredName} 
+                    onChange={(e) => setEnteredName(e.target.value)} 
+                    placeholder="Enter display name" 
+                    maxLength={20}
+                    required
+                    style={{ marginTop: "0.35rem" }}
+                  />
+                )}
               </div>
-              {authError && <div className="validation">{authError}</div>}
-              <button className="primary tactile wide" type="submit" style={{ padding: "0.95rem" }}>
-                Join Expense Room
+
+              {authError && <div className="validation" style={{ marginBottom: "1rem" }}>{authError}</div>}
+              <button 
+                className="primary tactile wide" 
+                type="submit" 
+                disabled={joiningRoom}
+                style={{ padding: "0.95rem", display: "flex", alignItems: "center", justifyContent: "center", gap: "0.5rem" }}
+              >
+                {joiningRoom ? "Connecting..." : "Join Expense Room"}
               </button>
             </form>
           )}
         </div>
+
+        {/* Confirmation Modal */}
+        {showConfirmJoin && (
+          <div className="modal-backdrop" style={{ zIndex: 100 }}>
+            <div className="modal" style={{ maxWidth: "340px", textAlign: "center", padding: "1.5rem" }}>
+              <span style={{ fontSize: "2.2rem", display: "block", marginBottom: "0.5rem" }}>🧭</span>
+              <h3 style={{ margin: "0 0 0.5rem 0", fontSize: "1.2rem", fontWeight: "950" }}>Confirm Identity</h3>
+              <p style={{ fontSize: "0.95rem", color: "var(--ink)", margin: "0 0 1.25rem 0" }}>
+                Are you sure you want to join this shared expense space as <strong>"{enteredName}"</strong>?
+              </p>
+              <div className="modal-actions" style={{ display: "flex", gap: "0.5rem", justifyContent: "center", marginTop: 0 }}>
+                <button type="button" className="secondary tactile" onClick={() => setShowConfirmJoin(false)} style={{ flex: 1 }}>
+                  Cancel
+                </button>
+                <button type="button" className="primary tactile" onClick={handleJoin} style={{ flex: 1 }}>
+                  Confirm
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
