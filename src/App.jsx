@@ -26,6 +26,7 @@ import {
   NotebookPen,
   Plus,
   Percent,
+  Pencil,
   Search,
   SendHorizontal,
   Settings,
@@ -11143,7 +11144,8 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
     }
 
     setSavingExpense(true);
-    const expenseId = "projectTransaction-" + Math.random().toString(36).substring(2, 11);
+    const isEdit = !!expForm.id;
+    const expenseId = expForm.id || "projectTransaction-" + Math.random().toString(36).substring(2, 11);
     const finalPaidBy = expForm.paidBy || displayName;
     const newExpense = {
       id: expenseId,
@@ -11158,25 +11160,39 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
       participants: expForm.splitMode === "Equal split" ? expForm.participants : [],
       payment_method: expForm.paymentMethod || "UPI",
       notes: expForm.notes || "",
-      created_by: displayName,
-      created_at: new Date().toISOString()
+      created_by: expForm.created_by || displayName,
+      created_at: expForm.created_at || new Date().toISOString()
     };
 
     // Optimistically update the UI immediately
-    setExpenses(prev => [newExpense, ...prev]);
+    if (isEdit) {
+      setExpenses(prev => prev.map(item => item.id === expenseId ? newExpense : item));
+    } else {
+      setExpenses(prev => [newExpense, ...prev]);
+    }
     setShowAddExpense(false);
 
     try {
       await upsertCloudExpense(newExpense);
+      
+      const activityAction = isEdit ? "edit_expense" : "add_expense";
+      const activityText = isEdit 
+        ? `${displayName} edited expense "${expForm.title}" (amount: ₹${expForm.amount})`
+        : `${displayName} added expense "${expForm.title}" of ₹${expForm.amount}`;
+        
       await addCloudActivity(
         projectId,
-        "add_expense",
-        `${displayName} added expense "${expForm.title}" of ₹${expForm.amount}`,
+        activityAction,
+        activityText,
         displayName
       );
 
       // Budget warning check
-      const totalSpentNow = expenses.reduce((sum, item) => sum + Number(item.amount), 0) + Number(expForm.amount);
+      const totalSpentNow = expenses.reduce((sum, item) => {
+        if (isEdit && item.id === expenseId) return sum;
+        return sum + Number(item.amount);
+      }, 0) + Number(expForm.amount);
+      
       if (project?.budget > 0) {
         const pct = (totalSpentNow / project.budget) * 100;
         const thresholdAlert = [100, 90, 80, 70].find(t => pct >= t && ((totalSpentNow - Number(expForm.amount)) / project.budget) * 100 < t);
@@ -11190,7 +11206,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
         }
       }
 
-      setToast("Expense added!");
+      setToast(isEdit ? "Expense updated!" : "Expense added!");
       setExpForm({
         title: "",
         amount: "",
@@ -11361,6 +11377,30 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
       setToast("Failed to delete document: " + err.message);
       getCloudDocuments(projectId).then(setDocuments).catch(console.error);
     }
+  };
+
+  const handleEditExpenseClick = (item) => {
+    let mode = "No split";
+    if (item.owed_by) mode = "Direct owed";
+    else if (item.participants && item.participants.length > 0) mode = "Equal split";
+    
+    setExpForm({
+      id: item.id,
+      title: item.title,
+      amount: String(item.amount),
+      category: item.category,
+      date: item.date,
+      time: item.time || "",
+      paidBy: item.paid_by,
+      splitMode: mode,
+      participants: item.participants || [],
+      owedBy: item.owed_by || "",
+      paymentMethod: item.payment_method || "UPI",
+      notes: item.notes || "",
+      created_by: item.created_by,
+      created_at: item.created_at
+    });
+    setShowAddExpense(true);
   };
 
   const handleDeleteExpense = async (expId, expTitle) => {
@@ -11816,7 +11856,22 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
 
                 {/* QUICK ADD ACTIONS */}
                 <div className="cluster spaced">
-                  <button className="primary tactile" onClick={() => setShowAddExpense(true)}><Plus size={18} />Add Expense</button>
+                  <button className="primary tactile" onClick={() => {
+                    setExpForm({
+                      title: "",
+                      amount: "",
+                      category: "Food",
+                      date: todayISO(),
+                      time: nowTime(),
+                      paidBy: displayName,
+                      splitMode: "No split",
+                      participants: [],
+                      owedBy: "",
+                      paymentMethod: "UPI",
+                      notes: ""
+                    });
+                    setShowAddExpense(true);
+                  }}><Plus size={18} />Add Expense</button>
                   <button className="secondary tactile" onClick={() => setShowAddTask(true)}><Plus size={18} />Add Reminder</button>
                   <button className="secondary tactile" onClick={() => setShowAddDoc(true)}><Plus size={18} />Share Drive Doc</button>
                 </div>
@@ -11834,6 +11889,16 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                           </div>
                           <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
                             <strong style={{ color: "var(--ink)" }}>{rupee.format(item.amount)}</strong>
+                            {item.category !== "Settlement" && (
+                              <button 
+                                className="icon-button tactile" 
+                                style={{ padding: "2px", border: "none", background: "transparent", color: "var(--muted)" }}
+                                onClick={() => handleEditExpenseClick(item)}
+                                title="Edit"
+                              >
+                                <Pencil size={13} />
+                              </button>
+                            )}
                             {(item.created_by === displayName || item.category === "Settlement" || participants.find(p => p.name === displayName)?.role === "owner") && (
                               <button 
                                 className="icon-button tactile danger" 
@@ -11984,7 +12049,22 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
               <div style={{ display: "grid", gap: "1rem" }}>
                 <div className="cluster spaced">
                   <h2>Expenses list ({filteredExpenses.length})</h2>
-                  <button className="primary tactile" onClick={() => setShowAddExpense(true)}><Plus size={18} />Add Expense</button>
+                  <button className="primary tactile" onClick={() => {
+                    setExpForm({
+                      title: "",
+                      amount: "",
+                      category: "Food",
+                      date: todayISO(),
+                      time: nowTime(),
+                      paidBy: displayName,
+                      splitMode: "No split",
+                      participants: [],
+                      owedBy: "",
+                      paymentMethod: "UPI",
+                      notes: ""
+                    });
+                    setShowAddExpense(true);
+                  }}><Plus size={18} />Add Expense</button>
                 </div>
 
                 {/* SEARCH & FILTERS */}
@@ -12075,8 +12155,20 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                           />
                         </div>
 
-                        {(item.created_by === displayName || item.category === "Settlement" || participants.find(p => p.name === displayName)?.role === "owner") && (
+                        {item.category !== "Settlement" && (
                           <div style={{ marginLeft: "0.5rem" }}>
+                            <button 
+                              className="icon-button tactile" 
+                              style={{ padding: "0.4rem", color: "var(--muted)" }} 
+                              onClick={() => handleEditExpenseClick(item)}
+                              title="Edit"
+                            >
+                              <Pencil size={16} />
+                            </button>
+                          </div>
+                        )}
+                        {(item.created_by === displayName || item.category === "Settlement" || participants.find(p => p.name === displayName)?.role === "owner") && (
+                          <div style={{ marginLeft: "0.3rem" }}>
                             <button 
                               className="icon-button tactile danger" 
                               style={{ padding: "0.4rem" }} 
@@ -12382,7 +12474,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
        {showAddExpense && (
          <div className="modal-backdrop">
            <form className="modal" onSubmit={handleAddExpenseSubmit}>
-             <SectionHeader title="Add Cloud Expense" action={<button type="button" className="icon-button tactile" onClick={() => setShowAddExpense(false)}><X size={18} /></button>} />
+             <SectionHeader title={expForm.id ? "Edit Cloud Expense" : "Add Cloud Expense"} action={<button type="button" className="icon-button tactile" onClick={() => setShowAddExpense(false)}><X size={18} /></button>} />
              <div className="form-grid">
                <label className="wide">Title
                  <input 
@@ -12492,7 +12584,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
              <div className="modal-actions">
                <button type="button" className="secondary tactile" onClick={() => setShowAddExpense(false)} disabled={savingExpense}>Cancel</button>
                <button className="primary tactile" type="submit" disabled={savingExpense}>
-                 {savingExpense ? "Syncing..." : "Submit Expense"}
+                 {savingExpense ? "Syncing..." : (expForm.id ? "Save Changes" : "Submit Expense")}
                </button>
              </div>
            </form>
