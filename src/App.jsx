@@ -7463,7 +7463,7 @@ function TransactionRow({ item }) {
   );
 }
 
-function ExpenseSplitInlineDetails({ expense, project, isCloud, onMarkPaid, onDeletePaid }) {
+function ExpenseSplitInlineDetails({ expense, project, isCloud, onMarkPaid, onDeletePaid, setConfirmDialog }) {
   const [expanded, setExpanded] = useState(false);
   const [customKey, setCustomKey] = useState("");
   const [customAmount, setCustomAmount] = useState("");
@@ -7559,9 +7559,13 @@ function ExpenseSplitInlineDetails({ expense, project, isCloud, onMarkPaid, onDe
                         style={{ padding: "2px 6px", fontSize: "0.72rem" }} 
                         type="button" 
                         onClick={() => {
-                          if (window.confirm(`Are you sure you want to mark this split as fully paid (${rupee.format(row.amount)})?`)) {
-                            onMarkPaid(row, row.amount, "Full");
-                          }
+                          setConfirmDialog({
+                            title: "Mark as Paid",
+                            message: `Are you sure you want to mark this split as fully paid (${rupee.format(row.amount)})?`,
+                            confirmLabel: "Mark Paid",
+                            tone: "primary",
+                            onConfirm: () => onMarkPaid(row, row.amount, "Full")
+                          });
                         }}
                       >
                         Fully Paid
@@ -7599,11 +7603,17 @@ function ExpenseSplitInlineDetails({ expense, project, isCloud, onMarkPaid, onDe
                       onClick={() => {
                         const safeAmt = Math.min(Math.max(Number(customAmount), 0), row.amount);
                         if (safeAmt > 0) {
-                          if (window.confirm(`Are you sure you want to save settlement payment of ${rupee.format(safeAmt)}?`)) {
-                            onMarkPaid(row, safeAmt, "Custom", linked?.id);
-                            setCustomKey("");
-                            setCustomAmount("");
-                          }
+                          setConfirmDialog({
+                            title: "Save Payment",
+                            message: `Are you sure you want to save settlement payment of ${rupee.format(safeAmt)}?`,
+                            confirmLabel: "Save",
+                            tone: "primary",
+                            onConfirm: () => {
+                              onMarkPaid(row, safeAmt, "Custom", linked?.id);
+                              setCustomKey("");
+                              setCustomAmount("");
+                            }
+                          });
                         }
                       }}
                     >
@@ -7615,11 +7625,17 @@ function ExpenseSplitInlineDetails({ expense, project, isCloud, onMarkPaid, onDe
                         style={{ padding: "2px 8px", fontSize: "0.72rem" }} 
                         type="button" 
                         onClick={() => {
-                          if (window.confirm("Are you sure you want to delete this settlement payment?")) {
-                            onDeletePaid(linked);
-                            setCustomKey("");
-                            setCustomAmount("");
-                          }
+                          setConfirmDialog({
+                            title: "Delete Payment",
+                            message: "Are you sure you want to delete this settlement payment?",
+                            confirmLabel: "Delete",
+                            tone: "danger",
+                            onConfirm: () => {
+                              onDeletePaid(linked);
+                              setCustomKey("");
+                              setCustomAmount("");
+                            }
+                          });
                         }}
                       >
                         Delete Payment
@@ -7665,6 +7681,7 @@ function RecordTable({ list, type, setModal, remove, project, upsert }) {
               expense={item} 
               project={project} 
               isCloud={false} 
+              setConfirmDialog={setConfirmDialog} 
               onMarkPaid={(row, amt, paymentType, existingSettlementId) => {
                 if (!project || !upsert) return;
                 if (existingSettlementId) {
@@ -11915,10 +11932,8 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                   } />
                   <div style={{ display: "grid", gap: "0", marginTop: "0.5rem" }}>
                     {expenses.filter(item => {
-                      const sm = item.splitMode || (item.owed_by ? "Direct owed" : (item.participants && item.participants.filter(Boolean).length > 0 ? "Equal split" : "No split"));
-                      const isSplit = sm !== "No split" || item.category === "Settlement";
-                      if (dashboardFilter === "Normal") return !isSplit;
-                      if (dashboardFilter === "Split") return isSplit;
+                      if (dashboardFilter === "Normal") return item.category !== "Settlement";
+                      if (dashboardFilter === "Split") return item.category === "Settlement";
                       return true;
                     }).slice(0, 5).map(item => (
                       <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0.7rem 0", borderBottom: "1px solid rgba(0,0,0,0.05)" }}>
@@ -12223,6 +12238,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                                               isCloud={true} 
                                               onMarkPaid={handleMarkSettlementPaid} 
                                               onDeletePaid={handleDeleteSettlementInline}
+                                              setConfirmDialog={setConfirmDialog}
                                             />
                                           </div>
                                         )}
