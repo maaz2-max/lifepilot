@@ -7572,7 +7572,7 @@ function Linkify({ children }) {
 }
 
 function EmptyState({ text, small = false }) {
-  return <div className={`empty-state ${small ? "small" : ""}`}><NotebookPen size={small ? 18 : 28} /><p>{text}</p></div>;
+  return <div className={`empty-state ${small ? "small" : ""}`}><p>{text}</p></div>;
 }
 
 function AlertRow({ alert }) {
@@ -10891,6 +10891,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
   const [uploadingSettlementImage, setUploadingSettlementImage] = useState(false);
   const [settlementWarningShown, setSettlementWarningShown] = useState(false);
   const [logSearchQuery, setLogSearchQuery] = useState("");
+  const [replacingImageIndex, setReplacingImageIndex] = useState(null);
 
   // Local forms state
   const [expForm, setExpForm] = useState({
@@ -11395,6 +11396,41 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
       setToast(`Successfully attached ${uploadedUrls.length} image(s)!`);
     }
     setUploadingExpenseImage(false);
+  };
+
+  const handleImageReplace = async (file) => {
+    if (!file || replacingImageIndex === null) return;
+    setUploadingExpenseImage(true);
+    try {
+      const compressedBase64 = await compressImage(file, 600, 600, 0.5);
+      let finalUrl = "";
+      try {
+        const blob = base64ToBlob(compressedBase64, "image/jpeg");
+        const compressedFile = new File([blob], file.name.replace(/\.[^/.]+$/, "") + ".jpg", { type: "image/jpeg" });
+        finalUrl = await uploadImageToSupabase(compressedFile);
+      } catch (uploadErr) {
+        console.warn("Supabase upload failed, falling back to base64", uploadErr);
+        finalUrl = compressedBase64;
+      }
+
+      setExpForm(prev => {
+        const nextUrls = [...(prev.imageUrls || [])];
+        if (replacingImageIndex >= 0 && replacingImageIndex < nextUrls.length) {
+          nextUrls[replacingImageIndex] = finalUrl;
+        }
+        return {
+          ...prev,
+          imageUrls: nextUrls
+        };
+      });
+      setToast("Image replaced successfully!");
+    } catch (err) {
+      console.error("Failed to replace image:", err);
+      setToast("Error replacing image.");
+    } finally {
+      setUploadingExpenseImage(false);
+      setReplacingImageIndex(null);
+    }
   };
 
   // Add transactions
@@ -12047,7 +12083,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
           <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
             <Download size={18} />
             <span style={{ lineHeight: "1.2" }}>
-              {isIOS ? "Get the App: Tap Share ⬆️ then 'Add to Home Screen' for the best experience." : "Install this Room to your Home Screen"}
+              {isIOS ? "Get the App: Tap Share then 'Add to Home Screen' for the best experience." : "Install this Room to your Home Screen"}
             </span>
           </div>
           {installPrompt && (
@@ -12069,7 +12105,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
           </h2>
         </div>
         <div className="cluster" style={{ gap: "0.85rem" }}>
-          <span style={{ fontWeight: 800, fontSize: "0.9rem" }}>👤 {displayName}</span>
+          <span style={{ fontWeight: 800, fontSize: "0.9rem" }}>{displayName}</span>
           <button className="secondary tactile danger" onClick={handleLeave} style={{ padding: "0.4rem 0.8rem", fontSize: "0.85rem" }}>
             Leave Space
           </button>
@@ -12122,7 +12158,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                 {/* OVERSPENT BANNER */}
                 {isOverspent && (
                    <div className="alert-row danger">
-                     <strong>⚠️ Over budget warning!</strong>
+                     <strong>Over budget warning!</strong>
                      <span>You have exceeded the budget by <strong>{rupee.format(overspentAmt)}</strong>. Control spending!</span>
                    </div>
                 )}
@@ -12344,7 +12380,10 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "1rem" }}>
                   {/* TIMELINE SUMMARY */}
                   <div className="panel" style={{ padding: "1.2rem" }}>
-                    <SectionHeader title="Recent Room Activities" />
+                    <SectionHeader 
+                      title="Recent Room Activities" 
+                      action={<button type="button" className="secondary tactile" style={{ padding: "2px 8px", fontSize: "0.75rem" }} onClick={() => setActiveTab("timeline")}>View Logs</button>} 
+                    />
                     <div style={{ display: "grid", gap: "0.65rem", marginTop: "0.55rem" }}>
                       {activities.slice(0, 4).map(act => (
                         <div key={act.id} style={{ display: "flex", justifyContent: "space-between", fontSize: "0.88rem", paddingBottom: "0.45rem", borderBottom: "1px dashed rgba(0,0,0,0.06)" }}>
@@ -12498,7 +12537,6 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                                         [item.id]: prev[item.id] ? undefined : "details"
                                       }))}
                                     >
-                                      <span style={{ fontSize: "1.3rem", width: "32px", textAlign: "center", flexShrink: 0 }}>{icon}</span>
                                       <div style={{ flex: 1, minWidth: 0 }}>
                                         <div style={{ fontWeight: 800, fontSize: "0.95rem", color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</div>
                                         <div style={{ fontSize: "0.75rem", color: "var(--muted)", marginTop: "0.1rem" }}>{item.time || ""} · {item.category}</div>
@@ -12515,7 +12553,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                                           <span style={{ background: "rgba(0,0,0,0.04)", padding: "3px 10px", borderRadius: "8px", border: "1px solid rgba(0,0,0,0.06)" }}>Paid by: <strong>{item.paid_by}</strong></span>
                                           {item.participants && item.participants.length > 0 && (
                                             <span style={{ background: "rgba(111,104,216,0.08)", color: "var(--brand,#6f68d8)", padding: "3px 10px", borderRadius: "8px", border: "1px solid rgba(111,104,216,0.12)" }}>
-                                              👥 {item.participants.join(", ")}
+                                              Split: {item.participants.join(", ")}
                                             </span>
                                           )}
                                           {item.owed_by && (
@@ -12531,12 +12569,12 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                                                 {cleanNotes && <span style={{ fontStyle: "italic", opacity: 0.7 }}>"<Linkify>{cleanNotes}</Linkify>"</span>}
                                                 {urls && urls.map((url, uidx) => (
                                                   <span key={uidx} style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", background: "rgba(16, 185, 129, 0.08)", color: "#10b981", padding: "2px 8px", borderRadius: "6px", border: "1px solid rgba(16, 185, 129, 0.12)", fontWeight: "bold" }}>
-                                                    📎 <a href={url} target="_blank" rel="noreferrer" style={{ color: "inherit", textDecoration: "none" }}>Receipt {urls.length > 1 ? `#${uidx + 1}` : ""}</a>
+                                                    <a href={url} target="_blank" rel="noreferrer" style={{ color: "inherit", textDecoration: "none" }}>Receipt {urls.length > 1 ? `#${uidx + 1}` : ""}</a>
                                                   </span>
                                                 ))}
                                                 {hasNoProof && (
                                                   <span style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", background: "rgba(239, 68, 68, 0.08)", color: "#ef4444", padding: "2px 8px", borderRadius: "6px", border: "1px solid rgba(239, 68, 68, 0.12)", fontWeight: "bold" }}>
-                                                    ⚠️ No payment proof provided
+                                                    No payment proof provided
                                                   </span>
                                                 )}
                                               </>
@@ -12979,9 +13017,6 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                                     borderBottom: idx < groups[dateStr].length - 1 ? "1px solid rgba(0,0,0,0.06)" : "none" 
                                   }}
                                 >
-                                  <span style={{ fontSize: "1.2rem", width: "28px", textAlign: "center", flexShrink: 0 }}>
-                                    {getIcon(act.action_type)}
-                                  </span>
                                   <div style={{ flex: 1, minWidth: 0 }}>
                                     <p style={{ margin: 0, fontWeight: 700, fontSize: "0.92rem", color: "var(--ink)" }}>{act.description}</p>
                                     <div style={{ display: "flex", gap: "0.4rem", fontSize: "0.75rem", color: "var(--muted)", marginTop: "0.15rem" }}>
@@ -13140,6 +13175,17 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                      style={{ display: 'none' }}
                      onChange={(e) => handleImagesSelected(e.target.files)}
                    />
+                   <input 
+                     type="file" 
+                     accept="image/*" 
+                     id="expense-replace-upload"
+                     style={{ display: 'none' }}
+                     onChange={(e) => {
+                       if (e.target.files && e.target.files[0]) {
+                         handleImageReplace(e.target.files[0]);
+                       }
+                     }}
+                   />
 
                    <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
                      <button 
@@ -13149,7 +13195,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                        style={{ padding: "6px 12px", fontSize: "0.82rem", display: "inline-flex", alignItems: "center", gap: "4px" }}
                        onClick={() => document.getElementById("expense-camera-upload").click()}
                      >
-                       📷 Take Photo
+                       Take Photo
                      </button>
                      <button 
                        type="button" 
@@ -13158,16 +13204,16 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                        style={{ padding: "6px 12px", fontSize: "0.82rem", display: "inline-flex", alignItems: "center", gap: "4px" }}
                        onClick={() => document.getElementById("expense-gallery-upload").click()}
                      >
-                       🖼️ Upload Gallery
+                       Upload Gallery
                      </button>
                      
                      <span style={{ fontSize: "0.80rem", color: "var(--muted)", fontWeight: "bold" }}>
-                       (${(expForm.imageUrls || []).length}/5 images)
+                       ({(expForm.imageUrls || []).length}/5 images)
                      </span>
                      
                      {uploadingExpenseImage && (
                        <span style={{ fontSize: "0.80rem", color: "var(--brand)", fontWeight: "bold" }}>
-                         ⚡ Optimizing & Uploading...
+                         Optimizing & Uploading...
                        </span>
                      )}
                    </div>
@@ -13176,42 +13222,58 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                    {expForm.imageUrls && expForm.imageUrls.length > 0 && (
                      <div style={{ display: "flex", gap: "0.65rem", flexWrap: "wrap", background: "rgba(0,0,0,0.03)", padding: "0.6rem", borderRadius: "10px", border: "1px dashed rgba(0,0,0,0.1)" }}>
                        {expForm.imageUrls.map((url, index) => (
-                         <div key={index} style={{ position: "relative", width: "55px", height: "55px", borderRadius: "6px", overflow: "hidden", border: "1px solid var(--line)" }}>
-                           <img 
-                             src={url} 
-                             alt={`Receipt ${index + 1}`} 
-                             style={{ width: "100%", height: "100%", objectFit: "cover" }} 
-                           />
-                           <button
-                             type="button"
-                             className="tactile danger"
-                             title="Remove"
-                             style={{ 
-                               position: "absolute", 
-                               top: "2px", 
-                               right: "2px", 
-                               background: "rgba(239, 68, 68, 0.95)", 
-                               color: "white", 
-                               border: "none", 
-                               borderRadius: "50%", 
-                               width: "16px", 
-                               height: "16px", 
-                               display: "flex", 
-                               alignItems: "center", 
-                               justifyContent: "center", 
-                               fontSize: "10px", 
-                               padding: 0,
-                               cursor: "pointer"
-                             }}
-                             onClick={() => {
-                               setExpForm(prev => ({
-                                 ...prev,
-                                 imageUrls: prev.imageUrls.filter((_, idx) => idx !== index)
-                               }));
-                             }}
-                           >
-                             ×
-                           </button>
+                         <div key={index} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "0.25rem", background: "white", padding: "4px", borderRadius: "8px", border: "1px solid var(--line)" }}>
+                           <div style={{ position: "relative", width: "55px", height: "55px", borderRadius: "4px", overflow: "hidden" }}>
+                             <img 
+                               src={url} 
+                               alt={`Receipt ${index + 1}`} 
+                               style={{ width: "100%", height: "100%", objectFit: "cover" }} 
+                             />
+                           </div>
+                           <div style={{ display: "flex", gap: "2px" }}>
+                             <button
+                               type="button"
+                               className="tactile"
+                               style={{ 
+                                 fontSize: "9px", 
+                                 padding: "2px 4px", 
+                                 background: "var(--line, #e2e8f0)", 
+                                 color: "var(--ink, #1e293b)", 
+                                 border: "none", 
+                                 borderRadius: "4px",
+                                 fontWeight: "600",
+                                 cursor: "pointer"
+                               }}
+                               onClick={() => {
+                                 setReplacingImageIndex(index);
+                                 document.getElementById("expense-replace-upload").click();
+                               }}
+                             >
+                               Replace
+                             </button>
+                             <button
+                               type="button"
+                               className="tactile danger"
+                               style={{ 
+                                 fontSize: "9px", 
+                                 padding: "2px 4px", 
+                                 background: "rgba(239, 68, 68, 0.1)", 
+                                 color: "#ef4444", 
+                                 border: "1px solid rgba(239, 68, 68, 0.15)", 
+                                 borderRadius: "4px",
+                                 fontWeight: "600",
+                                 cursor: "pointer"
+                               }}
+                               onClick={() => {
+                                 setExpForm(prev => ({
+                                   ...prev,
+                                   imageUrls: prev.imageUrls.filter((_, idx) => idx !== index)
+                                 }));
+                               }}
+                             >
+                               Delete
+                             </button>
+                           </div>
                          </div>
                        ))}
                      </div>
@@ -13253,11 +13315,10 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                  <strong style={{ fontSize: "1.1rem", color: "var(--brand)" }}>{rupee.format(activeSettlementModal.paidAmt)}</strong>
                </div>
              </div>
-
+ 
              {settlementWarningShown ? (
                <div className="panel" style={{ background: "rgba(245, 158, 11, 0.08)", borderColor: "rgba(245, 158, 11, 0.2)", padding: "1rem", marginBottom: "1rem" }}>
                  <div style={{ display: "flex", gap: "0.6rem", alignItems: "flex-start" }}>
-                   <span style={{ fontSize: "1.3rem" }}>⚠️</span>
                    <div>
                      <strong style={{ color: "#d97706", display: "block", marginBottom: "0.25rem" }}>Transparency Warning</strong>
                      <span style={{ fontSize: "0.85rem", color: "#b45309", lineHeight: "1.4" }}>
@@ -13337,10 +13398,12 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                              if (file) {
                                setUploadingSettlementImage(true);
                                try {
-                                 const compressedBase64 = await compressImage(file, 800, 800, 0.7);
+                                 const compressedBase64 = await compressImage(file, 600, 600, 0.5);
                                  let finalUrl = "";
                                  try {
-                                   finalUrl = await uploadImageToSupabase(file);
+                                   const blob = base64ToBlob(compressedBase64, "image/jpeg");
+                                   const compressedFile = new File([blob], file.name.replace(/\.[^/.]+$/, "") + ".jpg", { type: "image/jpeg" });
+                                   finalUrl = await uploadImageToSupabase(compressedFile);
                                  } catch (uploadErr) {
                                    console.warn("Supabase upload failed, falling back to base64", uploadErr);
                                    finalUrl = compressedBase64;
@@ -13362,11 +13425,10 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                            disabled={uploadingSettlementImage}
                            onClick={() => document.getElementById("settlement-image-upload").click()}
                          >
-                           {uploadingSettlementImage ? "Uploading..." : settlementImage ? "Change Screenshot" : "Upload Screenshot"}
+                           {uploadingSettlementImage ? "Uploading..." : "Upload Screenshot"}
                          </button>
                          {settlementImage && (
                            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                             <span style={{ fontSize: '0.82rem', color: 'green', fontWeight: 'bold' }}>✓ Attached</span>
                              <a 
                                href={settlementImage} 
                                target="_blank" 
@@ -13377,11 +13439,19 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                              </a>
                              <button 
                                type="button" 
-                               className="icon-button tactile danger" 
-                               style={{ padding: "2px 4px" }}
+                               className="tactile" 
+                               style={{ fontSize: "11px", padding: "3px 8px", background: "var(--line, #e2e8f0)", color: "var(--ink, #1e293b)", border: "none", borderRadius: "4px", fontWeight: "600", cursor: "pointer" }}
+                               onClick={() => document.getElementById("settlement-image-upload").click()}
+                             >
+                               Replace
+                             </button>
+                             <button 
+                               type="button" 
+                               className="tactile danger" 
+                               style={{ fontSize: "11px", padding: "3px 8px", background: "rgba(239, 68, 68, 0.1)", color: "#ef4444", border: "1px solid rgba(239, 68, 68, 0.15)", borderRadius: "4px", fontWeight: "600", cursor: "pointer" }}
                                onClick={() => setSettlementImage("")}
                              >
-                               <X size={14} />
+                               Delete
                              </button>
                            </div>
                          )}
