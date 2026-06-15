@@ -4863,12 +4863,18 @@ function ProjectsView({ state, selectedProject, setSelectedProject, openAdd, set
                   </div>
                   <div className="share-info-row" style={{ wordBreak: "break-all" }}>
                     <span>Share Link:</span>
-                    <a href={`${window.location.origin}/project/${active.id}`} target="_blank" rel="noopener noreferrer">
+                    <a href="#" onClick={(e) => {
+                      e.preventDefault();
+                      window.location.href = `/project/${active.id}`;
+                    }}>
                       {window.location.origin}/project/{active.id}
                     </a>
                   </div>
                 </div>
                 <div className="cluster" style={{ gap: "0.5rem", marginTop: "0.5rem" }}>
+                  <button className="primary tactile" onClick={() => {
+                    window.location.href = `/project/${active.id}`;
+                  }}>Open Cloud Room</button>
                   <button className="secondary tactile" onClick={() => {
                     navigator.clipboard.writeText(`${window.location.origin}/project/${active.id}`);
                     setToast("Link copied!");
@@ -10682,6 +10688,14 @@ function SkeletonLoader({ type = "list" }) {
 }
 
 export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
+  const installPrompt = useInstallPrompt();
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+  const [isStandalone, setIsStandalone] = useState(false);
+
+  useEffect(() => {
+    setIsStandalone(window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true);
+  }, []);
+
   const [loadingMetadata, setLoadingMetadata] = useState(true);
   const [projectMetadata, setProjectMetadata] = useState(null);
   const [sharingDisabled, setSharingDisabled] = useState(false);
@@ -11823,6 +11837,21 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
   // ISOLATED WORKSPACE VIEW
   return (
     <div className={`cloud-room-shell ${globalTheme}`}>
+      {!isStandalone && (installPrompt || isIOS) && (
+        <div style={{ background: "var(--brand, #6f68d8)", color: "white", padding: "0.75rem 1rem", display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.85rem", fontWeight: 600, borderBottom: "1px solid rgba(0,0,0,0.1)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+            <Download size={18} />
+            <span style={{ lineHeight: "1.2" }}>
+              {isIOS ? "Get the App: Tap Share ⬆️ then 'Add to Home Screen' for the best experience." : "Install this Room to your Home Screen"}
+            </span>
+          </div>
+          {installPrompt && (
+            <button className="tactile" style={{ background: "white", color: "var(--brand, #6f68d8)", padding: "6px 12px", borderRadius: "8px", fontSize: "0.8rem", fontWeight: 900, border: "none", cursor: "pointer", flexShrink: 0, marginLeft: "0.5rem" }} onClick={() => installPrompt.prompt()}>
+              Install
+            </button>
+          )}
+        </div>
+      )}
       {/* HEADER */}
       <header className="cloud-room-header">
         <div>
