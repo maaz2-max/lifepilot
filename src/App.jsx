@@ -1970,6 +1970,7 @@ export default function App() {
             projectId: exp.project_id,
             title: exp.title,
             amount: exp.amount,
+            type: "Debit",
             category: exp.category,
             date: exp.date,
             time: exp.time,
@@ -10874,6 +10875,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
   const mappedExpensesForSplit = expenses.map(e => ({
     ...e,
     paidBy: e.paid_by,
+    type: "Debit",
     splitMode: e.participants && e.participants.length > 0 ? "Equal split" : "No split",
     participants: e.participants || []
   }));
