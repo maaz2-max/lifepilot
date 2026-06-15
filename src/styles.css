@@ -5410,6 +5410,377 @@ label {
   width: 100%;
 }
 
+/* --- Shared Cloud Project Mode (Expense Room) Styles --- */
 
+/* Shimmer / Skeleton Animation */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
 
+.shimmer {
+  background: linear-gradient(90deg, var(--paper) 25%, rgba(0, 0, 0, 0.05) 50%, var(--paper) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 12px;
+}
 
+.skeleton-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.skeleton-card {
+  height: 100px;
+}
+
+.skeleton-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.skeleton-item {
+  height: 48px;
+}
+
+/* Pulsing Status Dot */
+@keyframes pulse-green {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(46, 204, 113, 0.7);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 6px rgba(46, 204, 113, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(46, 204, 113, 0);
+  }
+}
+
+.status-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  background-color: #2ecc71;
+  border-radius: 50%;
+  animation: pulse-green 2s infinite;
+}
+
+/* Landing / Join View */
+.cloud-landing-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 1.5rem;
+  background: linear-gradient(135deg, rgba(199, 200, 244, 0.4) 0%, rgba(251, 247, 232, 0.4) 100%), var(--bg, #fbf7e8);
+}
+
+.cloud-landing-card {
+  width: 100%;
+  max-width: 440px;
+  padding: 2.2rem;
+  background: var(--paper, #ffffff);
+  border: 2px solid var(--line, #111111);
+  border-radius: 28px;
+  box-shadow: 8px 10px 0 var(--line, #111111);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.cloud-landing-card h1 {
+  font-size: 1.8rem;
+  font-weight: 950;
+  color: var(--ink, #111111);
+  margin: 0;
+}
+
+.cloud-landing-card p {
+  color: var(--muted, #555555);
+  font-size: 0.95rem;
+  margin: 0;
+}
+
+.cloud-landing-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+
+.cloud-landing-input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  text-align: left;
+}
+
+/* Hide PIN field label but keep standard input */
+.cloud-landing-input-group.hide-label label {
+  display: none;
+}
+
+.cloud-landing-input-group input {
+  width: 100%;
+  padding: 0.95rem;
+  font-size: 1rem;
+  border: 2px solid var(--line, #111111);
+  border-radius: 14px;
+  background: var(--cream, #fffdf7);
+  box-shadow: var(--shadow-inset);
+  box-sizing: border-box;
+}
+
+.cloud-landing-input-group input:focus {
+  outline: none;
+  border-color: var(--brand, #6f68d8);
+}
+
+/* Isolated Cloud Room Workspace Layout */
+.cloud-room-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background: var(--bg, #fbf7e8);
+}
+
+.cloud-room-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.5rem;
+  border-bottom: 2px solid var(--line, #111111);
+  background: var(--paper, #ffffff);
+  gap: 1rem;
+}
+
+.cloud-room-header h2 {
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 950;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.cloud-room-main {
+  flex: 1;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  max-width: 1200px;
+  width: 100%;
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+
+/* Share screen styles */
+.share-info-box {
+  background: var(--cream, #fffdf7);
+  border: 2px dashed var(--line, #111111);
+  border-radius: 16px;
+  padding: 1rem;
+  margin: 0.85rem 0;
+  display: grid;
+  gap: 0.65rem;
+}
+
+.share-info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.9rem;
+}
+
+.share-info-row strong {
+  font-size: 1rem;
+}
+
+/* Welcome popup message banner */
+.welcome-banner {
+  background: linear-gradient(135deg, rgba(216, 255, 143, 0.4), rgba(169, 215, 245, 0.4));
+  border: 2px solid var(--line, #111111);
+  border-radius: 18px;
+  padding: 1.1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  box-shadow: var(--shadow);
+}
+
+.welcome-banner-text {
+  font-weight: 800;
+  font-size: 1rem;
+  color: var(--ink, #111111);
+}
+
+/* Chat box mobile friendly style */
+.cloud-chat-card {
+  display: flex;
+  flex-direction: column;
+  height: 480px;
+  border: 2px solid var(--line, #111111);
+  border-radius: 24px;
+  background: var(--paper, #ffffff);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.cloud-chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  background: var(--cream, #fffdf7);
+}
+
+.cloud-chat-message-bubble {
+  max-width: 80%;
+  padding: 0.75rem 1rem;
+  border-radius: 18px;
+  font-size: 0.92rem;
+  line-height: 1.4;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+  display: flex;
+  flex-direction: column;
+}
+
+.cloud-chat-message-bubble.self {
+  align-self: flex-end;
+  background: #d8ff8f;
+  color: #111111;
+  border-bottom-right-radius: 4px;
+  border: 2px solid var(--line, #111111);
+}
+
+.cloud-chat-message-bubble.other {
+  align-self: flex-start;
+  background: var(--paper, #ffffff);
+  color: var(--ink, #111111);
+  border-bottom-left-radius: 4px;
+  border: 2px solid var(--line, #111111);
+}
+
+.cloud-chat-msg-header {
+  font-size: 0.75rem;
+  font-weight: 900;
+  margin-bottom: 0.2rem;
+  color: var(--muted, #555555);
+}
+
+.cloud-chat-msg-time {
+  font-size: 0.7rem;
+  opacity: 0.65;
+  align-self: flex-end;
+  margin-top: 0.25rem;
+}
+
+.cloud-chat-input-bar {
+  display: flex;
+  padding: 0.75rem;
+  border-top: 2px solid var(--line, #111111);
+  background: var(--paper, #ffffff);
+  gap: 0.5rem;
+}
+
+.cloud-chat-input-bar input {
+  flex: 1;
+  padding: 0.75rem;
+  border: 2px solid var(--line, #111111);
+  border-radius: 12px;
+  background: var(--cream, #fffdf7);
+  font-size: 0.95rem;
+}
+
+.cloud-chat-input-bar input:focus {
+  outline: none;
+  border-color: var(--brand, #6f68d8);
+}
+
+/* Creator Tags & Badges */
+.creator-tag {
+  display: inline-block;
+  padding: 0.15rem 0.45rem;
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: var(--muted, #666666);
+  background-color: rgba(0, 0, 0, 0.05);
+  border-radius: 6px;
+  margin-left: 0.4rem;
+}
+
+/* Document Lists for Google Drive links */
+.cloud-docs-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.cloud-doc-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.85rem 1rem;
+  border: 2px solid var(--line, #111111);
+  border-radius: 16px;
+  background: var(--paper, #ffffff);
+  box-shadow: var(--shadow);
+}
+
+.cloud-doc-info {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+.cloud-doc-info a {
+  text-decoration: none;
+  font-weight: 850;
+  color: var(--ink, #111111);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cloud-doc-info a:hover {
+  text-decoration: underline;
+  color: var(--brand, #6f68d8);
+}
+
+/* Media query adjustments for mobile device layouts */
+@media (max-width: 768px) {
+  .cloud-room-header {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 0.75rem 1rem;
+    gap: 0.5rem;
+  }
+  
+  .cloud-room-header .cluster {
+    width: 100%;
+    justify-content: space-between;
+  }
+  
+  .cloud-chat-card {
+    height: 380px;
+  }
+  
+  .cloud-room-main {
+    padding: 0.85rem;
+    gap: 1rem;
+  }
+}

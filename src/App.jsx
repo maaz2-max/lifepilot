@@ -57,6 +57,32 @@ import {
   savePersistedState
 } from "./storage.js";
 import { AI_JSON_REFERENCE, askGeminiAssistant, FREE_GEMINI_MODELS } from "./ai.js";
+import {
+  hasSupabase,
+  getCloudProject,
+  getCloudProjectWithPIN,
+  createCloudProject,
+  updateCloudProject,
+  deleteCloudProject,
+  getCloudParticipants,
+  addCloudParticipant,
+  removeCloudParticipant,
+  getCloudExpenses,
+  upsertCloudExpense,
+  deleteCloudExpense,
+  getCloudMessages,
+  addCloudMessage,
+  clearCloudMessages,
+  getCloudActivities,
+  addCloudActivity,
+  getCloudTasks,
+  upsertCloudTask,
+  deleteCloudTask,
+  getCloudDocuments,
+  addCloudDocument,
+  deleteCloudDocument,
+  supabase
+} from "./supabase.js";
 
 const STORE_KEY = "lifepilot.state.v1";
 const PIN_SESSION_KEY = "lifepilot.pin.validUntil";
@@ -66,6 +92,13 @@ const rupee = new Intl.NumberFormat("en-IN", {
   currency: "INR",
   maximumFractionDigits: 0
 });
+
+function generateCloudProjectId(name, type) {
+  const cleanName = String(name || type || "PRJ").replace(/[^a-zA-Z]/g, "").toUpperCase();
+  const prefix = cleanName.slice(0, 3) || "PRJ";
+  const randomChars = Math.random().toString(36).substring(2, 7).toUpperCase();
+  return `LP-${prefix}-${randomChars}`;
+}
 
 const DEFAULT_CATEGORIES = [
   { id: "cat-food", name: "Food", type: "Debit", color: "#f2b8a2", icon: "bowl" },
@@ -1922,6 +1955,67 @@ export default function App() {
   }, [state.expenses, state.salaryExpenses, state.projectTransactions, state.projects, storageReady, setState]);
 
   useEffect(() => {
+    if (!selectedProject || !supabase) return;
+    const activeProject = state.projects.find(p => p.id === selectedProject);
+    if (!activeProject?.isCloud) return;
+
+    const syncCloudData = async () => {
+      try {
+        const cloudExpenses = await getCloudExpenses(selectedProject);
+        const cloudParticipants = await getCloudParticipants(selectedProject);
+        
+        setState(current => {
+          const mappedExpenses = cloudExpenses.map(exp => ({
+            id: exp.id,
+            projectId: exp.project_id,
+            title: exp.title,
+            amount: exp.amount,
+            category: exp.category,
+            date: exp.date,
+            time: exp.time,
+            paidBy: exp.paid_by,
+            owedBy: exp.owed_by,
+            participants: exp.participants,
+            paymentMethod: exp.payment_method,
+            notes: exp.notes,
+            updatedAt: exp.updated_at
+          }));
+          
+          const cleanTransactions = current.projectTransactions.filter(t => t.projectId !== selectedProject);
+          const nextTransactions = [...mappedExpenses, ...cleanTransactions];
+          
+          const mappedParticipants = cloudParticipants.map(p => p.name);
+          const nextProjects = current.projects.map(p => p.id === selectedProject ? { ...p, participants: mappedParticipants } : p);
+          
+          return {
+            ...current,
+            projectTransactions: nextTransactions,
+            projects: nextProjects
+          };
+        });
+      } catch (err) {
+        console.error("Owner sync error", err);
+      }
+    };
+    
+    syncCloudData();
+
+    const channel = supabase
+      .channel(`owner:${selectedProject}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "cloud_expenses", filter: `project_id=eq.${selectedProject}` }, () => {
+        syncCloudData();
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "cloud_participants", filter: `project_id=eq.${selectedProject}` }, () => {
+        syncCloudData();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [selectedProject]);
+
+  useEffect(() => {
     if (!storageReady || !state.settings.telegramNotifications) return;
     const payload = buildTelegramNotificationPayload(state);
     const signature = JSON.stringify(payload.items.map((item) => [
@@ -2057,6 +2151,27 @@ export default function App() {
       confirmLabel: options.confirmLabel || "Delete",
       tone: "danger",
       onConfirm: () => {
+        if (hasSupabase()) {
+          if (collection === "projects") {
+            const project = state.projects.find(p => p.id === itemId);
+            if (project?.isCloud) {
+              deleteCloudProject(itemId).catch(console.error);
+            }
+          } else if (collection === "projectTransactions") {
+            const tx = state.projectTransactions.find(t => t.id === itemId);
+            const parentProj = state.projects.find(p => p.id === tx?.projectId);
+            if (parentProj?.isCloud) {
+              deleteCloudExpense(itemId).catch(console.error);
+              addCloudActivity(
+                parentProj.id,
+                "delete_expense",
+                `${state.profile?.name || "Owner"} deleted expense "${tx.title}" of ₹${tx.amount}`,
+                state.profile?.name || "Owner"
+              ).catch(console.error);
+            }
+          }
+        }
+
         if (options.apply) {
           updateState(options.apply, "Deleted");
           return;
@@ -2157,6 +2272,21 @@ export default function App() {
 
   if (!storageReady) {
     return <LoadingScreen />;
+  }
+
+  // Intercept shared cloud project route
+  const path = window.location.pathname;
+  const isCloudProjectRoute = path.startsWith("/project/") && path.length > 9;
+  const cloudProjectId = isCloudProjectRoute ? path.split("/project/")[1] : null;
+
+  if (isCloudProjectRoute && cloudProjectId) {
+    return (
+      <SharedProjectWorkspace
+        projectId={cloudProjectId}
+        setToast={setToast}
+        globalTheme={appThemeClass(state)}
+      />
+    );
   }
 
   if (pinBooting) {
@@ -4663,6 +4793,82 @@ function ProjectsView({ state, selectedProject, setSelectedProject, openAdd, set
           <>
             <SectionHeader title={active.name} action={<button className="secondary tactile" onClick={() => setModal({ kind: "project", item: active })}>Edit</button>} />
             <ProjectDashboard state={state} project={active} />
+            {active.isCloud && (
+              <div className="panel" style={{ margin: "1rem 0", padding: "1.1rem" }}>
+                <SectionHeader title="Cloud Room Sharing" />
+                <div className="share-info-box">
+                  <div className="share-info-row">
+                    <span>Room ID:</span>
+                    <strong>{active.id}</strong>
+                  </div>
+                  <div className="share-info-row">
+                    <span>Room PIN:</span>
+                    <strong>{active.pin}</strong>
+                  </div>
+                  <div className="share-info-row" style={{ wordBreak: "break-all" }}>
+                    <span>Share Link:</span>
+                    <a href={`${window.location.origin}/project/${active.id}`} target="_blank" rel="noopener noreferrer">
+                      {window.location.origin}/project/{active.id}
+                    </a>
+                  </div>
+                </div>
+                <div className="cluster" style={{ gap: "0.5rem", marginTop: "0.5rem" }}>
+                  <button className="secondary tactile" onClick={() => {
+                    navigator.clipboard.writeText(`${window.location.origin}/project/${active.id}`);
+                    setToast("Link copied!");
+                  }}>Copy Link</button>
+                  <button className="secondary tactile" onClick={() => {
+                    navigator.clipboard.writeText(active.pin);
+                    setToast("PIN copied!");
+                  }}>Copy PIN</button>
+                  <button className="secondary tactile" onClick={() => {
+                    const text = `Join my LifePilot Shared Expense Room: "${active.name}"\nLink: ${window.location.origin}/project/${active.id}\nPIN: ${active.pin}`;
+                    window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`, "_blank");
+                  }}>WhatsApp</button>
+                  <button className="secondary tactile" onClick={() => {
+                    const subject = `Join my Shared Expense Room: ${active.name}`;
+                    const body = `Hi,\n\nJoin my LifePilot Shared Expense Room: "${active.name}"\nLink: ${window.location.origin}/project/${active.id}\nPIN: ${active.pin}`;
+                    window.open(`mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, "_blank");
+                  }}>Email</button>
+                  <button 
+                    className={`secondary tactile ${active.sharing_enabled === false ? "active" : ""}`} 
+                    onClick={async () => {
+                      try {
+                        const nextVal = active.sharing_enabled === false;
+                        await updateCloudProject(active.id, { sharing_enabled: nextVal });
+                        upsert("projects", { ...active, sharing_enabled: nextVal }, "project");
+                        setToast(nextVal ? "Sharing enabled" : "Sharing disabled");
+                      } catch (err) {
+                        setToast("Failed to toggle sharing: " + err.message);
+                      }
+                    }}
+                  >
+                    {active.sharing_enabled === false ? "Enable Sharing" : "Disable Sharing"}
+                  </button>
+                  <button 
+                    className="secondary danger tactile" 
+                    onClick={() => {
+                      requestConfirm({
+                        title: "Clear Chat?",
+                        message: "Are you sure you want to clear all chat messages in this cloud room? This action cannot be undone.",
+                        confirmLabel: "Clear Chat",
+                        onConfirm: async () => {
+                          try {
+                            await clearCloudMessages(active.id);
+                            await addCloudActivity(active.id, "clear_chat", `${state.profile?.name || "Owner"} cleared the chat room`, state.profile?.name || "Owner");
+                            setToast("Chat cleared");
+                          } catch (err) {
+                            setToast("Failed to clear chat: " + err.message);
+                          }
+                        }
+                      });
+                    }}
+                  >
+                    Clear Chat
+                  </button>
+                </div>
+              </div>
+            )}
             <div className="cluster spaced">
               <button className="primary tactile" onClick={() => openAdd("projectTransaction", { projectId: active.id })}>Add Transaction</button>
               <button className="secondary tactile" onClick={() => setModal({ kind: "participants", item: active })}>Participants</button>
@@ -5222,9 +5428,161 @@ function EntityModal({ state, modal, close, upsert, setState, setToast }) {
       return;
     }
     if (modal.kind === "participants") {
-      upsert("projects", { ...modal.item, participants: splitParticipants(form.participants) }, "project");
+      const parsedParticipants = splitParticipants(form.participants);
+      if (modal.item?.isCloud && hasSupabase()) {
+        try {
+          const prjId = modal.item.id;
+          const existingParticipants = await getCloudParticipants(prjId);
+          const currentNames = existingParticipants.map(p => p.name);
+          
+          for (const name of parsedParticipants) {
+            if (!currentNames.includes(name)) {
+              await addCloudParticipant(prjId, name, "participant");
+            }
+          }
+          for (const name of currentNames) {
+            if (!parsedParticipants.includes(name) && existingParticipants.find(p => p.name === name)?.role !== "owner") {
+              await removeCloudParticipant(prjId, name);
+            }
+          }
+          await addCloudActivity(
+            prjId,
+            "update_participants",
+            `${state.profile?.name || "Owner"} updated project participants`,
+            state.profile?.name || "Owner"
+          );
+        } catch (err) {
+          console.error("Failed to sync participants to cloud", err);
+        }
+      }
+      upsert("projects", { ...modal.item, participants: parsedParticipants }, "project");
       close();
       return;
+    }
+    if (modal.kind === "project") {
+      const normalized = normalizeForm("project", form);
+      if (normalized.isCloud) {
+        if (!hasSupabase()) {
+          setError("Supabase backend is not configured in the environment.");
+          return;
+        }
+        try {
+          const isEdit = Boolean(modal.item);
+          const prjId = modal.item?.id || generateCloudProjectId(normalized.name, normalized.type);
+          normalized.id = prjId;
+          
+          if (!isEdit) {
+            await createCloudProject({
+              id: prjId,
+              name: normalized.name,
+              type: normalized.type,
+              budget: Number(normalized.budget || 0),
+              start_date: normalized.startDate,
+              end_date: normalized.endDate,
+              status: normalized.status || "Active",
+              pin: normalized.pin,
+              owner_name: state.profile?.name || "Owner",
+              sharing_enabled: true
+            });
+            await addCloudParticipant(prjId, state.profile?.name || "Owner", "owner");
+            if (normalized.participants && normalized.participants.length > 0) {
+              for (const p of normalized.participants) {
+                if (p.trim() && p !== (state.profile?.name || "Owner")) {
+                  await addCloudParticipant(prjId, p.trim(), "participant");
+                }
+              }
+            }
+            await addCloudActivity(
+              prjId, 
+              "create", 
+              `${state.profile?.name || "Owner"} created cloud project "${normalized.name}"`, 
+              state.profile?.name || "Owner"
+            );
+          } else {
+            await updateCloudProject(prjId, {
+              name: normalized.name,
+              type: normalized.type,
+              budget: Number(normalized.budget || 0),
+              start_date: normalized.startDate,
+              end_date: normalized.endDate,
+              status: normalized.status,
+              pin: normalized.pin
+            });
+            const existingParticipants = await getCloudParticipants(prjId);
+            const currentNames = existingParticipants.map(p => p.name);
+            const newNames = normalized.participants || [];
+            
+            for (const name of newNames) {
+              if (!currentNames.includes(name)) {
+                await addCloudParticipant(prjId, name, "participant");
+              }
+            }
+            for (const name of currentNames) {
+              if (!newNames.includes(name) && existingParticipants.find(p => p.name === name)?.role !== "owner") {
+                await removeCloudParticipant(prjId, name);
+              }
+            }
+            await addCloudActivity(
+              prjId, 
+              "update_project", 
+              `${state.profile?.name || "Owner"} updated project details`, 
+              state.profile?.name || "Owner"
+            );
+          }
+          
+          upsert("projects", normalized, "project");
+          setToast("Cloud project saved and synced");
+          close();
+          return;
+        } catch (err) {
+          console.error("Cloud project creation failed", err);
+          setError("Failed to sync project to Supabase: " + err.message);
+          return;
+        }
+      }
+    }
+    if (modal.kind === "projectTransaction") {
+      const normalized = normalizeForm("projectTransaction", form);
+      const parentProject = state.projects.find(p => p.id === normalized.projectId);
+      if (parentProject?.isCloud && hasSupabase()) {
+        try {
+          const syncId = normalized.id || ("projectTransaction-" + Math.random().toString(36).substring(2, 11));
+          normalized.id = syncId;
+          const dbRecord = {
+            id: syncId,
+            project_id: normalized.projectId,
+            title: normalized.title,
+            amount: Number(normalized.amount || 0),
+            category: normalized.category,
+            date: normalized.date,
+            time: normalized.time || "",
+            paid_by: normalized.paidBy || state.profile?.name || "Owner",
+            owed_by: normalized.owedBy || "",
+            participants: normalized.participants || [],
+            payment_method: normalized.paymentMethod || "UPI",
+            notes: normalized.notes || "",
+            created_by: state.profile?.name || "Owner"
+          };
+          await upsertCloudExpense(dbRecord);
+          
+          const actionLabel = modal.item ? "edited" : "added";
+          await addCloudActivity(
+            normalized.projectId,
+            modal.item ? "edit_expense" : "add_expense",
+            `${state.profile?.name || "Owner"} ${actionLabel} expense "${normalized.title}" of ₹${normalized.amount}`,
+            state.profile?.name || "Owner"
+          );
+          
+          upsert("projectTransactions", normalized, "projectTransaction");
+          setToast("Transaction synced to cloud");
+          close();
+          return;
+        } catch (err) {
+          console.error("Cloud transaction creation failed", err);
+          setError("Failed to sync transaction to Supabase: " + err.message);
+          return;
+        }
+      }
     }
     if (modal.kind === "credential") {
       const secret = pickCredentialSecret(form);
@@ -7621,7 +7979,7 @@ function getInitialForm(kind, item, context = {}, state) {
     bill: { title: "", amount: "", dueDate: baseDate, status: "Unpaid", reminderBefore: "1 day", category: "Bills", paymentMethod: "", notes: "", splits: [] },
     salary: { title: "Salary", amount: "", receivedDate: baseDate, month: baseDate.slice(0, 7), source: "", paymentMethod: "Bank transfer", notes: "", budgetPlan: "" },
     salaryExpense: { salaryId: context.salaryId || "", title: "", amount: "", type: "Debit", category: "", date: baseDate, paymentMethod: "UPI", notes: "" },
-    project: { name: "", type: "Trip", description: "", startDate: baseDate, endDate: baseDate, budget: "", participants: "", newParticipant: "", status: "Active", notes: "" },
+    project: { name: "", type: "Trip", description: "", startDate: baseDate, endDate: baseDate, budget: "", participants: "", newParticipant: "", status: "Active", notes: "", storageType: "Local", pin: "2002" },
     projectTransaction: { projectId: context.projectId || "", title: "", amount: "", type: "Debit", splitMode: "No split", category: "", date: baseDate, time: nowTime(), paidBy: "", owedBy: "", participants: "", paymentMethod: "UPI", notes: "" },
     category: { name: "", type: "Debit", color: "#f2b8a2", icon: "" },
     credential: { title: "", type: "Debit Card", url: "", username: "", accountNumber: "", cardNumber: "", expiry: "", cvv: "", cardPin: "", password: "", recovery: "", extraSecret: "", notes: "", pinned: false },
@@ -7765,6 +8123,10 @@ function fieldsForKind(kind, state, form = {}) {
     salaryExpense: [{ name: "salaryId", label: "Salary", type: "select", options: salaryOptions, required: true }, ...commonMoney.slice(0, 4), { name: "date", label: "Date", type: "date", required: true }, ...commonMoney.slice(4)],
     project: [
       { name: "name", label: "Project name", required: true },
+      { name: "storageType", label: "Project Storage Type", type: "select", options: ["Local", "Cloud Shared"] },
+      ...(form.storageType === "Cloud Shared" ? [
+        { name: "pin", label: "PIN", type: "password", placeholder: "Default 2002" }
+      ] : []),
       { name: "type", label: "Project type", type: "select", options: ["Trip", "Home Renovation", "Wedding", "College Event", "Room Setup", "Shopping Plan", "Business Purchase", "Family Function", "Custom"] },
       { name: "description", label: "Description", type: "textarea", wide: true },
       { name: "startDate", label: "Start date", type: "date", required: true },
@@ -7868,7 +8230,13 @@ function normalizeForm(kind, form) {
   }
   if (kind === "project") {
     const { newParticipant, ...rest } = form;
-    return { ...rest, participants: splitParticipants(form.participants) };
+    const isCloud = form.storageType === "Cloud Shared";
+    return {
+      ...rest,
+      isCloud,
+      pin: isCloud ? (form.pin || "2002") : "",
+      participants: splitParticipants(form.participants)
+    };
   }
   if (kind === "projectTransaction") {
     const mode = form.splitMode || (splitParticipants(form.participants).length ? "Equal split" : "No split");
@@ -9866,6 +10234,1238 @@ function AutotrackFormEditor({ editor, vehicles, defaultFuelPrice, close, save }
           </div>
         </form>
       </div>
+    </div>
+  );
+}
+
+// ==========================================
+// SHARED PROJECT WORKSPACE (EXPENSE ROOM)
+// ==========================================
+
+function SkeletonLoader({ type = "list" }) {
+  if (type === "dashboard") {
+    return (
+      <div className="skeleton-grid">
+        <div className="skeleton-card shimmer"></div>
+        <div className="skeleton-card shimmer"></div>
+        <div className="skeleton-card shimmer"></div>
+      </div>
+    );
+  }
+  return (
+    <div className="skeleton-list">
+      <div className="skeleton-item shimmer"></div>
+      <div className="skeleton-item shimmer"></div>
+      <div className="skeleton-item shimmer"></div>
+    </div>
+  );
+}
+
+export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
+  const [loadingMetadata, setLoadingMetadata] = useState(true);
+  const [projectMetadata, setProjectMetadata] = useState(null);
+  const [sharingDisabled, setSharingDisabled] = useState(false);
+  const [projectError, setProjectError] = useState("");
+
+  const [joined, setJoined] = useState(() => {
+    return sessionStorage.getItem(`lifepilot.project.${projectId}.joined`) === "true";
+  });
+  const [displayName, setDisplayName] = useState(() => {
+    return sessionStorage.getItem(`lifepilot.project.${projectId}.name`) || "";
+  });
+
+  const [enteredPin, setEnteredPin] = useState("2002"); // default prefill
+  const [enteredName, setEnteredName] = useState("");
+  const [wrongPinAttempts, setWrongPinAttempts] = useState(0);
+  const [cooldownRemaining, setCooldownRemaining] = useState(0);
+  const [authError, setAuthError] = useState("");
+
+  // Supabase Room states
+  const [project, setProject] = useState(null);
+  const [expenses, setExpenses] = useState([]);
+  const [participants, setParticipants] = useState([]);
+  const [messages, setMessages] = useState([]);
+  const [activities, setActivities] = useState([]);
+  const [tasks, setTasks] = useState([]);
+  const [documents, setDocuments] = useState([]);
+  const [loadingData, setLoadingData] = useState(false);
+
+  // Workspace navigation
+  const [activeTab, setActiveTab] = useState("dashboard");
+  const [categoryFilter, setCategoryFilter] = useState("All");
+  const [participantFilter, setParticipantFilter] = useState("All");
+
+  // Add Form Modals
+  const [showAddExpense, setShowAddExpense] = useState(false);
+  const [showAddTask, setShowAddTask] = useState(false);
+  const [showAddDoc, setShowAddDoc] = useState(false);
+
+  // Welcome message banner
+  const [welcomeMessage, setWelcomeMessage] = useState(null);
+
+  // Chat state
+  const [chatText, setChatText] = useState("");
+  const chatEndRef = useRef(null);
+
+  // Local forms state
+  const [expForm, setExpForm] = useState({
+    title: "",
+    amount: "",
+    category: "Food",
+    date: todayISO(),
+    time: nowTime(),
+    paidBy: "",
+    splitMode: "No split",
+    participants: [],
+    paymentMethod: "UPI",
+    notes: ""
+  });
+
+  const [taskForm, setTaskForm] = useState({
+    title: "",
+    dueDate: todayISO(),
+    dueTime: "",
+    priority: "Medium",
+    notes: ""
+  });
+
+  const [docForm, setDocForm] = useState({
+    title: "",
+    url: ""
+  });
+
+  // Lockout check key
+  const lockoutKey = `lifepilot.lockout.${projectId}`;
+
+  // Check metadata initially
+  useEffect(() => {
+    if (!projectId) return;
+    setLoadingMetadata(true);
+    getCloudProject(projectId)
+      .then((data) => {
+        setProjectMetadata(data);
+        if (!data.sharing_enabled) {
+          setSharingDisabled(true);
+        }
+      })
+      .catch((err) => {
+        console.error(err);
+        setProjectError("Shared room does not exist, or connection failed.");
+      })
+      .finally(() => {
+        setLoadingMetadata(false);
+      });
+  }, [projectId]);
+
+  // Check lockout cooldown on load
+  useEffect(() => {
+    const lockoutTime = Number(localStorage.getItem(lockoutKey) || 0);
+    if (lockoutTime > Date.now()) {
+      const diff = Math.ceil((lockoutTime - Date.now()) / 1000);
+      setCooldownRemaining(diff);
+
+      const timer = setInterval(() => {
+        const currentLock = Number(localStorage.getItem(lockoutKey) || 0);
+        if (currentLock <= Date.now()) {
+          setCooldownRemaining(0);
+          clearInterval(timer);
+        } else {
+          setCooldownRemaining(Math.ceil((currentLock - Date.now()) / 1000));
+        }
+      }, 1000);
+      return () => clearInterval(timer);
+    }
+  }, [projectId]);
+
+  // Fetch project data once authenticated
+  const fetchAllRoomData = async () => {
+    if (!projectId) return;
+    setLoadingData(true);
+    try {
+      const [pData, expData, partData, msgData, actData, taskData, docData] = await Promise.all([
+        getCloudProject(projectId),
+        getCloudExpenses(projectId),
+        getCloudParticipants(projectId),
+        getCloudMessages(projectId),
+        getCloudActivities(projectId),
+        getCloudTasks(projectId),
+        getCloudDocuments(projectId)
+      ]);
+      setProject(pData);
+      setExpenses(expData);
+      setParticipants(partData);
+      setMessages(msgData);
+      setActivities(actData);
+      setTasks(taskData);
+      setDocuments(docData);
+    } catch (err) {
+      console.error("Failed to load room data", err);
+    } finally {
+      setLoadingData(false);
+    }
+  };
+
+  useEffect(() => {
+    if (joined) {
+      fetchAllRoomData();
+    }
+  }, [joined, projectId]);
+
+  // Realtime Subscriptions
+  useEffect(() => {
+    if (!projectId || !joined || !supabase) return;
+
+    const channel = supabase
+      .channel(`room:${projectId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "cloud_projects", filter: `id=eq.${projectId}` }, (payload) => {
+        if (payload.eventType === "DELETE") {
+          setToast("This project has been closed/deleted by the owner.");
+          handleLeave();
+        } else {
+          setProject(payload.new);
+          if (!payload.new.sharing_enabled) {
+            setToast("Sharing has been disabled by the owner.");
+            handleLeave();
+          }
+        }
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "cloud_participants", filter: `project_id=eq.${projectId}` }, () => {
+        getCloudParticipants(projectId).then(setParticipants).catch(console.error);
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "cloud_expenses", filter: `project_id=eq.${projectId}` }, () => {
+        getCloudExpenses(projectId).then(setExpenses).catch(console.error);
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "cloud_messages", filter: `project_id=eq.${projectId}` }, () => {
+        getCloudMessages(projectId).then(setMessages).catch(console.error);
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "cloud_activities", filter: `project_id=eq.${projectId}` }, () => {
+        getCloudActivities(projectId).then(setActivities).catch(console.error);
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "cloud_tasks", filter: `project_id=eq.${projectId}` }, () => {
+        getCloudTasks(projectId).then(setTasks).catch(console.error);
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "cloud_documents", filter: `project_id=eq.${projectId}` }, () => {
+        getCloudDocuments(projectId).then(setDocuments).catch(console.error);
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [projectId, joined]);
+
+  // Auto Scroll chat box
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, activeTab]);
+
+  // Authentication Flow (Join Room)
+  const handleJoin = async (e) => {
+    e.preventDefault();
+    setAuthError("");
+
+    // Check brute force
+    const currentLock = Number(localStorage.getItem(lockoutKey) || 0);
+    if (currentLock > Date.now()) {
+      setAuthError(`Too many incorrect attempts. Try again later.`);
+      return;
+    }
+
+    if (!enteredName.trim()) {
+      setAuthError("Display name is required.");
+      return;
+    }
+
+    try {
+      // Fetch and verify PIN
+      const prj = await getCloudProjectWithPIN(projectId, enteredPin.trim());
+      
+      if (!prj.sharing_enabled) {
+        setAuthError("Sharing for this project has been disabled by the owner.");
+        return;
+      }
+
+      const cleanName = enteredName.trim();
+      
+      // Add participant in DB
+      await addCloudParticipant(projectId, cleanName, "participant");
+      
+      // Log join activity
+      await addCloudActivity(projectId, "join", `${cleanName} joined the project room`, cleanName);
+
+      // Store session
+      sessionStorage.setItem(`lifepilot.project.${projectId}.joined`, "true");
+      sessionStorage.setItem(`lifepilot.project.${projectId}.name`, cleanName);
+
+      setDisplayName(cleanName);
+      setJoined(true);
+      setWelcomeMessage(`👋 Welcome, ${cleanName}! You've joined the room.`);
+      setToast(`Joined project space!`);
+    } catch (err) {
+      console.error(err);
+      const nextAttempts = wrongPinAttempts + 1;
+      setWrongPinAttempts(nextAttempts);
+      
+      if (nextAttempts >= 3) {
+        const cooldownTime = Date.now() + 30 * 1000; // 30 sec block
+        localStorage.setItem(lockoutKey, String(cooldownTime));
+        setCooldownRemaining(30);
+        setWrongPinAttempts(0);
+        setAuthError("Too many wrong attempts. Locked out for 30 seconds.");
+
+        const timer = setInterval(() => {
+          const currentLock = Number(localStorage.getItem(lockoutKey) || 0);
+          if (currentLock <= Date.now()) {
+            setCooldownRemaining(0);
+            clearInterval(timer);
+          } else {
+            setCooldownRemaining(Math.ceil((currentLock - Date.now()) / 1000));
+          }
+        }, 1000);
+      } else {
+        setAuthError("Incorrect PIN. Please try again.");
+      }
+    }
+  };
+
+  const handleLeave = () => {
+    sessionStorage.removeItem(`lifepilot.project.${projectId}.joined`);
+    sessionStorage.removeItem(`lifepilot.project.${projectId}.name`);
+    setJoined(false);
+    setDisplayName("");
+    setProject(null);
+  };
+
+  // Add transactions
+  const handleAddExpenseSubmit = async (e) => {
+    e.preventDefault();
+    if (!expForm.title.trim() || Number(expForm.amount) <= 0) {
+      setToast("Title and amount are required.");
+      return;
+    }
+
+    try {
+      const expenseId = "projectTransaction-" + Math.random().toString(36).substring(2, 11);
+      const finalPaidBy = expForm.paidBy || displayName;
+
+      await upsertCloudExpense({
+        id: expenseId,
+        project_id: projectId,
+        title: expForm.title.trim(),
+        amount: Number(expForm.amount),
+        category: expForm.category,
+        date: expForm.date,
+        time: expForm.time || "",
+        paid_by: finalPaidBy,
+        owed_by: expForm.splitMode === "Direct owed" ? expForm.owedBy : "",
+        participants: expForm.splitMode === "Equal split" ? expForm.participants : [],
+        payment_method: expForm.paymentMethod || "UPI",
+        notes: expForm.notes || "",
+        created_by: displayName
+      });
+
+      await addCloudActivity(
+        projectId,
+        "add_expense",
+        `${displayName} added expense "${expForm.title}" of ₹${expForm.amount}`,
+        displayName
+      );
+
+      // Budget warning check
+      const totalSpentNow = expenses.reduce((sum, item) => sum + Number(item.amount), 0) + Number(expForm.amount);
+      if (project?.budget > 0) {
+        const pct = (totalSpentNow / project.budget) * 100;
+        const thresholdAlert = [100, 90, 80, 70].find(t => pct >= t && ((totalSpentNow - Number(expForm.amount)) / project.budget) * 100 < t);
+        if (thresholdAlert) {
+          await addCloudActivity(
+            projectId,
+            "budget_alert",
+            `⚠️ Project budget has crossed ${thresholdAlert}% usage! (${rupee.format(totalSpentNow)} of ${rupee.format(project.budget)})`,
+            "System"
+          );
+        }
+      }
+
+      setShowAddExpense(false);
+      setToast("Expense added!");
+      setExpForm({
+        title: "",
+        amount: "",
+        category: "Food",
+        date: todayISO(),
+        time: nowTime(),
+        paidBy: displayName,
+        splitMode: "No split",
+        participants: [],
+        paymentMethod: "UPI",
+        notes: ""
+      });
+    } catch (err) {
+      setToast("Failed to add expense: " + err.message);
+    }
+  };
+
+  const handleAddDocSubmit = async (e) => {
+    e.preventDefault();
+    if (!docForm.title.trim() || !docForm.url.trim()) {
+      setToast("Title and URL are required.");
+      return;
+    }
+    try {
+      await addCloudDocument(projectId, docForm.title.trim(), docForm.url.trim(), displayName);
+      await addCloudActivity(
+        projectId,
+        "add_doc",
+        `${displayName} shared drive document "${docForm.title.trim()}"`,
+        displayName
+      );
+      setShowAddDoc(false);
+      setToast("Document shared!");
+      setDocForm({ title: "", url: "" });
+    } catch (err) {
+      setToast("Failed to share document: " + err.message);
+    }
+  };
+
+  const handleAddTaskSubmit = async (e) => {
+    e.preventDefault();
+    if (!taskForm.title.trim() || !taskForm.dueDate) {
+      setToast("Title and due date are required.");
+      return;
+    }
+    try {
+      const taskId = "task-" + Math.random().toString(36).substring(2, 11);
+      await upsertCloudTask({
+        id: taskId,
+        project_id: projectId,
+        title: taskForm.title.trim(),
+        due_date: taskForm.dueDate,
+        due_time: taskForm.dueTime || "",
+        status: "Pending",
+        priority: taskForm.priority,
+        notes: taskForm.notes || "",
+        created_by: displayName
+      });
+      await addCloudActivity(
+        projectId,
+        "add_task",
+        `${displayName} added task reminder: "${taskForm.title.trim()}"`,
+        displayName
+      );
+      setShowAddTask(false);
+      setToast("Reminder task added!");
+      setTaskForm({ title: "", dueDate: todayISO(), dueTime: "", priority: "Medium", notes: "" });
+    } catch (err) {
+      setToast("Failed to add task: " + err.message);
+    }
+  };
+
+  const handleSendChat = async (e) => {
+    e.preventDefault();
+    if (!chatText.trim()) return;
+    try {
+      await addCloudMessage(projectId, displayName, chatText.trim());
+      setChatText("");
+    } catch (err) {
+      setToast("Failed to send: " + err.message);
+    }
+  };
+
+  const handleToggleTask = async (taskItem) => {
+    const nextStatus = taskItem.status === "Completed" ? "Pending" : "Completed";
+    try {
+      await upsertCloudTask({
+        ...taskItem,
+        status: nextStatus
+      });
+      await addCloudActivity(
+        projectId,
+        "toggle_task",
+        `${displayName} marked task "${taskItem.title}" as ${nextStatus.toLowerCase()}`,
+        displayName
+      );
+      setToast(`Task marked as ${nextStatus}`);
+    } catch (err) {
+      setToast("Failed to update task: " + err.message);
+    }
+  };
+
+  const handleDeleteTask = async (taskId, taskTitle) => {
+    try {
+      await deleteCloudTask(taskId);
+      await addCloudActivity(
+        projectId,
+        "delete_task",
+        `${displayName} deleted task "${taskTitle}"`,
+        displayName
+      );
+      setToast("Task deleted");
+    } catch (err) {
+      setToast("Failed to delete task: " + err.message);
+    }
+  };
+
+  const handleDeleteDoc = async (docId, docTitle) => {
+    try {
+      await deleteCloudDocument(docId);
+      await addCloudActivity(
+        projectId,
+        "delete_doc",
+        `${displayName} deleted document link "${docTitle}"`,
+        displayName
+      );
+      setToast("Document link deleted");
+    } catch (err) {
+      setToast("Failed to delete document: " + err.message);
+    }
+  };
+
+  const handleDeleteExpense = async (expId, expTitle) => {
+    try {
+      await deleteCloudExpense(expId);
+      await addCloudActivity(
+        projectId,
+        "delete_expense",
+        `${displayName} deleted expense "${expTitle}"`,
+        displayName
+      );
+      setToast("Expense deleted");
+    } catch (err) {
+      setToast("Failed to delete: " + err.message);
+    }
+  };
+
+  // --- Calculations for UI ---
+  const totalSpent = expenses.reduce((sum, item) => sum + Number(item.amount), 0);
+  const budgetVal = project?.budget || 0;
+  const remainingBudget = budgetVal - totalSpent;
+  const isOverspent = totalSpent > budgetVal;
+  const overspentAmt = totalSpent - budgetVal;
+  const usagePercentage = budgetVal > 0 ? Math.min((totalSpent / budgetVal) * 100, 100) : 0;
+
+  // Filtered expenses
+  const filteredExpenses = expenses
+    .filter(item => categoryFilter === "All" || item.category === categoryFilter)
+    .filter(item => participantFilter === "All" || item.paid_by === participantFilter);
+
+  // Categories list
+  const categoriesOptions = ["Food", "Travel", "Bills", "Health", "Shopping", "Entertainment", "Custom"];
+
+  // Participant list mapping
+  const participantNamesList = participants.map(p => p.name);
+
+  // Spending by participant for Analytics
+  const participantSpendSummary = participants.map(p => {
+    const spent = expenses
+      .filter(e => e.paid_by === p.name)
+      .reduce((sum, e) => sum + Number(e.amount), 0);
+    return { name: p.name, spent };
+  });
+
+  // Category-wise totals
+  const categorySpendSummary = categoriesOptions.map(cat => {
+    const spent = expenses
+      .filter(e => e.category === cat)
+      .reduce((sum, e) => sum + Number(e.amount), 0);
+    return { name: cat, spent };
+  }).filter(c => c.spent > 0);
+
+  // LOADING METADATA VIEW
+  if (loadingMetadata) {
+    return (
+      <div className="cloud-landing-container">
+        <div className="cloud-landing-card">
+          <SkeletonLoader type="list" />
+          <p>Locating Shared Project Space...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // ERROR VIEW
+  if (projectError) {
+    return (
+      <div className="cloud-landing-container">
+        <div className="cloud-landing-card">
+          <SectionHeader title="Access Denied" />
+          <p className="validation">{projectError}</p>
+          <button className="primary tactile" onClick={() => window.location.replace("/")}>Go to LifePilot App</button>
+        </div>
+      </div>
+    );
+  }
+
+  // SHARING DISABLED VIEW
+  if (sharingDisabled && !joined) {
+    return (
+      <div className="cloud-landing-container">
+        <div className="cloud-landing-card">
+          <SectionHeader title="Sharing Disabled" />
+          <p className="warning">The owner has disabled sharing for this room. If you are already a member, please contact the owner to enable access.</p>
+          <button className="primary tactile" onClick={() => window.location.replace("/")}>Go to LifePilot App</button>
+        </div>
+      </div>
+    );
+  }
+
+  // JOIN GATE SCREEN
+  if (!joined) {
+    return (
+      <div className="cloud-landing-container">
+        <div className="cloud-landing-card">
+          <span style={{ fontSize: "2.5rem" }}>🚀</span>
+          <h1>Join Shared Room</h1>
+          <p>You have been invited to collaborate in <strong>{projectMetadata?.name}</strong> room.</p>
+
+          {cooldownRemaining > 0 ? (
+            <div className="warning">
+              🔒 Locked out due to too many failed PIN entries. Try again in {cooldownRemaining}s.
+            </div>
+          ) : (
+            <form onSubmit={handleJoin} className="cloud-landing-form">
+              <div className="cloud-landing-input-group hide-label">
+                <label>Room PIN</label>
+                <input 
+                  type="password" 
+                  value={enteredPin} 
+                  onChange={(e) => setEnteredPin(e.target.value)} 
+                  placeholder="Enter Room PIN"
+                  maxLength={8}
+                  required
+                />
+              </div>
+              <div className="cloud-landing-input-group">
+                <input 
+                  type="text" 
+                  value={enteredName} 
+                  onChange={(e) => setEnteredName(e.target.value)} 
+                  placeholder="Enter your name (e.g. Ahmed)" 
+                  maxLength={20}
+                  required
+                />
+              </div>
+              {authError && <div className="validation">{authError}</div>}
+              <button className="primary tactile wide" type="submit" style={{ padding: "0.95rem" }}>
+                Join Expense Room
+              </button>
+            </form>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ISOLATED WORKSPACE VIEW
+  return (
+    <div className={`cloud-room-shell ${globalTheme}`}>
+      {/* HEADER */}
+      <header className="cloud-room-header">
+        <div>
+          <h2>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
+              <span className="status-dot" title="Live Sync active"></span>
+              {project?.name || "Expense Room"}
+            </span>
+            <small className="creator-tag">{project?.type || "Trip"}</small>
+          </h2>
+        </div>
+        <div className="cluster" style={{ gap: "0.85rem" }}>
+          <span style={{ fontWeight: 800, fontSize: "0.9rem" }}>👤 {displayName}</span>
+          <button className="secondary tactile danger" onClick={handleLeave} style={{ padding: "0.4rem 0.8rem", fontSize: "0.85rem" }}>
+            Leave Space
+          </button>
+        </div>
+      </header>
+
+      {/* MAIN WORKSPACE */}
+      <main className="cloud-room-main">
+        {/* WELCOME BANNER */}
+        {welcomeMessage && (
+          <div className="welcome-banner animate-fade-in">
+            <div className="welcome-banner-text">{welcomeMessage}</div>
+            <button className="icon-button tactile" onClick={() => setWelcomeMessage(null)}><X size={16} /></button>
+          </div>
+        )}
+
+        {/* TABS NAVIGATION */}
+        <div className="segmented" style={{ overflowX: "auto", whiteSpace: "nowrap", display: "flex" }}>
+          {[
+            ["dashboard", "Dashboard"],
+            ["expenses", "Expenses"],
+            ["tasks", "Reminders"],
+            ["docs", "Documents"],
+            ["chat", `Chat (${messages.length})`],
+            ["analytics", "Analytics"],
+            ["timeline", "Activity"]
+          ].map(([key, label]) => (
+            <button 
+              key={key} 
+              className={`segmented-button ${activeTab === key ? "active" : ""}`} 
+              onClick={() => setActiveTab(key)}
+              style={{ flex: "0 0 auto" }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* LOADING SKELETON */}
+        {loadingData ? (
+          <div>
+            <SkeletonLoader type="dashboard" />
+            <SkeletonLoader type="list" />
+          </div>
+        ) : (
+          <>
+            {/* 1. DASHBOARD TAB */}
+            {activeTab === "dashboard" && (
+              <div style={{ display: "grid", gap: "1rem" }}>
+                {/* OVERSPENT BANNER */}
+                {isOverspent && (
+                   <div className="alert-row danger">
+                     <strong>⚠️ Over budget warning!</strong>
+                     <span>You have exceeded the budget by <strong>{rupee.format(overspentAmt)}</strong>. Control spending!</span>
+                   </div>
+                )}
+
+                {/* STAT CARDS */}
+                <div className="insight-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
+                  <article className="insight-card">
+                    <span>Budget</span>
+                    <strong>{rupee.format(budgetVal)}</strong>
+                    <small>Trip target budget</small>
+                  </article>
+                  <article className={`insight-card ${isOverspent ? "warn" : "good"}`}>
+                    <span>Spent</span>
+                    <strong>{rupee.format(totalSpent)}</strong>
+                    <small>{usagePercentage.toFixed(0)}% budget utilized</small>
+                  </article>
+                  <article className={`insight-card ${remainingBudget < 0 ? "warn" : "good"}`}>
+                    <span>Remaining</span>
+                    <strong>{rupee.format(remainingBudget)}</strong>
+                    <small>{isOverspent ? "Overspent" : "Available balance"}</small>
+                  </article>
+                </div>
+
+                {/* PROGRESS BAR */}
+                <div className="panel" style={{ padding: "1.2rem" }}>
+                  <SectionHeader title="Budget Usage" />
+                  <div style={{ background: "rgba(0,0,0,0.06)", height: "24px", borderRadius: "12px", overflow: "hidden", position: "relative", marginTop: "0.5rem" }}>
+                    <div 
+                      style={{ 
+                        background: isOverspent ? "var(--warn, #e74c3c)" : "var(--mint, #2ecc71)", 
+                        width: `${usagePercentage}%`, 
+                        height: "100%",
+                        transition: "width 0.4s ease"
+                      }}
+                    />
+                    <span style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 950, fontSize: "0.85rem", color: "#111111" }}>
+                      {usagePercentage.toFixed(0)}% Used
+                    </span>
+                  </div>
+                </div>
+
+                {/* QUICK ADD ACTIONS */}
+                <div className="cluster spaced">
+                  <button className="primary tactile" onClick={() => setShowAddExpense(true)}><Plus size={18} />Add Expense</button>
+                  <button className="secondary tactile" onClick={() => setShowAddTask(true)}><Plus size={18} />Add Reminder</button>
+                  <button className="secondary tactile" onClick={() => setShowAddDoc(true)}><Plus size={18} />Share Drive Doc</button>
+                </div>
+
+                {/* TIMELINE SUMMARY */}
+                <div className="panel">
+                  <SectionHeader title="Recent Room Activities" />
+                  <div style={{ display: "grid", gap: "0.65rem", marginTop: "0.5rem" }}>
+                    {activities.slice(0, 4).map(act => (
+                      <div key={act.id} style={{ display: "flex", justifyContent: "space-between", fontSize: "0.88rem", paddingBottom: "0.45rem", borderBottom: "1px dashed rgba(0,0,0,0.06)" }}>
+                        <span>{act.description}</span>
+                        <span style={{ color: "var(--muted)", fontSize: "0.78rem" }}>
+                          {new Date(act.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </div>
+                    ))}
+                    {activities.length === 0 && <EmptyState text="No activities logged yet." />}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 2. EXPENSES TAB */}
+            {activeTab === "expenses" && (
+              <div style={{ display: "grid", gap: "1rem" }}>
+                <div className="cluster spaced">
+                  <h2>Expenses list ({filteredExpenses.length})</h2>
+                  <button className="primary tactile" onClick={() => setShowAddExpense(true)}><Plus size={18} />Add Expense</button>
+                </div>
+
+                {/* FILTERS */}
+                <div className="filter-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))" }}>
+                  <label>Category
+                    <Select 
+                      value={categoryFilter} 
+                      onChange={setCategoryFilter} 
+                      options={["All", ...categoriesOptions]} 
+                    />
+                  </label>
+                  <label>Paid By
+                    <Select 
+                      value={participantFilter} 
+                      onChange={setParticipantFilter} 
+                      options={["All", ...participantNamesList]} 
+                    />
+                  </label>
+                </div>
+
+                {/* LIST */}
+                <div className="list-grid">
+                  {filteredExpenses.map(item => (
+                    <div className="panel" key={item.id} style={{ padding: "1rem", position: "relative" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                        <div>
+                          <h3 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 900 }}>{item.title}</h3>
+                          <small style={{ color: "var(--muted)" }}>
+                            {item.date} {item.time} | <strong>{item.category}</strong>
+                          </small>
+                        </div>
+                        <strong style={{ fontSize: "1.25rem", color: "var(--ink)" }}>{rupee.format(item.amount)}</strong>
+                      </div>
+                      
+                      <div style={{ marginTop: "0.65rem", fontSize: "0.85rem", display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center" }}>
+                        <span>Paid by: <strong>{item.paid_by}</strong></span>
+                        {item.participants && item.participants.length > 0 && (
+                          <span style={{ color: "var(--muted)" }}>
+                            (Split: {item.participants.join(", ")})
+                          </span>
+                        )}
+                        {item.notes && <span style={{ fontStyle: "italic", background: "rgba(0,0,0,0.03)", padding: "2px 6px", borderRadius: "6px" }}>"{item.notes}"</span>}
+                        <span className="creator-tag">Created by {item.created_by}</span>
+                      </div>
+
+                      {item.created_by === displayName && (
+                        <div style={{ position: "absolute", bottom: "0.8rem", right: "0.8rem" }}>
+                          <button 
+                            className="icon-button tactile danger" 
+                            style={{ padding: "0.25rem" }} 
+                            onClick={() => handleDeleteExpense(item.id, item.title)}
+                            title="Delete"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {filteredExpenses.length === 0 && <EmptyState text="No expenses match the filters." />}
+                </div>
+              </div>
+            )}
+
+            {/* 3. TASKS TAB */}
+            {activeTab === "tasks" && (
+              <div style={{ display: "grid", gap: "1rem" }}>
+                <div className="cluster spaced">
+                  <h2>Trip Reminders & Tasks</h2>
+                  <button className="primary tactile" onClick={() => setShowAddTask(true)}><Plus size={18} />Add Reminder</button>
+                </div>
+
+                <div className="list-grid">
+                  {tasks.map(item => (
+                    <div key={item.id} className="panel" style={{ padding: "1rem", display: "flex", alignItems: "center", justifyItems: "space-between", gap: "1rem" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.85rem", flex: 1 }}>
+                        <input 
+                          type="checkbox" 
+                          checked={item.status === "Completed"} 
+                          onChange={() => handleToggleTask(item)}
+                          style={{ width: "20px", height: "20px", cursor: "pointer" }}
+                        />
+                        <div>
+                          <strong style={{ fontSize: "1.05rem", textDecoration: item.status === "Completed" ? "line-through" : "none", opacity: item.status === "Completed" ? 0.6 : 1 }}>
+                            {item.title}
+                          </strong>
+                          <div style={{ fontSize: "0.82rem", color: "var(--muted)", marginTop: "0.2rem" }}>
+                            Due: {item.due_date} {item.due_time} | Priority: <strong>{item.priority}</strong>
+                            <span className="creator-tag">Created by {item.created_by}</span>
+                          </div>
+                          {item.notes && <p style={{ margin: "0.25rem 0 0", fontSize: "0.85rem", color: "#666" }}>{item.notes}</p>}
+                        </div>
+                      </div>
+                      
+                      {item.created_by === displayName && (
+                        <button 
+                          className="icon-button tactile danger" 
+                          onClick={() => handleDeleteTask(item.id, item.title)}
+                          title="Delete"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  {tasks.length === 0 && <EmptyState text="No task reminders set for this trip." />}
+                </div>
+              </div>
+            )}
+
+            {/* 4. DOCUMENTS TAB */}
+            {activeTab === "docs" && (
+              <div style={{ display: "grid", gap: "1rem" }}>
+                <div className="cluster spaced">
+                  <h2>Google Drive & Shared Links</h2>
+                  <button className="primary tactile" onClick={() => setShowAddDoc(true)}><Plus size={18} />Share Link</button>
+                </div>
+
+                <div className="cloud-docs-list">
+                  {documents.map(item => (
+                    <div key={item.id} className="cloud-doc-row">
+                      <div className="cloud-doc-info">
+                        <FileText size={20} style={{ color: "var(--brand)" }} />
+                        <div>
+                          <a href={item.url.startsWith("http") ? item.url : `https://${item.url}`} target="_blank" rel="noopener noreferrer">
+                            {item.title}
+                          </a>
+                          <div style={{ fontSize: "0.78rem", color: "var(--muted)" }}>
+                            Shared by <strong>{item.created_by}</strong>
+                          </div>
+                        </div>
+                      </div>
+
+                      {item.created_by === displayName && (
+                        <button 
+                          className="icon-button tactile danger" 
+                          onClick={() => handleDeleteDoc(item.id, item.title)}
+                          title="Delete"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  {documents.length === 0 && <EmptyState text="No shared Google Drive or travel document links yet." />}
+                </div>
+              </div>
+            )}
+
+            {/* 5. CHAT BOX TAB */}
+            {activeTab === "chat" && (
+              <div className="cloud-chat-card">
+                <div className="cloud-chat-messages">
+                  {messages.map(msg => {
+                    const isSelf = msg.sender_name === displayName;
+                    return (
+                      <div key={msg.id} className={`cloud-chat-message-bubble ${isSelf ? "self" : "other"}`}>
+                        <span className="cloud-chat-msg-header">
+                          {isSelf ? "You" : msg.sender_name}
+                        </span>
+                        <span className="cloud-chat-msg-text">{msg.message}</span>
+                        <span className="cloud-chat-msg-time">
+                          {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </div>
+                    );
+                  })}
+                  {messages.length === 0 && <EmptyState text="Start a discussion! Send a message below." />}
+                  <div ref={chatEndRef} />
+                </div>
+                
+                <form onSubmit={handleSendChat} className="cloud-chat-input-bar">
+                  <input 
+                    type="text" 
+                    value={chatText} 
+                    onChange={(e) => setChatText(e.target.value)} 
+                    placeholder="Message room..." 
+                    maxLength={200}
+                    required
+                  />
+                  <button type="submit" className="primary icon-button tactile" style={{ background: "var(--brand, #6f68d8)", color: "#fff" }}>
+                    <SendHorizontal size={18} />
+                  </button>
+                </form>
+              </div>
+            )}
+
+            {/* 6. ANALYTICS TAB */}
+            {activeTab === "analytics" && (
+              <div style={{ display: "grid", gap: "1rem" }}>
+                <h2>Cloud Analytics Dashboard</h2>
+
+                {/* PARTICIPANT SPLITS */}
+                <div className="panel" style={{ padding: "1.2rem" }}>
+                  <SectionHeader title="Spending by Participant" />
+                  <div style={{ display: "grid", gap: "0.8rem", marginTop: "0.75rem" }}>
+                    {participantSpendSummary.map(item => {
+                      const maxSpent = Math.max(...participantSpendSummary.map(p => p.spent), 1);
+                      const barWidth = (item.spent / maxSpent) * 100;
+                      return (
+                        <div key={item.name}>
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.9rem", fontWeight: 800 }}>
+                            <span>{item.name}</span>
+                            <strong>{rupee.format(item.spent)}</strong>
+                          </div>
+                          <div style={{ height: "12px", background: "rgba(0,0,0,0.06)", borderRadius: "6px", overflow: "hidden", marginTop: "0.25rem" }}>
+                            <div style={{ background: "var(--brand, #6f68d8)", width: `${barWidth}%`, height: "100%", borderRadius: "6px" }}></div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* CATEGORY SPEND */}
+                <div className="panel" style={{ padding: "1.2rem" }}>
+                  <SectionHeader title="Category Breakdown" />
+                  <div style={{ display: "grid", gap: "0.8rem", marginTop: "0.75rem" }}>
+                    {categorySpendSummary.map(item => {
+                      const maxCat = Math.max(...categorySpendSummary.map(c => c.spent), 1);
+                      const barWidth = (item.spent / maxCat) * 100;
+                      return (
+                        <div key={item.name}>
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.9rem", fontWeight: 800 }}>
+                            <span>{item.name}</span>
+                            <strong>{rupee.format(item.spent)}</strong>
+                          </div>
+                          <div style={{ height: "12px", background: "rgba(0,0,0,0.06)", borderRadius: "6px", overflow: "hidden", marginTop: "0.25rem" }}>
+                            <div style={{ background: "var(--orange, #f4d06f)", width: `${barWidth}%`, height: "100%", borderRadius: "6px" }}></div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {categorySpendSummary.length === 0 && <EmptyState text="Add expenses to see categories." />}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 7. ACTIVITY TIMELINE TAB */}
+            {activeTab === "timeline" && (
+              <div style={{ display: "grid", gap: "1rem" }}>
+                <h2>Activity Timeline</h2>
+                <div className="panel" style={{ padding: "1.1rem" }}>
+                  <div style={{ display: "grid", gap: "0.95rem" }}>
+                    {activities.map(act => (
+                      <div key={act.id} style={{ display: "flex", gap: "0.75rem", alignItems: "flex-start", paddingBottom: "0.6rem", borderBottom: "1px dashed rgba(0,0,0,0.06)" }}>
+                        <span style={{ fontSize: "1.1rem" }}>
+                          {act.action_type === "join" && "👋"}
+                          {act.action_type === "create" && "🆕"}
+                          {act.action_type === "add_expense" && "💵"}
+                          {act.action_type === "delete_expense" && "❌"}
+                          {act.action_type === "add_task" && "⏰"}
+                          {act.action_type === "add_doc" && "📂"}
+                          {act.action_type === "toggle_task" && "✅"}
+                          {act.action_type === "clear_chat" && "🧹"}
+                          {act.action_type === "budget_alert" && "⚠️"}
+                          {!["join", "create", "add_expense", "delete_expense", "add_task", "add_doc", "toggle_task", "clear_chat", "budget_alert"].includes(act.action_type) && "⚙️"}
+                        </span>
+                        <div>
+                          <p style={{ margin: 0, fontWeight: 800, fontSize: "0.92rem" }}>{act.description}</p>
+                          <small style={{ color: "var(--muted)" }}>
+                            {new Date(act.created_at).toLocaleString()} by {act.created_by}
+                          </small>
+                         </div>
+                       </div>
+                     ))}
+                     {activities.length === 0 && <EmptyState text="No logs recorded." />}
+                   </div>
+                 </div>
+               </div>
+             )}
+           </>
+         )}
+       </main>
+ 
+       {/* ========================================== */}
+       {/* MODAL: ADD EXPENSE */}
+       {/* ========================================== */}
+       {showAddExpense && (
+         <div className="modal-backdrop">
+           <form className="modal" onSubmit={handleAddExpenseSubmit}>
+             <SectionHeader title="Add Cloud Expense" action={<button type="button" className="icon-button tactile" onClick={() => setShowAddExpense(false)}><X size={18} /></button>} />
+             <div className="form-grid">
+               <label className="wide">Title
+                 <input 
+                   value={expForm.title} 
+                   onChange={(e) => setExpForm({ ...expForm, title: e.target.value })} 
+                   placeholder="e.g. Lunch at beach" 
+                   required 
+                 />
+               </label>
+               <label>Amount (₹)
+                 <input 
+                   type="number" 
+                   min="0.01" 
+                   step="0.01"
+                   value={expForm.amount} 
+                   onChange={(e) => setExpForm({ ...expForm, amount: e.target.value })} 
+                   placeholder="Amount spent" 
+                   required 
+                 />
+               </label>
+               <label>Category
+                 <Select 
+                   value={expForm.category} 
+                   onChange={(val) => setExpForm({ ...expForm, category: val })} 
+                   options={categoriesOptions} 
+                 />
+               </label>
+               <label>Date
+                 <input 
+                   type="date" 
+                   value={expForm.date} 
+                   onChange={(e) => setExpForm({ ...expForm, date: e.target.value })} 
+                   required 
+                 />
+               </label>
+               <label>Time
+                 <input 
+                   type="time" 
+                   value={expForm.time} 
+                   onChange={(e) => setExpForm({ ...expForm, time: e.target.value })} 
+                 />
+               </label>
+               <label>Paid By
+                 <Select 
+                   value={expForm.paidBy || displayName} 
+                   onChange={(val) => setExpForm({ ...expForm, paidBy: val })} 
+                   options={participantNamesList.map(n => [n, n])} 
+                 />
+               </label>
+               <label>Split Mode
+                 <Select 
+                   value={expForm.splitMode} 
+                   onChange={(val) => setExpForm({ ...expForm, splitMode: val })} 
+                   options={[["No split", "No split"], ["Equal split", "Equal split"]]} 
+                 />
+               </label>
+ 
+               {expForm.splitMode === "Equal split" && (
+                 <div className="wide panel" style={{ padding: "0.85rem", marginTop: "0.5rem" }}>
+                   <strong>Split Between:</strong>
+                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: "0.5rem", marginTop: "0.45rem" }}>
+                     {participantNamesList.map(name => {
+                       const isChecked = expForm.participants.includes(name);
+                       return (
+                         <label key={name} className="toggle-row" style={{ minHeight: 0 }}>
+                           <input 
+                             type="checkbox" 
+                             checked={isChecked} 
+                             onChange={(e) => {
+                               const next = e.target.checked 
+                                 ? [...expForm.participants, name]
+                                 : expForm.participants.filter(n => n !== name);
+                               setExpForm({ ...expForm, participants: next });
+                             }}
+                             style={{ width: "18px", height: "18px" }}
+                           />
+                           {name}
+                         </label>
+                       );
+                     })}
+                   </div>
+                 </div>
+               )}
+ 
+               <label className="wide">Notes
+                 <input 
+                   value={expForm.notes} 
+                   onChange={(e) => setExpForm({ ...expForm, notes: e.target.value })} 
+                   placeholder="e.g. split equally, shared cab bill" 
+                 />
+               </label>
+             </div>
+             <div className="modal-actions">
+               <button type="button" className="secondary tactile" onClick={() => setShowAddExpense(false)}>Cancel</button>
+               <button className="primary tactile" type="submit">Submit Expense</button>
+             </div>
+           </form>
+         </div>
+       )}
+ 
+       {/* ========================================== */}
+       {/* MODAL: ADD DOCUMENT */}
+       {/* ========================================== */}
+       {showAddDoc && (
+         <div className="modal-backdrop">
+           <form className="modal" onSubmit={handleAddDocSubmit}>
+             <SectionHeader title="Share Travel Document / Google Drive Link" action={<button type="button" className="icon-button tactile" onClick={() => setShowAddDoc(false)}><X size={18} /></button>} />
+             <div className="form-grid">
+               <label className="wide">Document Title
+                 <input 
+                   value={docForm.title} 
+                   onChange={(e) => setDocForm({ ...docForm, title: e.target.value })} 
+                   placeholder="e.g. Flight Tickets, Hotel Booking PDF" 
+                   required 
+                 />
+               </label>
+               <label className="wide">Google Drive / Cloud Link (URL)
+                 <input 
+                   type="url" 
+                   value={docForm.url} 
+                   onChange={(e) => setDocForm({ ...docForm, url: e.target.value })} 
+                   placeholder="https://drive.google.com/..." 
+                   required 
+                 />
+               </label>
+             </div>
+             <div className="modal-actions">
+               <button type="button" className="secondary tactile" onClick={() => setShowAddDoc(false)}>Cancel</button>
+               <button className="primary tactile" type="submit">Share Link</button>
+             </div>
+           </form>
+         </div>
+       )}
+ 
+       {/* ========================================== */}
+       {/* MODAL: ADD REMINDER TASK */}
+       {/* ========================================== */}
+       {showAddTask && (
+         <div className="modal-backdrop">
+           <form className="modal" onSubmit={handleAddTaskSubmit}>
+             <SectionHeader title="Add Trip Task / Reminder" action={<button type="button" className="icon-button tactile" onClick={() => setShowAddTask(false)}><X size={18} /></button>} />
+             <div className="form-grid">
+               <label className="wide">Reminder Title
+                 <input 
+                   value={taskForm.title} 
+                   onChange={(e) => setTaskForm({ ...taskForm, title: e.target.value })} 
+                   placeholder="e.g. Pack swimming costume, checkin flights" 
+                   required 
+                 />
+               </label>
+               <label>Due Date
+                 <input 
+                   type="date" 
+                   value={taskForm.dueDate} 
+                   onChange={(e) => setTaskForm({ ...taskForm, dueDate: e.target.value })} 
+                   required 
+                 />
+               </label>
+               <label>Time
+                 <input 
+                   type="time" 
+                   value={taskForm.dueTime} 
+                   onChange={(e) => setTaskForm({ ...taskForm, dueTime: e.target.value })} 
+                 />
+               </label>
+               <label className="wide">Priority
+                 <Select 
+                   value={taskForm.priority} 
+                   onChange={(val) => setTaskForm({ ...taskForm, priority: val })} 
+                   options={["Low", "Medium", "High", "Urgent"]} 
+                 />
+               </label>
+               <label className="wide">Description / Notes
+                 <input 
+                   value={taskForm.notes} 
+                   onChange={(e) => setTaskForm({ ...taskForm, notes: e.target.value })} 
+                   placeholder="e.g. carry physical copy, print tickets" 
+                 />
+               </label>
+             </div>
+             <div className="modal-actions">
+               <button type="button" className="secondary tactile" onClick={() => setShowAddTask(false)}>Cancel</button>
+               <button className="primary tactile" type="submit">Add Task</button>
+             </div>
+           </form>
+         </div>
+       )}
     </div>
   );
 }
