@@ -5480,7 +5480,8 @@ label {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
   padding: 1.5rem;
   background: linear-gradient(135deg, rgba(199, 200, 244, 0.4) 0%, rgba(251, 247, 232, 0.4) 100%), var(--bg, #fbf7e8);
   overflow-y: auto;
@@ -5552,7 +5553,8 @@ label {
 .cloud-room-shell {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
   background: linear-gradient(135deg, rgba(199, 200, 244, 0.22) 0%, rgba(251, 247, 232, 0.22) 100%), var(--bg, #fbf7e8);
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
