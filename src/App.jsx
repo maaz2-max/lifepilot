@@ -11937,7 +11937,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                       return true;
                     }).slice(0, 5).map(item => (
                       <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0.7rem 0", borderBottom: "1px solid rgba(0,0,0,0.05)" }}>
-                        <span style={{ fontWeight: 700, fontSize: "0.92rem", color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, marginRight: "1rem" }}>{item.title}</span>
+                        <span style={{ fontWeight: 700, fontSize: "0.92rem", color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0, marginRight: "1rem" }}>{item.title}</span>
                         <strong style={{ fontSize: "0.95rem", color: "var(--ink)", fontWeight: 900, flexShrink: 0 }}>{rupee.format(item.amount)}</strong>
                       </div>
                     ))}

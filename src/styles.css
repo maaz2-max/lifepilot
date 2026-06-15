@@ -5790,3 +5790,12 @@ label {
     gap: 1rem;
   }
 }
+
+/* Prevent auto-zoom on iOS inputs and double-tap zoom */
+input, textarea, select {
+  font-size: 16px !important;
+}
+
+a, button, input, select, textarea {
+  touch-action: manipulation;
+}
