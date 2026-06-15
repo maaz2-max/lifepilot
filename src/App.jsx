@@ -2183,6 +2183,14 @@ export default function App() {
             const parentProj = state.projects.find(p => p.id === tx?.projectId);
             if (parentProj?.isCloud) {
               deleteCloudExpense(itemId).catch(console.error);
+              const linked = state.projectTransactions.filter(t => 
+                t.projectId === parentProj.id &&
+                t.category === "Settlement" &&
+                t.notes && t.notes.includes(`Settlement for expense ID: ${itemId}`)
+              );
+              linked.forEach(s => {
+                deleteCloudExpense(s.id).catch(console.error);
+              });
               addCloudActivity(
                 parentProj.id,
                 "delete_expense",
@@ -2197,13 +2205,38 @@ export default function App() {
           updateState(options.apply, "Deleted");
           return;
         }
-        updateState((current) => ({
-          ...current,
-          [collection]: current[collection].filter((item) => item.id !== itemId),
-          expenses: collection === "reminders"
-            ? current.expenses.filter((e) => e.reminderId !== itemId)
-            : current.expenses
-        }), "Deleted");
+        updateState((current) => {
+          let updatedTransactions = current.projectTransactions || [];
+          let updatedProjects = current.projects || [];
+          
+          if (collection === "projectTransactions") {
+            updatedTransactions = updatedTransactions.filter((item) => item.id !== itemId);
+            updatedTransactions = updatedTransactions.filter((item) => {
+              if (item.category === "Settlement") {
+                const linkedId = item.notes && item.notes.includes("Settlement for expense ID: ")
+                  ? item.notes.split("Settlement for expense ID: ")[1]?.trim()
+                  : null;
+                return linkedId !== itemId;
+              }
+              return true;
+            });
+            updatedProjects = updatedProjects.map(p => ({
+              ...p,
+              paidSettlements: (p.paidSettlements || []).filter(s => s.expenseId !== itemId)
+            }));
+          }
+
+          return {
+            ...current,
+            [collection]: collection === "projectTransactions" 
+              ? updatedTransactions 
+              : current[collection].filter((item) => item.id !== itemId),
+            projects: updatedProjects,
+            expenses: collection === "reminders"
+              ? current.expenses.filter((e) => e.reminderId !== itemId)
+              : current.expenses
+          };
+        }, "Deleted");
       }
     });
   };
@@ -11337,10 +11370,34 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
       confirmLabel: "Delete",
       tone: "danger",
       onConfirm: async () => {
-        // Optimistic delete
-        setExpenses(prev => prev.filter(e => e.id !== expId));
+        // Get list of linked settlements to delete
+        const linkedSettlements = expenses.filter(e => {
+          if (e.category === "Settlement") {
+            const linkedId = e.notes && e.notes.includes("Settlement for expense ID: ")
+              ? e.notes.split("Settlement for expense ID: ")[1]?.trim()
+              : null;
+            return linkedId === expId;
+          }
+          return false;
+        });
+
+        // Optimistic delete of parent expense and all linked settlements
+        setExpenses(prev => prev.filter(e => {
+          if (e.id === expId) return false;
+          if (e.category === "Settlement") {
+            const linkedId = e.notes && e.notes.includes("Settlement for expense ID: ")
+              ? e.notes.split("Settlement for expense ID: ")[1]?.trim()
+              : null;
+            if (linkedId === expId) return false;
+          }
+          return true;
+        }));
+
         try {
           await deleteCloudExpense(expId);
+          for (const s of linkedSettlements) {
+            await deleteCloudExpense(s.id).catch(console.error);
+          }
           await addCloudActivity(
             projectId,
             "delete_expense",
