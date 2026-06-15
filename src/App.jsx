@@ -4951,7 +4951,7 @@ function ProjectsView({ state, selectedProject, setSelectedProject, openAdd, set
             <ProjectParticipantBreakdown project={active} transactions={transactions} />
             <Segmented value={projectTab} onChange={setProjectTab} options={[["transactions", "Transactions"], ["split", "Split"]]} />
             {projectTab === "transactions" ? (
-              <DateGroupedRecordTable list={transactions} type="projectTransaction" setModal={setModal} remove={(id) => remove("projectTransactions", id, "project transaction")} project={active} upsert={upsert} />
+              <DateGroupedRecordTable list={transactions} type="projectTransaction" setModal={setModal} remove={(id) => remove("projectTransactions", id, "project transaction")} project={active} upsert={upsert} requestConfirm={requestConfirm} />
             ) : (
               <ProjectSplitView project={active} transactions={transactions} upsert={upsert} requestConfirm={requestConfirm} />
             )}
@@ -7686,7 +7686,7 @@ function ExpenseSplitInlineDetails({ expense, project, isCloud, onMarkPaid, onDe
   );
 }
 
-function RecordTable({ list, type, setModal, remove, project, upsert }) {
+function RecordTable({ list, type, setModal, remove, project, upsert, requestConfirm }) {
   return (
     <div className="record-table">
       {list.length ? list.map((item) => (
@@ -7707,7 +7707,7 @@ function RecordTable({ list, type, setModal, remove, project, upsert }) {
               expense={item} 
               project={project} 
               isCloud={false} 
-              setConfirmDialog={setConfirmDialog} 
+              setConfirmDialog={requestConfirm} 
               onMarkPaid={(row, amt, paymentType, existingSettlementId) => {
                 if (!project || !upsert) return;
                 if (existingSettlementId) {
@@ -7743,7 +7743,7 @@ function RecordTable({ list, type, setModal, remove, project, upsert }) {
   );
 }
 
-function DateGroupedRecordTable({ list, type, setModal, remove, project, upsert }) {
+function DateGroupedRecordTable({ list, type, setModal, remove, project, upsert, requestConfirm }) {
   const groups = list.reduce((acc, item) => {
     const date = item.date || item.receivedDate || "No date";
     acc[date] = acc[date] || [];
@@ -7760,7 +7760,7 @@ function DateGroupedRecordTable({ list, type, setModal, remove, project, upsert 
             <strong>{date === todayISO() ? "Today" : formatDate(date)}</strong>
             <span>{rupee.format(sum(groups[date], (item) => item.type === "Debit"))} debit - {rupee.format(sum(groups[date], (item) => item.type === "Credit"))} credit</span>
           </div>
-          <RecordTable list={groups[date].sort(sortByTimeDesc)} type={type} setModal={setModal} remove={remove} project={project} upsert={upsert} />
+          <RecordTable list={groups[date].sort(sortByTimeDesc)} type={type} setModal={setModal} remove={remove} project={project} upsert={upsert} requestConfirm={requestConfirm} />
         </section>
       ))}
     </div>
