@@ -2067,7 +2067,7 @@ export default function App() {
 
   const upsert = (collection, item, prefix) => {
     updateState((current) => {
-      const exists = Boolean(item.id);
+      const exists = Boolean(item.id) && (current[collection] || []).some((entry) => entry.id === item.id);
       const record = { ...item, id: item.id || id(prefix), updatedAt: new Date().toISOString() };
       
       let nextState = {
