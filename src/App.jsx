@@ -7977,26 +7977,38 @@ function projectSplitSummary(project, transactions) {
   const names = uniqueList([...(project.participants || []), ...transactions.flatMap((item) => [item.paidBy, item.owedBy, ...(item.participants || [])])]);
   const debitTransactions = transactions.filter((item) => item.type === "Debit");
   const paidSettlements = (project.paidSettlements || []).filter((item) => item.from && item.to && amount(item.amount) > 0);
+
+  const activeSplitTransactions = debitTransactions.filter((item) =>
+    (splitModeOf(item) === "Equal split" && (item.participants || []).filter(Boolean).length > 0) ||
+    (splitModeOf(item) === "Direct owed" && item.paidBy && item.owedBy)
+  );
+  const expenseSplits = buildExpenseSplits(activeSplitTransactions);
+
   const rawStats = names.map((name) => {
     const totalSpent = debitTransactions.reduce((total, item) => {
       return item.paidBy === name ? total + amount(item.amount) : total;
     }, 0);
-    const paid = debitTransactions.reduce((total, item) => {
-      const mode = splitModeOf(item);
-      const hasEqualSplit = mode === "Equal split" && (item.participants || []).filter(Boolean).length > 0;
-      const hasDirectOwed = mode === "Direct owed" && item.owedBy;
-      return item.paidBy === name && (hasEqualSplit || hasDirectOwed) ? total + amount(item.amount) : total;
+
+    // Sum of rounded splits where name receives the money (to)
+    const paid = expenseSplits.reduce((total, split) => {
+      if (!split || !split.rows) return total;
+      const creditRows = split.rows.filter(r => r.to === name);
+      const creditSum = creditRows.reduce((sum, r) => sum + r.amount, 0);
+      return total + creditSum;
     }, 0);
-    const share = debitTransactions.reduce((total, item) => {
-      const mode = splitModeOf(item);
-      if (mode === "Direct owed") return item.owedBy === name ? total + amount(item.amount) : total;
-      if (mode !== "Equal split") return total;
-      const splitMembers = (item.participants || []).filter(Boolean);
-      return splitMembers.includes(name) ? total + amount(item.amount) / Math.max(splitMembers.length, 1) : total;
+
+    // Sum of rounded splits where name owes the money (from)
+    const share = expenseSplits.reduce((total, split) => {
+      if (!split || !split.rows) return total;
+      const debitRows = split.rows.filter(r => r.from === name);
+      const debitSum = debitRows.reduce((sum, r) => sum + r.amount, 0);
+      return total + debitSum;
     }, 0);
+
     const credit = 0;
     return { name, paid, share, credit, totalSpent, balance: paid + credit - share };
   });
+
   const stats = rawStats.map((row) => {
     const paidOut = paidSettlements.filter((item) => item.from === row.name).reduce((total, item) => total + amount(item.amount), 0);
     const received = paidSettlements.filter((item) => item.to === row.name).reduce((total, item) => total + amount(item.amount), 0);
@@ -8008,11 +8020,7 @@ function projectSplitSummary(project, transactions) {
       balance: row.balance + paidOut - received 
     };
   });
-  const activeSplitTransactions = debitTransactions.filter((item) =>
-    (splitModeOf(item) === "Equal split" && (item.participants || []).filter(Boolean).length > 0) ||
-    (splitModeOf(item) === "Direct owed" && item.paidBy && item.owedBy)
-  );
-  const expenseSplits = buildExpenseSplits(activeSplitTransactions);
+
   return {
     stats,
     settlements: buildSettlements(stats),
