@@ -11834,7 +11834,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                           </div>
                           <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
                             <strong style={{ color: "var(--ink)" }}>{rupee.format(item.amount)}</strong>
-                            {item.created_by === displayName && (
+                            {(item.created_by === displayName || item.category === "Settlement" || participants.find(p => p.name === displayName)?.role === "owner") && (
                               <button 
                                 className="icon-button tactile danger" 
                                 style={{ padding: "2px", border: "none", background: "transparent" }}
@@ -12075,7 +12075,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                           />
                         </div>
 
-                        {item.created_by === displayName && (
+                        {(item.created_by === displayName || item.category === "Settlement" || participants.find(p => p.name === displayName)?.role === "owner") && (
                           <div style={{ marginLeft: "0.5rem" }}>
                             <button 
                               className="icon-button tactile danger" 
