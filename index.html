@@ -5,11 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
     <meta name="theme-color" content="#c7c8f4" />
     <meta name="description" content="LifePilot personal assistant, calendar, tasks, notes, reminders, and money tracker." />
-    <link id="app-manifest" rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icons/icon.svg" />
     <script>
       (function() {
+        var link = document.createElement('link');
+        link.rel = 'manifest';
+        link.id = 'app-manifest';
         if (window.location.pathname.startsWith('/project/')) {
           var manifest = {
             name: "Shared Room - LifePilot",
@@ -21,8 +23,11 @@
             icons: [{ src: "/icons/icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any maskable" }]
           };
           var encoded = encodeURIComponent(JSON.stringify(manifest));
-          document.getElementById('app-manifest').href = "data:application/manifest+json;charset=utf-8," + encoded;
+          link.href = "data:application/manifest+json;charset=utf-8," + encoded;
+        } else {
+          link.href = "/manifest.webmanifest";
         }
+        document.head.appendChild(link);
       })();
     </script>
     <title>LifePilot</title>
