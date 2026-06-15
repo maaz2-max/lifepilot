@@ -10872,7 +10872,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
       <div className="cloud-landing-container">
         <div className="cloud-landing-card">
           <div className="brand" style={{ justifyContent: "center", marginBottom: "1.25rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
-            <span className="logo" style={{ fontSize: "2.2rem" }}>🧭</span>
+            <img src="/icons/icon.svg" alt="LifePilot" className="logo" style={{ width: "38px", height: "38px", borderRadius: "10px", boxShadow: "none" }} />
             <h1 style={{ fontSize: "1.8rem", fontWeight: 950, margin: 0, color: "var(--ink)" }}>LifePilot</h1>
           </div>
           <h2 style={{ fontSize: "1.3rem", fontWeight: "950", margin: "0 0 0.5rem 0", color: "var(--ink)", textAlign: "center" }}>Join Shared Room</h2>
@@ -10980,7 +10980,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
         {showConfirmJoin && (
           <div className="modal-backdrop" style={{ zIndex: 100 }}>
             <div className="modal" style={{ maxWidth: "340px", textAlign: "center", padding: "1.5rem" }}>
-              <span style={{ fontSize: "2.2rem", display: "block", marginBottom: "0.5rem" }}>🧭</span>
+              <img src="/icons/icon.svg" alt="LifePilot" style={{ width: "42px", height: "42px", display: "block", margin: "0 auto 0.75rem auto", borderRadius: "10px" }} />
               <h3 style={{ margin: "0 0 0.5rem 0", fontSize: "1.2rem", fontWeight: "950" }}>Confirm Identity</h3>
               <p style={{ fontSize: "0.95rem", color: "var(--ink)", margin: "0 0 1.25rem 0" }}>
                 Are you sure you want to join this shared expense space as <strong>"{enteredName}"</strong>?

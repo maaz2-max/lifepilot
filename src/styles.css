@@ -5483,6 +5483,8 @@ label {
   min-height: 100vh;
   padding: 1.5rem;
   background: linear-gradient(135deg, rgba(199, 200, 244, 0.4) 0%, rgba(251, 247, 232, 0.4) 100%), var(--bg, #fbf7e8);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .cloud-landing-card {
@@ -5552,6 +5554,8 @@ label {
   flex-direction: column;
   min-height: 100vh;
   background: var(--bg, #fbf7e8);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .cloud-room-header {
