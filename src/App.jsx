@@ -7428,7 +7428,7 @@ function TransactionRow({ item }) {
   );
 }
 
-function ExpenseSplitInlineDetails({ expense, project, isCloud, onMarkPaid }) {
+function ExpenseSplitInlineDetails({ expense, project, isCloud, onMarkPaid, onDeletePaid }) {
   const [expanded, setExpanded] = useState(false);
   const [customKey, setCustomKey] = useState("");
   const [customAmount, setCustomAmount] = useState("");
@@ -7474,36 +7474,63 @@ function ExpenseSplitInlineDetails({ expense, project, isCloud, onMarkPaid }) {
         <div style={{ marginTop: "0.4rem", padding: "0.6rem 0.8rem", background: "rgba(0,0,0,0.02)", borderRadius: "10px", border: "1px dashed rgba(0,0,0,0.08)", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
           {rows.map((row, idx) => {
             const rowKey = `${row.from}_${row.to}_${idx}`;
+            // Find linked settlement to check if already paid
+            const linked = (project?.paidSettlements || []).find(s => 
+              s.from === row.from &&
+              s.to === row.to &&
+              (String(s.expenseId) === String(expense.id))
+            );
+
             return (
               <div key={rowKey} style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.5rem" }}>
                   <span>
                     <strong>{row.from}</strong> owes <strong>{row.to}</strong>: <strong>{rupee.format(row.amount)}</strong>
                   </span>
-                  <div style={{ display: "flex", gap: "0.3rem" }}>
-                    <button 
-                      className="secondary tactile" 
-                      style={{ padding: "2px 6px", fontSize: "0.72rem" }} 
-                      type="button" 
-                      onClick={() => onMarkPaid(row, row.amount, "Full")}
-                    >
-                      Fully Paid
-                    </button>
-                    <button 
-                      className="secondary tactile" 
-                      style={{ padding: "2px 6px", fontSize: "0.72rem" }} 
-                      type="button" 
-                      onClick={() => {
-                        setCustomKey(customKey === rowKey ? "" : rowKey);
-                        setCustomAmount("");
-                      }}
-                    >
-                      Custom
-                    </button>
-                  </div>
+                  
+                  {linked ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                      <span style={{ color: "#2a9d8f", fontWeight: "bold", background: "rgba(42, 157, 143, 0.08)", padding: "2px 8px", borderRadius: "8px", border: "1px solid rgba(42, 157, 143, 0.12)", fontSize: "0.8rem" }}>
+                        ✓ Paid: {rupee.format(linked.amount)}
+                      </span>
+                      <button 
+                        className="secondary tactile" 
+                        style={{ padding: "2px 6px", fontSize: "0.72rem" }} 
+                        type="button" 
+                        onClick={() => {
+                          setCustomKey(customKey === rowKey ? "" : rowKey);
+                          setCustomAmount(String(linked.amount));
+                        }}
+                      >
+                        Edit
+                      </button>
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", gap: "0.3rem" }}>
+                      <button 
+                        className="secondary tactile" 
+                        style={{ padding: "2px 6px", fontSize: "0.72rem" }} 
+                        type="button" 
+                        onClick={() => onMarkPaid(row, row.amount, "Full")}
+                      >
+                        Fully Paid
+                      </button>
+                      <button 
+                        className="secondary tactile" 
+                        style={{ padding: "2px 6px", fontSize: "0.72rem" }} 
+                        type="button" 
+                        onClick={() => {
+                          setCustomKey(customKey === rowKey ? "" : rowKey);
+                          setCustomAmount("");
+                        }}
+                      >
+                        Custom
+                      </button>
+                    </div>
+                  )}
                 </div>
                 {customKey === rowKey && (
-                  <div style={{ display: "flex", gap: "0.4rem", alignItems: "center", marginTop: "0.2rem" }}>
+                  <div style={{ display: "flex", gap: "0.4rem", alignItems: "center", marginTop: "0.2rem", flexWrap: "wrap" }}>
                     <input
                       type="number"
                       value={customAmount}
@@ -7520,7 +7547,7 @@ function ExpenseSplitInlineDetails({ expense, project, isCloud, onMarkPaid }) {
                       onClick={() => {
                         const safeAmt = Math.min(Math.max(Number(customAmount), 0), row.amount);
                         if (safeAmt > 0) {
-                          onMarkPaid(row, safeAmt, "Custom");
+                          onMarkPaid(row, safeAmt, "Custom", linked?.id);
                           setCustomKey("");
                           setCustomAmount("");
                         }
@@ -7528,6 +7555,20 @@ function ExpenseSplitInlineDetails({ expense, project, isCloud, onMarkPaid }) {
                     >
                       Save
                     </button>
+                    {linked && onDeletePaid && (
+                      <button 
+                        className="secondary danger tactile" 
+                        style={{ padding: "2px 8px", fontSize: "0.72rem" }} 
+                        type="button" 
+                        onClick={() => {
+                          onDeletePaid(linked);
+                          setCustomKey("");
+                          setCustomAmount("");
+                        }}
+                      >
+                        Delete Payment
+                      </button>
+                    )}
                     <button 
                       className="secondary tactile" 
                       style={{ padding: "2px 6px", fontSize: "0.72rem" }} 
@@ -7568,18 +7609,33 @@ function RecordTable({ list, type, setModal, remove, project, upsert }) {
               expense={item} 
               project={project} 
               isCloud={false} 
-              onMarkPaid={(row, amt, paymentType) => {
+              onMarkPaid={(row, amt, paymentType, existingSettlementId) => {
                 if (!project || !upsert) return;
-                const paid = {
-                  id: id("settlement"),
-                  from: row.from,
-                  to: row.to,
-                  amount: Math.round(amt),
-                  paymentType,
-                  paidAt: new Date().toISOString()
-                };
-                upsert("projects", { ...project, paidSettlements: [paid, ...(project.paidSettlements || [])] }, "project");
+                if (existingSettlementId) {
+                  const updatedSettlements = (project.paidSettlements || []).map(s => 
+                    s.id === existingSettlementId 
+                      ? { ...s, amount: Math.round(amt), paymentType }
+                      : s
+                  );
+                  upsert("projects", { ...project, paidSettlements: updatedSettlements }, "project");
+                } else {
+                  const paid = {
+                    id: id("settlement"),
+                    from: row.from,
+                    to: row.to,
+                    amount: Math.round(amt),
+                    paymentType,
+                    paidAt: new Date().toISOString(),
+                    expenseId: item.id
+                  };
+                  upsert("projects", { ...project, paidSettlements: [paid, ...(project.paidSettlements || [])] }, "project");
+                }
               }} 
+              onDeletePaid={(settlement) => {
+                if (!project || !upsert) return;
+                const updatedSettlements = (project.paidSettlements || []).filter(s => s.id !== settlement.id);
+                upsert("projects", { ...project, paidSettlements: updatedSettlements }, "project");
+              }}
             />
           )}
         </div>
@@ -10917,42 +10973,84 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
     setProject(null);
   };
 
-  const handleMarkSettlementPaid = async (settlementItem, paidAmt, type = "Full") => {
-    const safeAmount = Math.min(Math.max(Number(paidAmt), 0), Number(settlementItem.amount));
+  const handleMarkSettlementPaid = async (settlementItem, paidAmt, type = "Full", existingSettlementId = null) => {
+    const safeAmount = Math.max(Number(paidAmt), 0);
     if (safeAmount <= 0) return;
     try {
-      const settlementId = "settlement-" + Math.random().toString(36).substring(2, 11);
-      
-      await upsertCloudExpense({
-        id: settlementId,
-        project_id: projectId,
-        title: `Settlement: ${settlementItem.from} paid ${settlementItem.to}`,
-        amount: safeAmount,
-        category: "Settlement",
-        date: todayISO(),
-        time: nowTime(),
-        paid_by: settlementItem.from,
-        owed_by: settlementItem.to,
-        participants: [],
-        payment_method: "UPI",
-        notes: `Settlement payment (${type})`,
-        created_by: displayName,
-        created_at: new Date().toISOString()
-      });
+      if (existingSettlementId) {
+        const existing = expenses.find(e => e.id === existingSettlementId);
+        if (existing) {
+          const updated = {
+            ...existing,
+            amount: safeAmount,
+            notes: `Settlement for expense ID: ${settlementItem.expenseId || existing.notes.split("Settlement for expense ID: ")[1]?.trim()}`
+          };
+          setExpenses(prev => prev.map(e => e.id === existingSettlementId ? updated : e));
+          
+          await upsertCloudExpense(updated);
+          await addCloudActivity(
+            projectId,
+            "edit_settlement",
+            `${displayName} updated settlement payment from ${settlementItem.from} to ${settlementItem.to} to ₹${safeAmount}`,
+            displayName
+          );
+          setToast("Settlement payment updated!");
+        }
+      } else {
+        const settlementId = "settlement-" + Math.random().toString(36).substring(2, 11);
+        const newSettlement = {
+          id: settlementId,
+          project_id: projectId,
+          title: `Settlement: ${settlementItem.from} paid ${settlementItem.to}`,
+          amount: safeAmount,
+          category: "Settlement",
+          date: todayISO(),
+          time: nowTime(),
+          paid_by: settlementItem.from,
+          owed_by: settlementItem.to,
+          participants: [],
+          payment_method: "UPI",
+          notes: `Settlement for expense ID: ${settlementItem.expenseId || settlementItem.id}`,
+          created_by: displayName,
+          created_at: new Date().toISOString()
+        };
 
-      await addCloudActivity(
-        projectId,
-        "add_settlement",
-        `${displayName} marked settlement of ₹${safeAmount} from ${settlementItem.from} to ${settlementItem.to} as paid`,
-        displayName
-      );
+        setExpenses(prev => [newSettlement, ...prev]);
 
+        await upsertCloudExpense(newSettlement);
+        await addCloudActivity(
+          projectId,
+          "add_settlement",
+          `${displayName} marked settlement of ₹${safeAmount} from ${settlementItem.from} to ${settlementItem.to} as paid`,
+          displayName
+        );
+
+        setToast("Settlement recorded!");
+      }
       setCustomSettlementKey("");
       setCustomAmount("");
-      setToast("Settlement recorded!");
     } catch (err) {
       console.error(err);
       setToast("Failed to record settlement.");
+      getCloudExpenses(projectId).then(setExpenses).catch(console.error);
+    }
+  };
+
+  const handleDeleteSettlementInline = async (settlement) => {
+    setExpenses(prev => prev.filter(e => e.id !== settlement.id));
+    try {
+      await deleteCloudExpense(settlement.id);
+      await addCloudActivity(
+        projectId,
+        "delete_settlement",
+        `${displayName} deleted settlement payment of ₹${settlement.amount} from ${settlement.from} to ${settlement.to}`,
+        displayName
+      );
+      setToast("Settlement payment deleted.");
+    } catch (err) {
+      console.error(err);
+      setToast("Failed to delete settlement payment.");
+      getCloudExpenses(projectId).then(setExpenses).catch(console.error);
     }
   };
 
@@ -10985,6 +11083,14 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
     e.preventDefault();
     if (!expForm.title.trim() || Number(expForm.amount) <= 0) {
       setToast("Title and amount are required.");
+      return;
+    }
+    if (expForm.splitMode === "Equal split" && (!expForm.participants || expForm.participants.length === 0)) {
+      setToast("Please select participants for Equal split.");
+      return;
+    }
+    if (expForm.splitMode === "Direct owed" && !expForm.owedBy) {
+      setToast("Please select who owes the money for Direct owed.");
       return;
     }
 
@@ -11281,7 +11387,10 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
       from: e.paid_by,
       to: e.owed_by,
       amount: Number(e.amount),
-      paidAt: e.created_at
+      paidAt: e.created_at,
+      expenseId: e.notes && e.notes.includes("Settlement for expense ID: ") 
+        ? e.notes.split("Settlement for expense ID: ")[1].trim() 
+        : null
     }))
   };
   const splitSummary = projectSplitSummary(mappedProjectForSplit, mappedExpensesForSplit);
@@ -11664,9 +11773,10 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                         </div>
                         <ExpenseSplitInlineDetails 
                           expense={item} 
-                          project={project} 
+                          project={mappedProjectForSplit} 
                           isCloud={true} 
                           onMarkPaid={handleMarkSettlementPaid} 
+                          onDeletePaid={handleDeleteSettlementInline}
                         />
                       </div>
                     ))}
@@ -11882,9 +11992,10 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                           </div>
                           <ExpenseSplitInlineDetails 
                             expense={item} 
-                            project={project} 
+                            project={mappedProjectForSplit} 
                             isCloud={true} 
                             onMarkPaid={handleMarkSettlementPaid} 
+                            onDeletePaid={handleDeleteSettlementInline}
                           />
                         </div>
 
@@ -12247,10 +12358,25 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                <label>Split Mode
                  <Select 
                    value={expForm.splitMode} 
-                   onChange={(val) => setExpForm({ ...expForm, splitMode: val })} 
-                   options={[["No split", "No split"], ["Equal split", "Equal split"]]} 
+                   onChange={(val) => setExpForm({ 
+                     ...expForm, 
+                     splitMode: val, 
+                     participants: val === "Equal split" ? participantNamesList : [],
+                     owedBy: "" 
+                   })} 
+                   options={[["No split", "No split"], ["Equal split", "Equal split"], ["Direct owed", "Direct owed"]]} 
                  />
                </label>
+
+               {expForm.splitMode === "Direct owed" && (
+                 <label>Owed By
+                   <Select 
+                     value={expForm.owedBy} 
+                     onChange={(val) => setExpForm({ ...expForm, owedBy: val })} 
+                     options={[["", "Select debtor"], ...participantNamesList.filter(n => n !== (expForm.paidBy || displayName)).map(n => [n, n])]} 
+                   />
+                 </label>
+               )}
  
                {expForm.splitMode === "Equal split" && (
                  <div className="wide panel" style={{ padding: "0.85rem", marginTop: "0.5rem" }}>
