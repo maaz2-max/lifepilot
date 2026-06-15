@@ -2642,7 +2642,7 @@ export default function App() {
 function Brand() {
   return (
     <div className="brand">
-      <img src="/icons/icon.svg" alt="" />
+      <img loading="lazy" src="/icons/icon.svg" alt="" />
       <div>
         <strong>LifePilot</strong>
         <span>Planner and money diary</span>
@@ -2763,7 +2763,7 @@ function TopBar({ state, active, installPrompt, requestNotifications, setActive,
           <Bike size={19} />
         </button>
         <button className="profile-chip tactile" onClick={() => setActive("settings")}>
-          {state.profile?.image ? <img src={state.profile.image} alt="" /> : <UserRound size={19} />}
+          {state.profile?.image ? <img loading="lazy" src={state.profile.image} alt="" /> : <UserRound size={19} />}
           <span>{state.profile?.name}</span>
         </button>
       </div>
@@ -2957,7 +2957,7 @@ function LumiCompanion({ userName = "there", setAiOpen }) {
   return (
     <div className={`lumi-companion ${open ? "open" : ""}`}>
       <button className="lumi-character tactile" type="button" onClick={() => setOpen((value) => !value)} aria-label="Open Lumi helper">
-        <img src="/characters/lumi.png" alt="Lumi AI helper" />
+        <img loading="lazy" src="/characters/lumi.png" alt="Lumi AI helper" />
       </button>
       {open && (
         <div className="lumi-popover raised">
@@ -5292,7 +5292,7 @@ function SettingsView({ state, setState, setToast, requestNotifications, setModa
           </div>
         </div>
         <div className="profile-large">
-          {state.profile?.image ? <img src={state.profile.image} alt="" /> : <UserRound size={42} />}
+          {state.profile?.image ? <img loading="lazy" src={state.profile.image} alt="" /> : <UserRound size={42} />}
           <div>
             <h3>{state.profile?.name}</h3>
             <p>{state.profile?.bio || "No bio added."}</p>
@@ -5838,7 +5838,7 @@ function ConfirmModal({ dialog, close }) {
 
   return (
     <div className="modal-backdrop">
-      <section className={`confirm-modal ${dialog.tone || "danger"}`}>
+      <section className={`confirm-modal tone-${dialog.tone || "danger"}`}>
         <div className="confirm-icon">
           <Trash2 size={28} />
         </div>
@@ -6818,14 +6818,14 @@ function buildExpenseReportHtml(state, options = {}) {
     <body>
       <main>
         <header>
-          <img src="/icons/icon.svg" alt="" />
+          <img loading="lazy" src="/icons/icon.svg" alt="" />
           <div>
             <h1>${escapeHtml(reportTitle)}</h1>
             <div class="meta">Generated ${new Date().toLocaleString("en-IN")} - ${transactions.length} records</div>
           </div>
           <button class="back-button" type="button" onclick="if (window.opener) window.opener.focus(); window.close();">Back to app</button>
         </header>
-        <img class="watermark-logo" src="/icons/icon.svg" alt="" />
+        <img loading="lazy" class="watermark-logo" src="/icons/icon.svg" alt="" />
         <div class="cards">
           <div class="card"><span>Total Credit</span><strong>${rupee.format(money.credit)}</strong></div>
           <div class="card"><span>Total Debit</span><strong>${rupee.format(money.debit)}</strong></div>
@@ -12006,7 +12006,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
       <div className="cloud-landing-container">
         <div className="cloud-landing-card">
           <div className="brand" style={{ justifyContent: "center", marginBottom: "1.25rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
-            <img src="/icons/icon.svg" alt="LifePilot" className="logo" style={{ width: "38px", height: "38px", borderRadius: "10px", boxShadow: "none" }} />
+            <img loading="lazy" src="/icons/icon.svg" alt="LifePilot" className="logo" style={{ width: "38px", height: "38px", borderRadius: "10px", boxShadow: "none" }} />
             <h1 style={{ fontSize: "1.8rem", fontWeight: 950, margin: 0, color: "var(--ink)" }}>LifePilot</h1>
           </div>
           <h2 style={{ fontSize: "1.3rem", fontWeight: "950", margin: "0 0 0.5rem 0", color: "var(--ink)", textAlign: "center" }}>Join Shared Room</h2>
@@ -12157,7 +12157,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
         {showConfirmJoin && (
           <div className="modal-backdrop" style={{ zIndex: 100 }}>
             <div className="modal" style={{ maxWidth: "340px", textAlign: "center", padding: "1.5rem" }}>
-              <img src="/icons/icon.svg" alt="LifePilot" style={{ width: "42px", height: "42px", display: "block", margin: "0 auto 0.75rem auto", borderRadius: "10px" }} />
+              <img loading="lazy" src="/icons/icon.svg" alt="LifePilot" style={{ width: "42px", height: "42px", display: "block", margin: "0 auto 0.75rem auto", borderRadius: "10px" }} />
               <h3 style={{ margin: "0 0 0.5rem 0", fontSize: "1.2rem", fontWeight: "950" }}>Confirm Identity</h3>
               <p style={{ fontSize: "0.95rem", color: "var(--ink)", margin: "0 0 1.25rem 0" }}>
                 Are you sure you want to join this shared expense space as <strong>"{enteredName}"</strong>?
@@ -13329,7 +13329,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                        {expForm.imageUrls.map((url, index) => (
                          <div key={index} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "0.25rem", background: "white", padding: "4px", borderRadius: "8px", border: "1px solid var(--line)" }}>
                            <div style={{ position: "relative", width: "55px", height: "55px", borderRadius: "4px", overflow: "hidden" }}>
-                             <img 
+                             <img loading="lazy" 
                                src={url} 
                                alt={`Receipt ${index + 1}`} 
                                style={{ width: "100%", height: "100%", objectFit: "cover" }} 

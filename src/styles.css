@@ -1908,14 +1908,14 @@ input[type="datetime-local"] {
 
 .confirm-modal h2 {
   margin: 0 0 0.35rem;
-  color: #111111;
+  color: var(--ink, #111111);
   font-size: 1.35rem;
   font-weight: 950;
 }
 
 .confirm-modal p {
   margin: 0;
-  color: #33333d;
+  color: var(--muted, #33333d);
   font-weight: 750;
   line-height: 1.5;
 }
@@ -1932,7 +1932,7 @@ input[type="datetime-local"] {
   box-shadow: 5px 6px 0 #111111;
 }
 
-.confirm-modal.primary .confirm-icon {
+.confirm-modal.tone-primary .confirm-icon {
   background: #d8ff8f;
   color: #111111;
 }
