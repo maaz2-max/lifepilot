@@ -204,6 +204,14 @@ const extractAttachmentUrl = (notes) => {
   return { cleanNotes, url: urls[0] || "" };
 };
 
+const parseSettlementExpenseId = (notes) => {
+  if (!notes || !notes.includes("Settlement for expense ID: ")) return null;
+  const rawAfter = notes.split("Settlement for expense ID: ")[1];
+  if (!rawAfter) return null;
+  const match = rawAfter.match(/^([a-zA-Z0-9-]+)/);
+  return match ? match[1] : null;
+};
+
 const DEFAULT_CATEGORIES = [
   { id: "cat-food", name: "Food", type: "Debit", color: "#f2b8a2", icon: "bowl" },
   { id: "cat-travel", name: "Travel", type: "Debit", color: "#a9d7f5", icon: "route" },
@@ -2094,7 +2102,8 @@ export default function App() {
             from: exp.paid_by,
             to: exp.owed_by,
             amount: Number(exp.amount),
-            paidAt: exp.created_at
+            paidAt: exp.created_at,
+            notes: exp.notes
           }));
           
           const cleanTransactions = current.projectTransactions.filter(t => t.projectId !== selectedProject);
@@ -2314,9 +2323,7 @@ export default function App() {
             updatedTransactions = updatedTransactions.filter((item) => item.id !== itemId);
             updatedTransactions = updatedTransactions.filter((item) => {
               if (item.category === "Settlement") {
-                const linkedId = item.notes && item.notes.includes("Settlement for expense ID: ")
-                  ? item.notes.split("Settlement for expense ID: ")[1]?.trim()
-                  : null;
+                const linkedId = parseSettlementExpenseId(item.notes);
                 return linkedId !== itemId;
               }
               return true;
@@ -7649,10 +7656,28 @@ function ExpenseSplitInlineDetails({ expense, project, isCloud, onMarkPaid, onDe
                   </span>
                   
                   {linked ? (
-                    <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
-                      <span style={{ color: "#2a9d8f", fontWeight: "bold", background: "rgba(42, 157, 143, 0.08)", padding: "2px 8px", borderRadius: "8px", border: "1px solid rgba(42, 157, 143, 0.12)", fontSize: "0.8rem", marginRight: "0.2rem" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", flexWrap: "wrap" }}>
+                      <span style={{ color: "#2a9d8f", fontWeight: "bold", background: "rgba(42, 157, 143, 0.08)", padding: "2px 8px", borderRadius: "8px", border: "1px solid rgba(42, 157, 143, 0.12)", fontSize: "0.8rem" }}>
                         ✓ Paid: {rupee.format(linked.amount)}
                       </span>
+                      {(() => {
+                        const { urls } = extractAttachmentUrls(linked.notes || "");
+                        const hasNoProof = linked.notes && linked.notes.includes("[No payment proof provided]");
+                        return (
+                          <>
+                            {urls && urls.map((url, uidx) => (
+                              <span key={uidx} style={{ display: "inline-flex", alignItems: "center", background: "rgba(16, 185, 129, 0.08)", color: "#10b981", padding: "2px 8px", borderRadius: "8px", border: "1px solid rgba(16, 185, 129, 0.12)", fontWeight: "bold", fontSize: "0.78rem" }}>
+                                <a href={url} target="_blank" rel="noreferrer" style={{ color: "inherit", textDecoration: "none" }}>Proof {urls.length > 1 ? `#${uidx + 1}` : ""}</a>
+                              </span>
+                            ))}
+                            {hasNoProof && (
+                              <span style={{ display: "inline-flex", alignItems: "center", background: "rgba(239, 68, 68, 0.08)", color: "#ef4444", padding: "2px 8px", borderRadius: "8px", border: "1px solid rgba(239, 68, 68, 0.12)", fontWeight: "bold", fontSize: "0.78rem" }}>
+                                No Proof
+                              </span>
+                            )}
+                          </>
+                        );
+                      })()}
                       <button 
                         className="secondary tactile" 
                         style={{ padding: "2px 6px", fontSize: "0.72rem", opacity: 0.5, cursor: "not-allowed" }} 
@@ -8080,7 +8105,30 @@ function ProjectSplitView({ project, transactions, upsert, requestConfirm }) {
                 <button className="secondary danger tactile" type="button" onClick={() => deleteSettlementPaid(item)}>Delete</button>
               </div>
             </div>
-            <small className="settlement-meta">{item.paidAt ? new Date(item.paidAt).toLocaleString("en-IN") : ""}{item.updatedAt ? ` - edited ${new Date(item.updatedAt).toLocaleString("en-IN")}` : ""}</small>
+            <small className="settlement-meta" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.5rem" }}>
+              <span>
+                {item.paidAt ? new Date(item.paidAt).toLocaleString("en-IN") : ""}
+                {item.updatedAt ? ` - edited ${new Date(item.updatedAt).toLocaleString("en-IN")}` : ""}
+              </span>
+              {(() => {
+                const { urls } = extractAttachmentUrls(item.notes || "");
+                const hasNoProof = item.notes && item.notes.includes("[No payment proof provided]");
+                return (
+                  <span style={{ display: "flex", gap: "0.4rem" }}>
+                    {urls && urls.map((url, uidx) => (
+                      <span key={uidx} style={{ display: "inline-flex", alignItems: "center", background: "rgba(16, 185, 129, 0.08)", color: "#10b981", padding: "2px 8px", borderRadius: "8px", border: "1px solid rgba(16, 185, 129, 0.12)", fontWeight: "bold", fontSize: "0.75rem" }}>
+                        <a href={url} target="_blank" rel="noreferrer" style={{ color: "inherit", textDecoration: "none" }}>Proof {urls.length > 1 ? `#${uidx + 1}` : ""}</a>
+                      </span>
+                    ))}
+                    {hasNoProof && (
+                      <span style={{ display: "inline-flex", alignItems: "center", background: "rgba(239, 68, 68, 0.08)", color: "#ef4444", padding: "2px 8px", borderRadius: "8px", border: "1px solid rgba(239, 68, 68, 0.12)", fontWeight: "bold", fontSize: "0.75rem" }}>
+                        No Proof
+                      </span>
+                    )}
+                  </span>
+                );
+              })()}
+            </small>
             {editingSettlementId === item.id && (
               <div className="settlement-edit-row">
                 <label>Edit paid amount
@@ -11208,18 +11256,42 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
     const safeAmount = Math.max(Number(paidAmt), 0);
     if (safeAmount <= 0) return;
     
-    // Reset modal states
-    setSettlementMethod("UPI");
-    setSettlementImage("");
-    setUploadingSettlementImage(false);
-    setSettlementWarningShown(false);
-    
-    setActiveSettlementModal({
-      settlementItem,
-      paidAmt: safeAmount,
-      type,
-      existingSettlementId
-    });
+    const openModal = () => {
+      // Reset modal states
+      setSettlementMethod("UPI");
+      setSettlementImage("");
+      setUploadingSettlementImage(false);
+      setSettlementWarningShown(false);
+      
+      setActiveSettlementModal({
+        settlementItem,
+        paidAmt: safeAmount,
+        type,
+        existingSettlementId
+      });
+    };
+
+    let isOwner = false;
+    if (settlementItem.from === displayName || settlementItem.to === displayName) {
+      isOwner = true;
+    } else if (settlementItem.expenseId) {
+      const parentExpense = expenses.find(e => String(e.id) === String(settlementItem.expenseId));
+      if (parentExpense && (parentExpense.created_by === displayName || parentExpense.paid_by === displayName)) {
+        isOwner = true;
+      }
+    }
+
+    if (!isOwner) {
+      setConfirmDialog({
+        title: "Warning: Not Your Settlement",
+        message: `This settlement belongs to ${settlementItem.from} and ${settlementItem.to}. Are you sure you want to mark it as paid?`,
+        confirmLabel: "Skip & Continue",
+        tone: "danger",
+        onConfirm: openModal
+      });
+    } else {
+      openModal();
+    }
   };
 
   const executeSaveSettlement = async (settlementItem, paidAmt, type, existingSettlementId, paymentMethod, imageUrl, skipProof) => {
@@ -11241,7 +11313,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
       if (existingSettlementId) {
         const existing = expenses.find(e => e.id === existingSettlementId);
         if (existing) {
-          const targetExpenseId = settlementItem.expenseId || existing.notes?.split("Settlement for expense ID: ")[1]?.split("\n")[0]?.trim();
+          const targetExpenseId = settlementItem.expenseId || parseSettlementExpenseId(existing.notes);
           
           let updatedNotes = targetExpenseId && targetExpenseId !== "undefined" 
             ? `Settlement for expense ID: ${targetExpenseId}` 
@@ -11486,9 +11558,12 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
     try {
       await upsertCloudExpense(newExpense);
       
-      const activityAction = isEdit ? "edit_expense" : "add_expense";
+      const isOwner = !isEdit || expForm.created_by === displayName || expForm.paidBy === displayName;
+      const activityAction = isEdit ? (isOwner ? "edit_expense" : "edit_expense_override") : "add_expense";
       const activityText = isEdit 
-        ? `${displayName} edited expense "${expForm.title}" (amount: ₹${expForm.amount})`
+        ? (isOwner 
+            ? `${displayName} edited expense "${expForm.title}" (amount: ₹${expForm.amount})`
+            : `${displayName} edited ${expForm.created_by || expForm.paidBy}'s expense "${expForm.title}"`)
         : `${displayName} added expense "${expForm.title}" of ₹${expForm.amount}`;
         
       await addCloudActivity(
@@ -11714,74 +11789,102 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
     
     const { cleanNotes, urls } = extractAttachmentUrls(item.notes || "");
 
-    setExpForm({
-      id: item.id,
-      title: item.title,
-      amount: String(item.amount),
-      category: item.category,
-      date: item.date,
-      time: item.time || "",
-      paidBy: item.paid_by,
-      splitMode: mode,
-      participants: item.participants || [],
-      owedBy: item.owed_by || "",
-      paymentMethod: item.payment_method || "UPI",
-      notes: cleanNotes,
-      imageUrls: urls || [],
-      created_by: item.created_by,
-      created_at: item.created_at
-    });
-    setShowAddExpense(true);
+    const openEditModal = () => {
+      setExpForm({
+        id: item.id,
+        title: item.title,
+        amount: String(item.amount),
+        category: item.category,
+        date: item.date,
+        time: item.time || "",
+        paidBy: item.paid_by,
+        splitMode: mode,
+        participants: item.participants || [],
+        owedBy: item.owed_by || "",
+        paymentMethod: item.payment_method || "UPI",
+        notes: cleanNotes,
+        imageUrls: urls || [],
+        created_by: item.created_by,
+        created_at: item.created_at
+      });
+      setShowAddExpense(true);
+    };
+
+    const isOwner = item.created_by === displayName || item.paid_by === displayName;
+    if (!isOwner) {
+      setConfirmDialog({
+        title: "Warning: Edit Other's Expense?",
+        message: `This expense was added by ${item.paid_by || item.created_by}. Are you sure you want to edit it?`,
+        confirmLabel: "Confirm & Edit",
+        tone: "danger",
+        onConfirm: openEditModal
+      });
+    } else {
+      openEditModal();
+    }
   };
 
   const handleDeleteExpense = async (expId, expTitle) => {
-    setConfirmDialog({
-      title: "Delete Expense?",
-      message: `Are you sure you want to delete "${expTitle}"? This might affect the splits and pending balances.`,
-      confirmLabel: "Delete",
-      tone: "danger",
-      onConfirm: async () => {
-        // Get list of linked settlements to delete
-        const linkedSettlements = expenses.filter(e => {
-          if (e.category === "Settlement") {
-            const linkedId = e.notes && e.notes.includes("Settlement for expense ID: ")
-              ? e.notes.split("Settlement for expense ID: ")[1]?.trim()
-              : null;
-            return linkedId === expId;
-          }
-          return false;
-        });
-
-        // Optimistic delete of parent expense and all linked settlements
-        setExpenses(prev => prev.filter(e => {
-          if (e.id === expId) return false;
-          if (e.category === "Settlement") {
-            const linkedId = e.notes && e.notes.includes("Settlement for expense ID: ")
-              ? e.notes.split("Settlement for expense ID: ")[1]?.trim()
-              : null;
-            if (linkedId === expId) return false;
-          }
-          return true;
-        }));
-
-        try {
-          await deleteCloudExpense(expId);
-          for (const s of linkedSettlements) {
-            await deleteCloudExpense(s.id).catch(console.error);
-          }
-          await addCloudActivity(
-            projectId,
-            "delete_expense",
-            `${displayName} deleted expense "${expTitle}"`,
-            displayName
-          );
-          setToast("Expense deleted");
-        } catch (err) {
-          setToast("Failed to delete: " + err.message);
-          getCloudExpenses(projectId).then(setExpenses).catch(console.error);
+    const expenseToDelete = expenses.find(e => e.id === expId);
+    const isOwner = !expenseToDelete || expenseToDelete.created_by === displayName || expenseToDelete.paid_by === displayName;
+    
+    const performDelete = async () => {
+      // Get list of linked settlements to delete
+      const linkedSettlements = expenses.filter(e => {
+        if (e.category === "Settlement") {
+          const linkedId = parseSettlementExpenseId(e.notes);
+          return linkedId === expId;
         }
+        return false;
+      });
+
+      // Optimistic delete of parent expense and all linked settlements
+      setExpenses(prev => prev.filter(e => {
+        if (e.id === expId) return false;
+        if (e.category === "Settlement") {
+          const linkedId = parseSettlementExpenseId(e.notes);
+          if (linkedId === expId) return false;
+        }
+        return true;
+      }));
+
+      try {
+        await deleteCloudExpense(expId);
+        for (const s of linkedSettlements) {
+          await deleteCloudExpense(s.id).catch(console.error);
+        }
+        await addCloudActivity(
+          projectId,
+          isOwner ? "delete_expense" : "delete_expense_override",
+          isOwner 
+            ? `${displayName} deleted expense "${expTitle}"`
+            : `${displayName} deleted ${expenseToDelete.paid_by || expenseToDelete.created_by}'s expense "${expTitle}"`,
+          displayName
+        );
+        setToast("Expense deleted");
+      } catch (err) {
+        setToast("Failed to delete: " + err.message);
+        getCloudExpenses(projectId).then(setExpenses).catch(console.error);
       }
-    });
+    };
+
+    if (!isOwner) {
+      setConfirmDialog({
+        title: "Warning: Delete Other's Expense?",
+        message: `This expense was added by ${expenseToDelete.paid_by || expenseToDelete.created_by}. Are you sure you want to delete it? This might affect their splits and pending balances.`,
+        confirmLabel: "Confirm & Delete",
+        tone: "danger",
+        onConfirm: performDelete
+      });
+    } else {
+      setConfirmDialog({
+        title: "Delete Expense?",
+        message: `Are you sure you want to delete "${expTitle}"? This might affect the splits and pending balances.`,
+        confirmLabel: "Delete",
+        tone: "danger",
+        onConfirm: performDelete
+      });
+    }
   };
 
   // --- Calculations for UI ---
@@ -11826,16 +11929,15 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
   const mappedProjectForSplit = {
     participants: participantNamesList,
     paidSettlements: settlementExpenses.map(e => {
-      const parsedId = e.notes && e.notes.includes("Settlement for expense ID: ") 
-        ? e.notes.split("Settlement for expense ID: ")[1].trim() 
-        : null;
+      const parsedId = parseSettlementExpenseId(e.notes);
       return {
         id: e.id,
         from: e.paid_by,
         to: e.owed_by,
         amount: Number(e.amount),
         paidAt: e.created_at,
-        expenseId: parsedId === "undefined" ? null : parsedId
+        expenseId: parsedId === "undefined" ? null : parsedId,
+        notes: e.notes || ""
       };
     })
   };
@@ -12385,14 +12487,16 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                       action={<button type="button" className="secondary tactile" style={{ padding: "2px 8px", fontSize: "0.75rem" }} onClick={() => setActiveTab("timeline")}>View Logs</button>} 
                     />
                     <div style={{ display: "grid", gap: "0.65rem", marginTop: "0.55rem" }}>
-                      {activities.slice(0, 4).map(act => (
-                        <div key={act.id} style={{ display: "flex", justifyContent: "space-between", fontSize: "0.88rem", paddingBottom: "0.45rem", borderBottom: "1px dashed rgba(0,0,0,0.06)" }}>
+                      {activities.slice(0, 4).map(act => {
+                        const isOverride = act.action_type && act.action_type.includes("_override");
+                        return (
+                        <div key={act.id} style={{ display: "flex", justifyContent: "space-between", fontSize: "0.88rem", paddingBottom: "0.45rem", borderBottom: "1px dashed rgba(0,0,0,0.06)", color: isOverride ? "var(--danger, #ef4444)" : "inherit" }}>
                           <span>{act.description}</span>
-                          <span style={{ color: "var(--muted)", fontSize: "0.78rem" }}>
+                          <span style={{ color: isOverride ? "var(--danger, #ef4444)" : "var(--muted)", fontSize: "0.78rem" }}>
                             {new Date(act.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                           </span>
                         </div>
-                      ))}
+                      )})}
                       {activities.length === 0 && <EmptyState text="No activities logged yet." />}
                     </div>
                   </div>
@@ -13014,11 +13118,12 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                                     gap: "0.75rem", 
                                     alignItems: "center", 
                                     padding: "0.75rem 1rem", 
-                                    borderBottom: idx < groups[dateStr].length - 1 ? "1px solid rgba(0,0,0,0.06)" : "none" 
+                                    borderBottom: idx < groups[dateStr].length - 1 ? "1px solid rgba(0,0,0,0.06)" : "none",
+                                    backgroundColor: act.action_type && act.action_type.includes("_override") ? "rgba(239, 68, 68, 0.08)" : "transparent"
                                   }}
                                 >
                                   <div style={{ flex: 1, minWidth: 0 }}>
-                                    <p style={{ margin: 0, fontWeight: 700, fontSize: "0.92rem", color: "var(--ink)" }}>{act.description}</p>
+                                    <p style={{ margin: 0, fontWeight: 700, fontSize: "0.92rem", color: act.action_type && act.action_type.includes("_override") ? "var(--danger, #ef4444)" : "var(--ink)" }}>{act.description}</p>
                                     <div style={{ display: "flex", gap: "0.4rem", fontSize: "0.75rem", color: "var(--muted)", marginTop: "0.15rem" }}>
                                       <span>{timeStr}</span>
                                       <span>•</span>
