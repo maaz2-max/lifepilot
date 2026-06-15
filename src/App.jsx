@@ -7444,7 +7444,7 @@ function ExpenseSplitInlineDetails({ expense, project, isCloud, onMarkPaid, onDe
   if (splitMode === "Direct owed") {
     const owedBy = expense.owedBy || expense.owed_by;
     if (paidBy && owedBy && paidBy !== owedBy) {
-      rows = [{ from: owedBy, to: paidBy, amount: Math.round(amtVal * 100) / 100, label: "owes" }];
+      rows = [{ from: owedBy, to: paidBy, amount: Math.round(amtVal * 100) / 100, label: "owes", expenseId: expense.id }];
     }
   } else if (splitMode === "Equal split") {
     const splitMembers = (expense.participants || []).filter(Boolean);
@@ -7452,7 +7452,7 @@ function ExpenseSplitInlineDetails({ expense, project, isCloud, onMarkPaid, onDe
       const share = amtVal / splitMembers.length;
       rows = splitMembers
         .filter((name) => name !== paidBy)
-        .map((name) => ({ from: name, to: paidBy, amount: Math.round(share * 100) / 100, label: "owes" }));
+        .map((name) => ({ from: name, to: paidBy, amount: Math.round(share * 100) / 100, label: "owes", expenseId: expense.id }));
     }
   }
 
@@ -10994,10 +10994,11 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
       if (existingSettlementId) {
         const existing = expenses.find(e => e.id === existingSettlementId);
         if (existing) {
+          const targetExpenseId = settlementItem.expenseId || existing.notes?.split("Settlement for expense ID: ")[1]?.trim();
           const updated = {
             ...existing,
             amount: safeAmount,
-            notes: `Settlement for expense ID: ${settlementItem.expenseId || existing.notes.split("Settlement for expense ID: ")[1]?.trim()}`
+            notes: targetExpenseId && targetExpenseId !== "undefined" ? `Settlement for expense ID: ${targetExpenseId}` : `Settlement payment from ${settlementItem.from} to ${settlementItem.to}`
           };
           setExpenses(prev => prev.map(e => e.id === existingSettlementId ? updated : e));
           
@@ -11024,7 +11025,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
           owed_by: settlementItem.to,
           participants: [],
           payment_method: "UPI",
-          notes: `Settlement for expense ID: ${settlementItem.expenseId || settlementItem.id}`,
+          notes: settlementItem.expenseId ? `Settlement for expense ID: ${settlementItem.expenseId}` : `Settlement payment from ${settlementItem.from} to ${settlementItem.to}`,
           created_by: displayName,
           created_at: new Date().toISOString()
         };
@@ -11396,16 +11397,19 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
   }));
   const mappedProjectForSplit = {
     participants: participantNamesList,
-    paidSettlements: settlementExpenses.map(e => ({
-      id: e.id,
-      from: e.paid_by,
-      to: e.owed_by,
-      amount: Number(e.amount),
-      paidAt: e.created_at,
-      expenseId: e.notes && e.notes.includes("Settlement for expense ID: ") 
+    paidSettlements: settlementExpenses.map(e => {
+      const parsedId = e.notes && e.notes.includes("Settlement for expense ID: ") 
         ? e.notes.split("Settlement for expense ID: ")[1].trim() 
-        : null
-    }))
+        : null;
+      return {
+        id: e.id,
+        from: e.paid_by,
+        to: e.owed_by,
+        amount: Number(e.amount),
+        paidAt: e.created_at,
+        expenseId: parsedId === "undefined" ? null : parsedId
+      };
+    })
   };
   const splitSummary = projectSplitSummary(mappedProjectForSplit, mappedExpensesForSplit);
 
