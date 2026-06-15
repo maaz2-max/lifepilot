@@ -250,11 +250,13 @@ export async function getCloudDocuments(projectId) {
   return data || [];
 }
 
-export async function addCloudDocument(projectId, title, url, createdBy) {
+export async function addCloudDocument(projectId, title, url, createdBy, id) {
   if (!supabase) throw new Error("Supabase client is not configured");
+  const record = { project_id: projectId, title, url, created_by: createdBy };
+  if (id) record.id = id;
   const { data, error } = await supabase
     .from("cloud_documents")
-    .insert([{ project_id: projectId, title, url, created_by: createdBy }])
+    .insert([record])
     .select()
     .single();
   if (error) throw error;

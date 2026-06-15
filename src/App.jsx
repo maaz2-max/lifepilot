@@ -105,6 +105,105 @@ function generateCloudProjectId(name, type) {
   return `LP-${prefix}-${randomChars}`;
 }
 
+// --- Utility Helpers for Image Attachments & UUID ---
+const generateUUID = () => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+};
+
+const compressImage = (file, maxWidth = 600, maxHeight = 600, quality = 0.5) => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target.result;
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > maxWidth) {
+            height = Math.round((height * maxWidth) / width);
+            width = maxWidth;
+          }
+        } else {
+          if (height > maxHeight) {
+            width = Math.round((width * maxHeight) / height);
+            height = maxHeight;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, width, height);
+        const compressedDataUrl = canvas.toDataURL("image/jpeg", quality);
+        resolve(compressedDataUrl);
+      };
+      img.onerror = (err) => reject(err);
+    };
+    reader.onerror = (err) => reject(err);
+  });
+};
+
+const base64ToBlob = (base64, mimeType = "image/jpeg") => {
+  const byteString = atob(base64.split(',')[1]);
+  const ab = new ArrayBuffer(byteString.length);
+  const ia = new Uint8Array(ab);
+  for (let i = 0; i < byteString.length; i++) {
+    ia[i] = byteString.charCodeAt(i);
+  }
+  return new Blob([ab], { type: mimeType });
+};
+
+const uploadImageToSupabase = async (file) => {
+  if (!supabase) throw new Error("Supabase is not configured");
+  
+  const fileExt = file.name.split('.').pop();
+  const fileName = `${Math.random().toString(36).substring(2, 15)}_${Date.now()}.${fileExt}`;
+  const filePath = `${fileName}`;
+
+  const { data, error } = await supabase.storage
+    .from('expense-proofs')
+    .upload(filePath, file);
+
+  if (error) {
+    throw error;
+  }
+
+  const { data: { publicUrl } } = supabase.storage
+    .from('expense-proofs')
+    .getPublicUrl(filePath);
+
+  return publicUrl;
+};
+
+const extractAttachmentUrls = (notes) => {
+  if (!notes) return { cleanNotes: "", urls: [] };
+  const regex = /\[Attachment:\s*([^\]]+)\]/g;
+  const urls = [];
+  let match;
+  let cleanNotes = notes;
+  while ((match = regex.exec(notes)) !== null) {
+    urls.push(match[1].trim());
+  }
+  cleanNotes = cleanNotes.replace(regex, "").trim();
+  return { cleanNotes, urls };
+};
+
+const extractAttachmentUrl = (notes) => {
+  const { cleanNotes, urls } = extractAttachmentUrls(notes);
+  return { cleanNotes, url: urls[0] || "" };
+};
+
 const DEFAULT_CATEGORIES = [
   { id: "cat-food", name: "Food", type: "Debit", color: "#f2b8a2", icon: "bowl" },
   { id: "cat-travel", name: "Travel", type: "Debit", color: "#a9d7f5", icon: "route" },
@@ -10785,6 +10884,14 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
   const [expandedExpenses, setExpandedExpenses] = useState({});
   const settlementKey = (item) => `${item.from}__${item.to}`;
 
+  const [uploadingExpenseImage, setUploadingExpenseImage] = useState(false);
+  const [activeSettlementModal, setActiveSettlementModal] = useState(null);
+  const [settlementMethod, setSettlementMethod] = useState("UPI");
+  const [settlementImage, setSettlementImage] = useState("");
+  const [uploadingSettlementImage, setUploadingSettlementImage] = useState(false);
+  const [settlementWarningShown, setSettlementWarningShown] = useState(false);
+  const [logSearchQuery, setLogSearchQuery] = useState("");
+
   // Local forms state
   const [expForm, setExpForm] = useState({
     title: "",
@@ -10797,7 +10904,8 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
     participants: [],
     owedBy: "",
     paymentMethod: "UPI",
-    notes: ""
+    notes: "",
+    imageUrls: []
   });
 
   const [taskForm, setTaskForm] = useState({
@@ -11095,18 +11203,62 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
     setProject(null);
   };
 
-  const handleMarkSettlementPaid = async (settlementItem, paidAmt, type = "Full", existingSettlementId = null) => {
+  const handleMarkSettlementPaid = (settlementItem, paidAmt, type = "Full", existingSettlementId = null) => {
     const safeAmount = Math.max(Number(paidAmt), 0);
     if (safeAmount <= 0) return;
+    
+    // Reset modal states
+    setSettlementMethod("UPI");
+    setSettlementImage("");
+    setUploadingSettlementImage(false);
+    setSettlementWarningShown(false);
+    
+    setActiveSettlementModal({
+      settlementItem,
+      paidAmt: safeAmount,
+      type,
+      existingSettlementId
+    });
+  };
+
+  const executeSaveSettlement = async (settlementItem, paidAmt, type, existingSettlementId, paymentMethod, imageUrl, skipProof) => {
+    const safeAmount = Number(paidAmt);
     try {
+      let baseNotes = settlementItem.expenseId 
+        ? `Settlement for expense ID: ${settlementItem.expenseId}` 
+        : `Settlement payment from ${settlementItem.from} to ${settlementItem.to}`;
+
+      let notesStr = baseNotes;
+      if (paymentMethod === "UPI") {
+        if (imageUrl) {
+          notesStr = `${baseNotes}\n\n[Attachment: ${imageUrl}]`.trim();
+        } else if (skipProof) {
+          notesStr = `${baseNotes}\n\n[No payment proof provided]`.trim();
+        }
+      }
+
       if (existingSettlementId) {
         const existing = expenses.find(e => e.id === existingSettlementId);
         if (existing) {
-          const targetExpenseId = settlementItem.expenseId || existing.notes?.split("Settlement for expense ID: ")[1]?.trim();
+          const targetExpenseId = settlementItem.expenseId || existing.notes?.split("Settlement for expense ID: ")[1]?.split("\n")[0]?.trim();
+          
+          let updatedNotes = targetExpenseId && targetExpenseId !== "undefined" 
+            ? `Settlement for expense ID: ${targetExpenseId}` 
+            : `Settlement payment from ${settlementItem.from} to ${settlementItem.to}`;
+
+          if (paymentMethod === "UPI") {
+            if (imageUrl) {
+              updatedNotes = `${updatedNotes}\n\n[Attachment: ${imageUrl}]`.trim();
+            } else if (skipProof) {
+              updatedNotes = `${updatedNotes}\n\n[No payment proof provided]`.trim();
+            }
+          }
+
           const updated = {
             ...existing,
             amount: safeAmount,
-            notes: targetExpenseId && targetExpenseId !== "undefined" ? `Settlement for expense ID: ${targetExpenseId}` : `Settlement payment from ${settlementItem.from} to ${settlementItem.to}`
+            payment_method: paymentMethod,
+            notes: updatedNotes
           };
           setExpenses(prev => prev.map(e => e.id === existingSettlementId ? updated : e));
           
@@ -11114,7 +11266,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
           await addCloudActivity(
             projectId,
             "edit_settlement",
-            `${displayName} updated settlement payment from ${settlementItem.from} to ${settlementItem.to} to ₹${safeAmount}`,
+            `${displayName} updated settlement payment from ${settlementItem.from} to ${settlementItem.to} to ₹${safeAmount} (${paymentMethod})`,
             displayName
           );
           setToast("Settlement payment updated!");
@@ -11132,8 +11284,8 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
           paid_by: settlementItem.from,
           owed_by: settlementItem.to,
           participants: [],
-          payment_method: "UPI",
-          notes: settlementItem.expenseId ? `Settlement for expense ID: ${settlementItem.expenseId}` : `Settlement payment from ${settlementItem.from} to ${settlementItem.to}`,
+          payment_method: paymentMethod,
+          notes: notesStr,
           created_by: displayName,
           created_at: new Date().toISOString()
         };
@@ -11144,7 +11296,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
         await addCloudActivity(
           projectId,
           "add_settlement",
-          `${displayName} marked settlement of ₹${safeAmount} from ${settlementItem.from} to ${settlementItem.to} as paid`,
+          `${displayName} marked settlement of ₹${safeAmount} from ${settlementItem.from} to ${settlementItem.to} as paid (${paymentMethod})`,
           displayName
         );
 
@@ -11156,6 +11308,8 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
       console.error(err);
       setToast("Failed to record settlement.");
       getCloudExpenses(projectId).then(setExpenses).catch(console.error);
+    } finally {
+      setActiveSettlementModal(null);
     }
   };
 
@@ -11201,6 +11355,48 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
     });
   };
 
+  const handleImagesSelected = async (files) => {
+    if (!files || files.length === 0) return;
+    const currentCount = expForm.imageUrls ? expForm.imageUrls.length : 0;
+    const incomingCount = files.length;
+    if (currentCount + incomingCount > 5) {
+      setToast("Maximum 5 images allowed per expense.");
+      return;
+    }
+
+    setUploadingExpenseImage(true);
+    const uploadedUrls = [];
+    
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      try {
+        const compressedBase64 = await compressImage(file, 600, 600, 0.5);
+        let finalUrl = "";
+        try {
+          const blob = base64ToBlob(compressedBase64, "image/jpeg");
+          const compressedFile = new File([blob], file.name.replace(/\.[^/.]+$/, "") + ".jpg", { type: "image/jpeg" });
+          finalUrl = await uploadImageToSupabase(compressedFile);
+        } catch (uploadErr) {
+          console.warn("Supabase upload failed, falling back to base64", uploadErr);
+          finalUrl = compressedBase64;
+        }
+        uploadedUrls.push(finalUrl);
+      } catch (err) {
+        console.error("Failed to process file:", file.name, err);
+        setToast(`Error processing ${file.name}`);
+      }
+    }
+
+    if (uploadedUrls.length > 0) {
+      setExpForm(prev => ({
+        ...prev,
+        imageUrls: [...(prev.imageUrls || []), ...uploadedUrls]
+      }));
+      setToast(`Successfully attached ${uploadedUrls.length} image(s)!`);
+    }
+    setUploadingExpenseImage(false);
+  };
+
   // Add transactions
   const handleAddExpenseSubmit = async (e) => {
     e.preventDefault();
@@ -11221,6 +11417,11 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
     const isEdit = !!expForm.id;
     const expenseId = expForm.id || "projectTransaction-" + Math.random().toString(36).substring(2, 11);
     const finalPaidBy = expForm.paidBy || displayName;
+    let notesStr = expForm.notes.trim();
+    if (expForm.imageUrls && expForm.imageUrls.length > 0) {
+      const attachmentsStr = expForm.imageUrls.map(url => `[Attachment: ${url}]`).join("\n");
+      notesStr = `${notesStr}\n\n${attachmentsStr}`.trim();
+    }
     const newExpense = {
       id: expenseId,
       project_id: projectId,
@@ -11233,7 +11434,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
       owed_by: expForm.splitMode === "Direct owed" ? expForm.owedBy : "",
       participants: expForm.splitMode === "Equal split" ? expForm.participants : [],
       payment_method: expForm.paymentMethod || "UPI",
-      notes: expForm.notes || "",
+      notes: notesStr,
       created_by: expForm.created_by || displayName,
       created_at: expForm.created_at || new Date().toISOString()
     };
@@ -11291,7 +11492,8 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
         splitMode: "No split",
         participants: [],
         paymentMethod: "UPI",
-        notes: ""
+        notes: "",
+        imageUrls: []
       });
     } catch (err) {
       setToast("Failed to add expense: " + err.message);
@@ -11310,7 +11512,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
     }
     setSharingDoc(true);
     const isEdit = !!editDoc;
-    const docId = isEdit ? editDoc.id : "doc-" + Math.random().toString(36).substring(2, 11);
+    const docId = isEdit ? editDoc.id : generateUUID();
     const newDoc = {
       id: docId,
       project_id: projectId,
@@ -11333,7 +11535,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
       if (isEdit) {
         await updateCloudDocument(docId, docForm.title.trim(), docForm.url.trim());
       } else {
-        await addCloudDocument(projectId, docForm.title.trim(), docForm.url.trim(), displayName);
+        await addCloudDocument(projectId, docForm.title.trim(), docForm.url.trim(), displayName, docId);
       }
       await addCloudActivity(
         projectId,
@@ -11474,6 +11676,8 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
     if (item.owed_by) mode = "Direct owed";
     else if (item.participants && item.participants.length > 0) mode = "Equal split";
     
+    const { cleanNotes, urls } = extractAttachmentUrls(item.notes || "");
+
     setExpForm({
       id: item.id,
       title: item.title,
@@ -11486,7 +11690,8 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
       participants: item.participants || [],
       owedBy: item.owed_by || "",
       paymentMethod: item.payment_method || "UPI",
-      notes: item.notes || "",
+      notes: cleanNotes,
+      imageUrls: urls || [],
       created_by: item.created_by,
       created_at: item.created_at
     });
@@ -11890,7 +12095,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
             ["docs", "Documents"],
             ["chat", `Chat (${messages.length})`],
             ["analytics", "Analytics"],
-            ["timeline", "Activity"]
+            ["timeline", "Logs"]
           ].map(([key, label]) => (
             <button 
               key={key} 
@@ -11973,7 +12178,8 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                       participants: [],
                       owedBy: "",
                       paymentMethod: "UPI",
-                      notes: ""
+                      notes: "",
+                      imageUrls: []
                     });
                     setShowAddExpense(true);
                   }}><Plus size={18} />Add Expense</button>
@@ -12203,7 +12409,8 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                       participants: [],
                       owedBy: "",
                       paymentMethod: "UPI",
-                      notes: ""
+                      notes: "",
+                      imageUrls: []
                     });
                     setShowAddExpense(true);
                   }}><Plus size={18} />Add Expense</button>
@@ -12316,7 +12523,25 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                                               Owed by: <strong>{item.owed_by}</strong>
                                             </span>
                                           )}
-                                          {item.notes && <span style={{ fontStyle: "italic", opacity: 0.7 }}>"<Linkify>{item.notes}</Linkify>"</span>}
+                                          {(() => {
+                                            const { cleanNotes, urls } = extractAttachmentUrls(item.notes || "");
+                                            const hasNoProof = item.notes && item.notes.includes("[No payment proof provided]");
+                                            return (
+                                              <>
+                                                {cleanNotes && <span style={{ fontStyle: "italic", opacity: 0.7 }}>"<Linkify>{cleanNotes}</Linkify>"</span>}
+                                                {urls && urls.map((url, uidx) => (
+                                                  <span key={uidx} style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", background: "rgba(16, 185, 129, 0.08)", color: "#10b981", padding: "2px 8px", borderRadius: "6px", border: "1px solid rgba(16, 185, 129, 0.12)", fontWeight: "bold" }}>
+                                                    📎 <a href={url} target="_blank" rel="noreferrer" style={{ color: "inherit", textDecoration: "none" }}>Receipt {urls.length > 1 ? `#${uidx + 1}` : ""}</a>
+                                                  </span>
+                                                ))}
+                                                {hasNoProof && (
+                                                  <span style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", background: "rgba(239, 68, 68, 0.08)", color: "#ef4444", padding: "2px 8px", borderRadius: "6px", border: "1px solid rgba(239, 68, 68, 0.12)", fontWeight: "bold" }}>
+                                                    ⚠️ No payment proof provided
+                                                  </span>
+                                                )}
+                                              </>
+                                            );
+                                          })()}
                                           <span style={{ color: "var(--muted)", opacity: 0.7, marginLeft: "auto" }}>by {item.created_by}</span>
                                         </div>
 
@@ -12650,35 +12875,131 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
             {/* 7. ACTIVITY TIMELINE TAB */}
             {activeTab === "timeline" && (
               <div style={{ display: "grid", gap: "1rem" }}>
-                <h2>Activity Timeline</h2>
-                <div className="panel" style={{ padding: "1.1rem" }}>
-                  <div style={{ display: "grid", gap: "0.95rem" }}>
-                    {activities.map(act => (
-                      <div key={act.id} style={{ display: "flex", gap: "0.75rem", alignItems: "flex-start", paddingBottom: "0.6rem", borderBottom: "1px dashed rgba(0,0,0,0.06)" }}>
-                        <span style={{ fontSize: "1.1rem" }}>
-                          {act.action_type === "join" && "👋"}
-                          {act.action_type === "create" && "🆕"}
-                          {act.action_type === "add_expense" && "💵"}
-                          {act.action_type === "delete_expense" && "❌"}
-                          {act.action_type === "add_task" && "⏰"}
-                          {act.action_type === "add_doc" && "📂"}
-                          {act.action_type === "toggle_task" && "✅"}
-                          {act.action_type === "clear_chat" && "🧹"}
-                          {act.action_type === "budget_alert" && "⚠️"}
-                          {!["join", "create", "add_expense", "delete_expense", "add_task", "add_doc", "toggle_task", "clear_chat", "budget_alert"].includes(act.action_type) && "⚙️"}
-                        </span>
-                        <div>
-                          <p style={{ margin: 0, fontWeight: 800, fontSize: "0.92rem" }}>{act.description}</p>
-                          <small style={{ color: "var(--muted)" }}>
-                            {new Date(act.created_at).toLocaleString()} by {act.created_by}
-                          </small>
-                         </div>
-                       </div>
-                     ))}
-                     {activities.length === 0 && <EmptyState text="No logs recorded." />}
-                   </div>
-                 </div>
-               </div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.5rem" }}>
+                  <h2 style={{ margin: 0 }}>Room Activity Logs</h2>
+                  <input 
+                    type="text" 
+                    placeholder="Search logs by action, user or details..." 
+                    value={logSearchQuery}
+                    onChange={(e) => setLogSearchQuery(e.target.value)}
+                    style={{ 
+                      padding: "6px 12px", 
+                      fontSize: "0.85rem", 
+                      border: "1px solid var(--line)", 
+                      borderRadius: "8px", 
+                      width: "100%", 
+                      maxWidth: "280px",
+                      background: "var(--paper, #fff)"
+                    }}
+                  />
+                </div>
+
+                {(() => {
+                  const query = logSearchQuery.toLowerCase().trim();
+                  const filtered = activities.filter(act => {
+                    if (!query) return true;
+                    const desc = (act.description || "").toLowerCase();
+                    const creator = (act.created_by || "").toLowerCase();
+                    const type = (act.action_type || "").toLowerCase();
+                    return desc.includes(query) || creator.includes(query) || type.includes(query);
+                  });
+
+                  // Group by date
+                  const groups = {};
+                  filtered.forEach(act => {
+                    const d = new Date(act.created_at);
+                    const dateStr = d.toLocaleDateString("en-IN", {
+                      weekday: "long",
+                      day: "numeric",
+                      month: "long",
+                      year: "numeric"
+                    });
+                    if (!groups[dateStr]) {
+                      groups[dateStr] = [];
+                    }
+                    groups[dateStr].push(act);
+                  });
+
+                  const dateKeys = Object.keys(groups);
+
+                  const getIcon = (type) => {
+                    switch (type) {
+                      case "join": return "👋";
+                      case "create": return "🆕";
+                      case "add_expense": return "💵";
+                      case "edit_expense": return "✏️";
+                      case "delete_expense": return "❌";
+                      case "add_task": return "⏰";
+                      case "edit_task": return "✏️";
+                      case "delete_task": return "❌";
+                      case "toggle_task": return "✅";
+                      case "add_doc": return "📂";
+                      case "edit_doc": return "✏️";
+                      case "delete_doc": return "❌";
+                      case "add_settlement": return "🤝";
+                      case "edit_settlement": return "🤝";
+                      case "delete_settlement": return "❌";
+                      case "update_participants": return "👥";
+                      case "clear_chat": return "🧹";
+                      case "budget_alert": return "⚠️";
+                      default: return "⚙️";
+                    }
+                  };
+
+                  if (filtered.length === 0) {
+                    return <EmptyState text={logSearchQuery ? "No logs match your search." : "No logs recorded yet."} />;
+                  }
+
+                  return (
+                    <div style={{ display: "grid", gap: "1.2rem" }}>
+                      {dateKeys.map(dateStr => (
+                        <div key={dateStr}>
+                          <div style={{ fontWeight: 900, fontSize: "0.80rem", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: "0.5rem", padding: "0 0.2rem" }}>
+                            {dateStr}
+                          </div>
+                          
+                          <div className="panel" style={{ padding: 0, overflow: "hidden" }}>
+                            {groups[dateStr].map((act, idx) => {
+                              const d = new Date(act.created_at);
+                              const timeStr = d.toLocaleTimeString("en-IN", {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                                second: "2-digit",
+                                hour12: true
+                              });
+
+                              return (
+                                <div 
+                                  key={act.id} 
+                                  style={{ 
+                                    display: "flex", 
+                                    gap: "0.75rem", 
+                                    alignItems: "center", 
+                                    padding: "0.75rem 1rem", 
+                                    borderBottom: idx < groups[dateStr].length - 1 ? "1px solid rgba(0,0,0,0.06)" : "none" 
+                                  }}
+                                >
+                                  <span style={{ fontSize: "1.2rem", width: "28px", textAlign: "center", flexShrink: 0 }}>
+                                    {getIcon(act.action_type)}
+                                  </span>
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <p style={{ margin: 0, fontWeight: 700, fontSize: "0.92rem", color: "var(--ink)" }}>{act.description}</p>
+                                    <div style={{ display: "flex", gap: "0.4rem", fontSize: "0.75rem", color: "var(--muted)", marginTop: "0.15rem" }}>
+                                      <span>{timeStr}</span>
+                                      <span>•</span>
+                                      <span>by <strong>{act.created_by}</strong></span>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </div>
              )}
            </>
          )}
@@ -12796,6 +13117,106 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                    placeholder="e.g. split equally, shared cab bill" 
                  />
                </label>
+
+                <div className="wide" style={{ marginTop: '0.50rem' }}>
+                   <label style={{ fontWeight: '800', fontSize: '0.85rem', display: 'block', marginBottom: '0.35rem' }}>
+                     Attach Invoice/Receipt Images (Up to 5)
+                   </label>
+                   
+                   {/* File inputs */}
+                   <input 
+                     type="file" 
+                     accept="image/*" 
+                     capture="environment" 
+                     id="expense-camera-upload"
+                     style={{ display: 'none' }}
+                     onChange={(e) => handleImagesSelected(e.target.files)}
+                   />
+                   <input 
+                     type="file" 
+                     accept="image/*" 
+                     multiple 
+                     id="expense-gallery-upload"
+                     style={{ display: 'none' }}
+                     onChange={(e) => handleImagesSelected(e.target.files)}
+                   />
+
+                   <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+                     <button 
+                       type="button" 
+                       className="secondary tactile" 
+                       disabled={uploadingExpenseImage || (expForm.imageUrls || []).length >= 5}
+                       style={{ padding: "6px 12px", fontSize: "0.82rem", display: "inline-flex", alignItems: "center", gap: "4px" }}
+                       onClick={() => document.getElementById("expense-camera-upload").click()}
+                     >
+                       📷 Take Photo
+                     </button>
+                     <button 
+                       type="button" 
+                       className="secondary tactile" 
+                       disabled={uploadingExpenseImage || (expForm.imageUrls || []).length >= 5}
+                       style={{ padding: "6px 12px", fontSize: "0.82rem", display: "inline-flex", alignItems: "center", gap: "4px" }}
+                       onClick={() => document.getElementById("expense-gallery-upload").click()}
+                     >
+                       🖼️ Upload Gallery
+                     </button>
+                     
+                     <span style={{ fontSize: "0.80rem", color: "var(--muted)", fontWeight: "bold" }}>
+                       (${(expForm.imageUrls || []).length}/5 images)
+                     </span>
+                     
+                     {uploadingExpenseImage && (
+                       <span style={{ fontSize: "0.80rem", color: "var(--brand)", fontWeight: "bold" }}>
+                         ⚡ Optimizing & Uploading...
+                       </span>
+                     )}
+                   </div>
+
+                   {/* Thumbnail Previews */}
+                   {expForm.imageUrls && expForm.imageUrls.length > 0 && (
+                     <div style={{ display: "flex", gap: "0.65rem", flexWrap: "wrap", background: "rgba(0,0,0,0.03)", padding: "0.6rem", borderRadius: "10px", border: "1px dashed rgba(0,0,0,0.1)" }}>
+                       {expForm.imageUrls.map((url, index) => (
+                         <div key={index} style={{ position: "relative", width: "55px", height: "55px", borderRadius: "6px", overflow: "hidden", border: "1px solid var(--line)" }}>
+                           <img 
+                             src={url} 
+                             alt={`Receipt ${index + 1}`} 
+                             style={{ width: "100%", height: "100%", objectFit: "cover" }} 
+                           />
+                           <button
+                             type="button"
+                             className="tactile danger"
+                             title="Remove"
+                             style={{ 
+                               position: "absolute", 
+                               top: "2px", 
+                               right: "2px", 
+                               background: "rgba(239, 68, 68, 0.95)", 
+                               color: "white", 
+                               border: "none", 
+                               borderRadius: "50%", 
+                               width: "16px", 
+                               height: "16px", 
+                               display: "flex", 
+                               alignItems: "center", 
+                               justifyContent: "center", 
+                               fontSize: "10px", 
+                               padding: 0,
+                               cursor: "pointer"
+                             }}
+                             onClick={() => {
+                               setExpForm(prev => ({
+                                 ...prev,
+                                 imageUrls: prev.imageUrls.filter((_, idx) => idx !== index)
+                               }));
+                             }}
+                           >
+                             ×
+                           </button>
+                         </div>
+                       ))}
+                     </div>
+                   )}
+                 </div>
              </div>
              <div className="modal-actions">
                <button type="button" className="secondary tactile" onClick={() => setShowAddExpense(false)} disabled={savingExpense}>Cancel</button>
@@ -12804,6 +13225,205 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                </button>
              </div>
            </form>
+         </div>
+       )}
+
+       {/* ========================================== */}
+       {/* MODAL: SETTLEMENT PROOF CONFIRMATION */}
+       {/* ========================================== */}
+       {activeSettlementModal && (
+         <div className="modal-backdrop">
+           <div className="modal" style={{ maxWidth: "450px" }}>
+             <SectionHeader 
+               title="Confirm Settlement Payment" 
+               action={<button type="button" className="icon-button tactile" onClick={() => setActiveSettlementModal(null)}><X size={18} /></button>} 
+             />
+             
+             <div style={{ margin: "1rem 0", padding: "0.85rem", background: "rgba(111, 104, 216, 0.05)", borderRadius: "12px", border: "1px solid rgba(111, 104, 216, 0.1)" }}>
+               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.3rem" }}>
+                 <span style={{ fontSize: "0.9rem", color: "var(--muted)" }}>From:</span>
+                 <strong style={{ fontSize: "0.95rem" }}>{activeSettlementModal.settlementItem.from}</strong>
+               </div>
+               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.3rem" }}>
+                 <span style={{ fontSize: "0.9rem", color: "var(--muted)" }}>To:</span>
+                 <strong style={{ fontSize: "0.95rem" }}>{activeSettlementModal.settlementItem.to}</strong>
+               </div>
+               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "1px dashed rgba(0,0,0,0.08)", paddingTop: "0.4rem", marginTop: "0.4rem" }}>
+                 <span style={{ fontSize: "0.9rem", fontWeight: "bold" }}>Amount:</span>
+                 <strong style={{ fontSize: "1.1rem", color: "var(--brand)" }}>{rupee.format(activeSettlementModal.paidAmt)}</strong>
+               </div>
+             </div>
+
+             {settlementWarningShown ? (
+               <div className="panel" style={{ background: "rgba(245, 158, 11, 0.08)", borderColor: "rgba(245, 158, 11, 0.2)", padding: "1rem", marginBottom: "1rem" }}>
+                 <div style={{ display: "flex", gap: "0.6rem", alignItems: "flex-start" }}>
+                   <span style={{ fontSize: "1.3rem" }}>⚠️</span>
+                   <div>
+                     <strong style={{ color: "#d97706", display: "block", marginBottom: "0.25rem" }}>Transparency Warning</strong>
+                     <span style={{ fontSize: "0.85rem", color: "#b45309", lineHeight: "1.4" }}>
+                       Please upload a UPI payment proof for transparency during split payments. This helps ensure all room members can verify the transaction.
+                     </span>
+                   </div>
+                 </div>
+                 <div style={{ display: "flex", gap: "0.5rem", marginTop: "1rem", justifyContent: "flex-end" }}>
+                   <button 
+                     type="button" 
+                     className="secondary tactile" 
+                     style={{ fontSize: "0.8rem", padding: "4px 12px" }}
+                     onClick={() => setSettlementWarningShown(false)}
+                   >
+                     Go Back & Upload
+                   </button>
+                   <button 
+                     type="button" 
+                     className="primary tactile" 
+                     style={{ fontSize: "0.8rem", padding: "4px 12px", background: "#d97706", borderColor: "#d97706" }}
+                     onClick={() => {
+                       executeSaveSettlement(
+                         activeSettlementModal.settlementItem,
+                         activeSettlementModal.paidAmt,
+                         activeSettlementModal.type,
+                         activeSettlementModal.existingSettlementId,
+                         "UPI",
+                         "",
+                         true
+                       );
+                     }}
+                   >
+                     Skip & Confirm
+                   </button>
+                 </div>
+               </div>
+             ) : (
+               <>
+                 <div className="form-grid" style={{ gap: "1rem" }}>
+                   <div className="wide">
+                     <label style={{ fontWeight: "bold", display: "block", marginBottom: "0.4rem" }}>Payment Method</label>
+                     <div style={{ display: "flex", gap: "0.5rem" }}>
+                       <label className="toggle-row" style={{ flex: 1, justifyContent: "center", padding: "0.6rem", border: "1px solid var(--line)", borderRadius: "8px", cursor: "pointer", background: settlementMethod === "UPI" ? "rgba(111, 104, 216, 0.08)" : "transparent", borderColor: settlementMethod === "UPI" ? "var(--brand)" : "var(--line)" }}>
+                         <input 
+                           type="radio" 
+                           name="settlementMethod" 
+                           checked={settlementMethod === "UPI"} 
+                           onChange={() => setSettlementMethod("UPI")} 
+                           style={{ marginRight: "0.4rem" }} 
+                         />
+                         UPI
+                       </label>
+                       <label className="toggle-row" style={{ flex: 1, justifyContent: "center", padding: "0.6rem", border: "1px solid var(--line)", borderRadius: "8px", cursor: "pointer", background: settlementMethod === "Cash" ? "rgba(111, 104, 216, 0.08)" : "transparent", borderColor: settlementMethod === "Cash" ? "var(--brand)" : "var(--line)" }}>
+                         <input 
+                           type="radio" 
+                           name="settlementMethod" 
+                           checked={settlementMethod === "Cash"} 
+                           onChange={() => setSettlementMethod("Cash")} 
+                           style={{ marginRight: "0.4rem" }} 
+                         />
+                         Cash
+                       </label>
+                     </div>
+                   </div>
+
+                   {settlementMethod === "UPI" && (
+                     <div className="wide">
+                       <label style={{ fontWeight: "bold", display: "block", marginBottom: "0.4rem" }}>Upload UPI Payment Proof (Optional)</label>
+                       <div style={{ display: "flex", gap: "0.8rem", alignItems: "center", flexWrap: "wrap" }}>
+                         <input 
+                           type="file" 
+                           accept="image/*" 
+                           id="settlement-image-upload" 
+                           style={{ display: "none" }} 
+                           onChange={async (e) => {
+                             const file = e.target.files[0];
+                             if (file) {
+                               setUploadingSettlementImage(true);
+                               try {
+                                 const compressedBase64 = await compressImage(file, 800, 800, 0.7);
+                                 let finalUrl = "";
+                                 try {
+                                   finalUrl = await uploadImageToSupabase(file);
+                                 } catch (uploadErr) {
+                                   console.warn("Supabase upload failed, falling back to base64", uploadErr);
+                                   finalUrl = compressedBase64;
+                                 }
+                                 setSettlementImage(finalUrl);
+                                 setToast("Payment proof attached!");
+                               } catch (err) {
+                                 console.error(err);
+                                 setToast("Failed to attach proof.");
+                               } finally {
+                                 setUploadingSettlementImage(false);
+                               }
+                             }
+                           }} 
+                         />
+                         <button 
+                           type="button" 
+                           className="secondary tactile" 
+                           disabled={uploadingSettlementImage}
+                           onClick={() => document.getElementById("settlement-image-upload").click()}
+                         >
+                           {uploadingSettlementImage ? "Uploading..." : settlementImage ? "Change Screenshot" : "Upload Screenshot"}
+                         </button>
+                         {settlementImage && (
+                           <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                             <span style={{ fontSize: '0.82rem', color: 'green', fontWeight: 'bold' }}>✓ Attached</span>
+                             <a 
+                               href={settlementImage} 
+                               target="_blank" 
+                               rel="noreferrer" 
+                               style={{ fontSize: "0.85rem", color: "var(--brand)", textDecoration: "underline" }}
+                             >
+                               Preview Proof
+                             </a>
+                             <button 
+                               type="button" 
+                               className="icon-button tactile danger" 
+                               style={{ padding: "2px 4px" }}
+                               onClick={() => setSettlementImage("")}
+                             >
+                               <X size={14} />
+                             </button>
+                           </div>
+                         )}
+                       </div>
+                     </div>
+                   )}
+                 </div>
+
+                 <div className="modal-actions" style={{ marginTop: "1.5rem" }}>
+                   <button 
+                     type="button" 
+                     className="secondary tactile" 
+                     onClick={() => setActiveSettlementModal(null)}
+                   >
+                     Cancel
+                   </button>
+                   <button 
+                     type="button" 
+                     className="primary tactile" 
+                     disabled={uploadingSettlementImage}
+                     onClick={() => {
+                       if (settlementMethod === "UPI" && !settlementImage) {
+                         setSettlementWarningShown(true);
+                       } else {
+                         executeSaveSettlement(
+                           activeSettlementModal.settlementItem,
+                           activeSettlementModal.paidAmt,
+                           activeSettlementModal.type,
+                           activeSettlementModal.existingSettlementId,
+                           settlementMethod,
+                           settlementImage,
+                           false
+                         );
+                       }
+                     }}
+                   >
+                     Confirm Payment
+                   </button>
+                 </div>
+               </>
+             )}
+           </div>
          </div>
        )}
  
