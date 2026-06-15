@@ -10871,6 +10871,9 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
       );
     });
 
+  // Participant list mapping
+  const participantNamesList = participants.map(p => p.name);
+
   // Calculate project split summary dynamically
   const mappedExpensesForSplit = expenses.map(e => ({
     ...e,
@@ -10887,9 +10890,6 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
 
   // Categories list
   const categoriesOptions = ["Food", "Travel", "Bills", "Health", "Shopping", "Entertainment", "Custom"];
-
-  // Participant list mapping
-  const participantNamesList = participants.map(p => p.name);
 
   // Spending by participant for Analytics
   const participantSpendSummary = participants.map(p => {
