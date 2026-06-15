@@ -11896,47 +11896,11 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                 {/* RECENT TRANSACTIONS */}
                 <div className="panel">
                   <SectionHeader title="Recent Transactions" action={<button className="secondary tactile" style={{ padding: "2px 8px", fontSize: "0.75rem" }} onClick={() => setActiveTab("expenses")}>View All</button>} />
-                  <div style={{ display: "grid", gap: "0.65rem", marginTop: "0.5rem" }}>
+                  <div style={{ display: "grid", gap: "0", marginTop: "0.5rem" }}>
                     {expenses.slice(0, 5).map(item => (
-                      <div key={item.id} style={{ display: "flex", flexDirection: "column", paddingBottom: "0.45rem", borderBottom: "1px dashed rgba(0,0,0,0.06)" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.9rem" }}>
-                          <div>
-                            <strong style={{ fontWeight: 800 }}>{item.title}</strong>
-                            <span style={{ fontSize: "0.75rem", color: "var(--muted)", marginLeft: "0.5rem" }}>{item.category} | by {item.paid_by}</span>
-                          </div>
-                          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                            <strong style={{ color: "var(--ink)" }}>{rupee.format(item.amount)}</strong>
-                            {item.category !== "Settlement" && (
-                              <button 
-                                className="icon-button tactile" 
-                                style={{ padding: "2px", border: "none", background: "transparent", color: "var(--muted)" }}
-                                onClick={() => handleEditExpenseClick(item)}
-                                title="Edit"
-                              >
-                                <Pencil size={13} />
-                              </button>
-                            )}
-                            {(item.created_by === displayName || item.category === "Settlement" || participants.find(p => p.name === displayName)?.role === "owner") && (
-                              <button 
-                                className="icon-button tactile danger" 
-                                style={{ padding: "2px", border: "none", background: "transparent" }}
-                                onClick={() => handleDeleteExpense(item.id, item.title)}
-                                title="Delete"
-                              >
-                                <Trash2 size={13} />
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                        {item.category !== "Settlement" && (
-                          <ExpenseSplitInlineDetails 
-                            expense={item} 
-                            project={mappedProjectForSplit} 
-                            isCloud={true} 
-                            onMarkPaid={handleMarkSettlementPaid} 
-                            onDeletePaid={handleDeleteSettlementInline}
-                          />
-                        )}
+                      <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0.7rem 0", borderBottom: "1px solid rgba(0,0,0,0.05)" }}>
+                        <span style={{ fontWeight: 700, fontSize: "0.92rem", color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, marginRight: "1rem" }}>{item.title}</span>
+                        <strong style={{ fontSize: "0.95rem", color: "var(--ink)", fontWeight: 900, flexShrink: 0 }}>{rupee.format(item.amount)}</strong>
                       </div>
                     ))}
                     {expenses.length === 0 && <EmptyState text="No expenses added yet." />}
@@ -12115,94 +12079,142 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                   </div>
                 </div>
 
-                {/* LIST */}
-                <div className="list-grid" style={{ display: "grid", gap: "1rem" }}>
-                  {filteredExpenses.map(item => {
-                    const categoryIcons = {
-                      Food: "🍔",
-                      Travel: "✈️",
-                      Bills: "⚡",
-                      Health: "🏥",
-                      Shopping: "🛍️",
-                      Entertainment: "🎬",
-                      Custom: "🏷️"
-                    };
-                    const icon = categoryIcons[item.category] || "🏷️";
-                    return (
-                      <div className="panel" key={item.id} style={{ padding: "1.2rem", position: "relative", display: "flex", gap: "1rem", alignItems: "center" }}>
-                        <div style={{
-                          width: "50px",
-                          height: "50px",
-                          borderRadius: "15px",
-                          background: "var(--cream, #fffdf7)",
-                          border: "2px solid var(--line)",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          fontSize: "1.6rem",
-                          boxShadow: "2px 3px 0 var(--line)"
-                        }}>
-                          {icon}
-                        </div>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                            <div>
-                              <h3 style={{ margin: 0, fontSize: "1.15rem", fontWeight: 950, color: "var(--ink)" }}>{item.title}</h3>
-                              <div style={{ color: "var(--muted)", fontSize: "0.82rem", marginTop: "0.15rem" }}>
-                                {item.date} {item.time} | <strong>{item.category}</strong>
-                              </div>
-                            </div>
-                            <strong style={{ fontSize: "1.3rem", color: "var(--ink)", fontWeight: 950 }}>{rupee.format(item.amount)}</strong>
-                          </div>
-                          
-                          <div style={{ marginTop: "0.8rem", fontSize: "0.82rem", display: "flex", flexWrap: "wrap", gap: "0.5rem", alignItems: "center" }}>
-                            <span style={{ background: "rgba(0,0,0,0.04)", padding: "3px 8px", borderRadius: "8px", border: "1px solid rgba(0,0,0,0.06)" }}>Paid by: <strong>{item.paid_by}</strong></span>
-                            {item.participants && item.participants.length > 0 && (
-                              <span style={{ background: "rgba(111, 104, 216, 0.08)", color: "var(--brand, #6f68d8)", padding: "3px 8px", borderRadius: "8px", border: "1px solid rgba(111, 104, 216, 0.12)" }}>
-                                👥 Split ({item.participants.join(", ")})
-                              </span>
-                            )}
-                            {item.notes && <span style={{ fontStyle: "italic", opacity: 0.8 }}>"{item.notes}"</span>}
-                            <span className="creator-tag" style={{ marginLeft: "auto" }}>Created by {item.created_by}</span>
-                          </div>
-                          <ExpenseSplitInlineDetails 
-                            expense={item} 
-                            project={mappedProjectForSplit} 
-                            isCloud={true} 
-                            onMarkPaid={handleMarkSettlementPaid} 
-                            onDeletePaid={handleDeleteSettlementInline}
-                          />
-                        </div>
+                {/* LIST — grouped by date, progressive disclosure */}
+                {(() => {
+                  const categoryIcons = { Food: "🍔", Travel: "✈️", Bills: "⚡", Health: "🏥", Shopping: "🛍️", Entertainment: "🎬", Custom: "🏷️", Settlement: "🤝" };
+                  const grouped = {};
+                  filteredExpenses.forEach(item => {
+                    const d = item.date || "Unknown";
+                    if (!grouped[d]) grouped[d] = [];
+                    grouped[d].push(item);
+                  });
+                  const dateKeys = Object.keys(grouped).sort((a, b) => b.localeCompare(a));
 
-                        {item.category !== "Settlement" && (
-                          <div style={{ marginLeft: "0.5rem" }}>
-                            <button 
-                              className="icon-button tactile" 
-                              style={{ padding: "0.4rem", color: "var(--muted)" }} 
-                              onClick={() => handleEditExpenseClick(item)}
-                              title="Edit"
-                            >
-                              <Pencil size={16} />
-                            </button>
+                  if (filteredExpenses.length === 0) return <EmptyState text="No expenses match the filters." />;
+
+                  return (
+                    <div style={{ display: "grid", gap: "1.2rem" }}>
+                      {dateKeys.map(date => {
+                        const dateLabel = (() => {
+                          const today = todayISO();
+                          const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+                          if (date === today) return "Today";
+                          if (date === yesterday) return "Yesterday";
+                          return new Date(date + "T00:00:00").toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+                        })();
+                        const dayTotal = grouped[date].reduce((s, e) => s + Number(e.amount), 0);
+
+                        return (
+                          <div key={date}>
+                            {/* Date header */}
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem", padding: "0 0.2rem" }}>
+                              <span style={{ fontWeight: 900, fontSize: "0.82rem", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>{dateLabel}</span>
+                              <span style={{ fontWeight: 800, fontSize: "0.8rem", color: "var(--muted)" }}>{rupee.format(dayTotal)}</span>
+                            </div>
+
+                            {/* Expenses for this date */}
+                            <div className="panel" style={{ padding: 0, overflow: "hidden" }}>
+                              {grouped[date].map((item, idx) => {
+                                const icon = categoryIcons[item.category] || "🏷️";
+                                const isExpanded = expandedExpenses[item.id] === "details" || expandedExpenses[item.id] === "owes";
+                                const isOwesOpen = expandedExpenses[item.id] === "owes";
+                                const hasSplit = (item.participants && item.participants.length > 0) || item.owed_by;
+                                const isSettlement = item.category === "Settlement";
+                                const canDelete = item.created_by === displayName || isSettlement || participants.find(p => p.name === displayName)?.role === "owner";
+
+                                return (
+                                  <div key={item.id} style={{ borderBottom: idx < grouped[date].length - 1 ? "1px solid rgba(0,0,0,0.06)" : "none" }}>
+                                    {/* Row 1: Icon + Title + Amount — always visible */}
+                                    <div 
+                                      style={{ display: "flex", alignItems: "center", gap: "0.75rem", padding: "0.85rem 1rem", cursor: "pointer" }}
+                                      onClick={() => setExpandedExpenses(prev => ({
+                                        ...prev,
+                                        [item.id]: prev[item.id] ? undefined : "details"
+                                      }))}
+                                    >
+                                      <span style={{ fontSize: "1.3rem", width: "32px", textAlign: "center", flexShrink: 0 }}>{icon}</span>
+                                      <div style={{ flex: 1, minWidth: 0 }}>
+                                        <div style={{ fontWeight: 800, fontSize: "0.95rem", color: "var(--ink)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</div>
+                                        <div style={{ fontSize: "0.75rem", color: "var(--muted)", marginTop: "0.1rem" }}>{item.time || ""} · {item.category}</div>
+                                      </div>
+                                      <strong style={{ fontSize: "1.05rem", fontWeight: 950, color: "var(--ink)", flexShrink: 0 }}>{rupee.format(item.amount)}</strong>
+                                      <span style={{ fontSize: "0.7rem", color: "var(--muted)", transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s", flexShrink: 0 }}>▼</span>
+                                    </div>
+
+                                    {/* Row 2: Expanded details — shown on first click */}
+                                    {isExpanded && (
+                                      <div style={{ padding: "0 1rem 0.8rem 1rem", background: "rgba(0,0,0,0.015)" }}>
+                                        {/* Detail chips */}
+                                        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", fontSize: "0.78rem", marginBottom: "0.5rem" }}>
+                                          <span style={{ background: "rgba(0,0,0,0.04)", padding: "3px 10px", borderRadius: "8px", border: "1px solid rgba(0,0,0,0.06)" }}>Paid by: <strong>{item.paid_by}</strong></span>
+                                          {item.participants && item.participants.length > 0 && (
+                                            <span style={{ background: "rgba(111,104,216,0.08)", color: "var(--brand,#6f68d8)", padding: "3px 10px", borderRadius: "8px", border: "1px solid rgba(111,104,216,0.12)" }}>
+                                              👥 {item.participants.join(", ")}
+                                            </span>
+                                          )}
+                                          {item.owed_by && (
+                                            <span style={{ background: "rgba(217,119,6,0.08)", color: "#d97706", padding: "3px 10px", borderRadius: "8px", border: "1px solid rgba(217,119,6,0.12)" }}>
+                                              Owed by: <strong>{item.owed_by}</strong>
+                                            </span>
+                                          )}
+                                          {item.notes && <span style={{ fontStyle: "italic", opacity: 0.7 }}>"{item.notes}"</span>}
+                                          <span style={{ color: "var(--muted)", opacity: 0.7, marginLeft: "auto" }}>by {item.created_by}</span>
+                                        </div>
+
+                                        {/* Action buttons */}
+                                        <div style={{ display: "flex", gap: "0.4rem", alignItems: "center", flexWrap: "wrap" }}>
+                                          {!isSettlement && (
+                                            <button className="secondary tactile" style={{ padding: "3px 10px", fontSize: "0.72rem" }} type="button" onClick={(e) => { e.stopPropagation(); handleEditExpenseClick(item); }}>
+                                              <Pencil size={12} style={{ marginRight: "3px", verticalAlign: "-2px" }} />Edit
+                                            </button>
+                                          )}
+                                          {canDelete && (
+                                            <button className="secondary danger tactile" style={{ padding: "3px 10px", fontSize: "0.72rem" }} type="button" onClick={(e) => { e.stopPropagation(); handleDeleteExpense(item.id, item.title); }}>
+                                              <Trash2 size={12} style={{ marginRight: "3px", verticalAlign: "-2px" }} />Delete
+                                            </button>
+                                          )}
+                                          {hasSplit && !isSettlement && (
+                                            <button 
+                                              className="secondary tactile" 
+                                              style={{ padding: "3px 10px", fontSize: "0.72rem", marginLeft: "auto", color: "var(--brand, #6f68d8)" }} 
+                                              type="button" 
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                setExpandedExpenses(prev => ({
+                                                  ...prev,
+                                                  [item.id]: prev[item.id] === "owes" ? "details" : "owes"
+                                                }));
+                                              }}
+                                            >
+                                              {isOwesOpen ? "Hide Owes ▲" : "Show Owes ▼"}
+                                            </button>
+                                          )}
+                                        </div>
+
+                                        {/* Row 3: Owes/split details — shown on second click */}
+                                        {isOwesOpen && (
+                                          <div style={{ marginTop: "0.5rem" }}>
+                                            <ExpenseSplitInlineDetails 
+                                              expense={item} 
+                                              project={mappedProjectForSplit} 
+                                              isCloud={true} 
+                                              onMarkPaid={handleMarkSettlementPaid} 
+                                              onDeletePaid={handleDeleteSettlementInline}
+                                            />
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
                           </div>
-                        )}
-                        {(item.created_by === displayName || item.category === "Settlement" || participants.find(p => p.name === displayName)?.role === "owner") && (
-                          <div style={{ marginLeft: "0.3rem" }}>
-                            <button 
-                              className="icon-button tactile danger" 
-                              style={{ padding: "0.4rem" }} 
-                              onClick={() => handleDeleteExpense(item.id, item.title)}
-                              title="Delete"
-                            >
-                              <Trash2 size={16} />
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                  {filteredExpenses.length === 0 && <EmptyState text="No expenses match the filters." />}
-                </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
               </div>
             )}
 
