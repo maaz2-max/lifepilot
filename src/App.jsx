@@ -7524,10 +7524,19 @@ function ExpenseSplitInlineDetails({ expense, project, isCloud, onMarkPaid, onDe
                   </span>
                   
                   {linked ? (
-                    <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                      <span style={{ color: "#2a9d8f", fontWeight: "bold", background: "rgba(42, 157, 143, 0.08)", padding: "2px 8px", borderRadius: "8px", border: "1px solid rgba(42, 157, 143, 0.12)", fontSize: "0.8rem" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                      <span style={{ color: "#2a9d8f", fontWeight: "bold", background: "rgba(42, 157, 143, 0.08)", padding: "2px 8px", borderRadius: "8px", border: "1px solid rgba(42, 157, 143, 0.12)", fontSize: "0.8rem", marginRight: "0.2rem" }}>
                         ✓ Paid: {rupee.format(linked.amount)}
                       </span>
+                      <button 
+                        className="secondary tactile" 
+                        style={{ padding: "2px 6px", fontSize: "0.72rem", opacity: 0.5, cursor: "not-allowed" }} 
+                        type="button" 
+                        disabled
+                        title="Already paid. Delete payment or edit amount to change."
+                      >
+                        Fully Paid
+                      </button>
                       <button 
                         className="secondary tactile" 
                         style={{ padding: "2px 6px", fontSize: "0.72rem" }} 
@@ -7537,7 +7546,7 @@ function ExpenseSplitInlineDetails({ expense, project, isCloud, onMarkPaid, onDe
                           setCustomAmount(String(linked.amount));
                         }}
                       >
-                        Edit
+                        Custom
                       </button>
                     </div>
                   ) : (
@@ -7546,7 +7555,11 @@ function ExpenseSplitInlineDetails({ expense, project, isCloud, onMarkPaid, onDe
                         className="secondary tactile" 
                         style={{ padding: "2px 6px", fontSize: "0.72rem" }} 
                         type="button" 
-                        onClick={() => onMarkPaid(row, row.amount, "Full")}
+                        onClick={() => {
+                          if (window.confirm(`Are you sure you want to mark this split as fully paid (${rupee.format(row.amount)})?`)) {
+                            onMarkPaid(row, row.amount, "Full");
+                          }
+                        }}
                       >
                         Fully Paid
                       </button>
@@ -7583,9 +7596,11 @@ function ExpenseSplitInlineDetails({ expense, project, isCloud, onMarkPaid, onDe
                       onClick={() => {
                         const safeAmt = Math.min(Math.max(Number(customAmount), 0), row.amount);
                         if (safeAmt > 0) {
-                          onMarkPaid(row, safeAmt, "Custom", linked?.id);
-                          setCustomKey("");
-                          setCustomAmount("");
+                          if (window.confirm(`Are you sure you want to save settlement payment of ${rupee.format(safeAmt)}?`)) {
+                            onMarkPaid(row, safeAmt, "Custom", linked?.id);
+                            setCustomKey("");
+                            setCustomAmount("");
+                          }
                         }
                       }}
                     >
@@ -7597,9 +7612,11 @@ function ExpenseSplitInlineDetails({ expense, project, isCloud, onMarkPaid, onDe
                         style={{ padding: "2px 8px", fontSize: "0.72rem" }} 
                         type="button" 
                         onClick={() => {
-                          onDeletePaid(linked);
-                          setCustomKey("");
-                          setCustomAmount("");
+                          if (window.confirm("Are you sure you want to delete this settlement payment?")) {
+                            onDeletePaid(linked);
+                            setCustomKey("");
+                            setCustomAmount("");
+                          }
                         }}
                       >
                         Delete Payment
@@ -11911,13 +11928,15 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                             )}
                           </div>
                         </div>
-                        <ExpenseSplitInlineDetails 
-                          expense={item} 
-                          project={mappedProjectForSplit} 
-                          isCloud={true} 
-                          onMarkPaid={handleMarkSettlementPaid} 
-                          onDeletePaid={handleDeleteSettlementInline}
-                        />
+                        {item.category !== "Settlement" && (
+                          <ExpenseSplitInlineDetails 
+                            expense={item} 
+                            project={mappedProjectForSplit} 
+                            isCloud={true} 
+                            onMarkPaid={handleMarkSettlementPaid} 
+                            onDeletePaid={handleDeleteSettlementInline}
+                          />
+                        )}
                       </div>
                     ))}
                     {expenses.length === 0 && <EmptyState text="No expenses added yet." />}
