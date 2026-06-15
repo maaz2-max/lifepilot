@@ -98,7 +98,29 @@ const rupee = new Intl.NumberFormat("en-IN", {
   maximumFractionDigits: 2
 });
 
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ padding: "2rem", color: "red", background: "white", minHeight: "100vh" }}>
+          <h2>Something went wrong.</h2>
+          <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{this.state.error && this.state.error.toString()}</pre>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 function generateCloudProjectId(name, type) {
+
   const cleanName = String(name || type || "PRJ").replace(/[^a-zA-Z]/g, "").toUpperCase();
   const prefix = cleanName.slice(0, 3) || "PRJ";
   const randomChars = Math.random().toString(36).substring(2, 7).toUpperCase();
