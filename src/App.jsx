@@ -6,6 +6,8 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   CircleDollarSign,
   ClipboardCheck,
   Braces,
@@ -1965,7 +1967,10 @@ export default function App() {
         const cloudParticipants = await getCloudParticipants(selectedProject);
         
         setState(current => {
-          const mappedExpenses = cloudExpenses.map(exp => ({
+          const normalExpenses = cloudExpenses.filter(e => e.category !== "Settlement");
+          const settlementExpenses = cloudExpenses.filter(e => e.category === "Settlement");
+
+          const mappedExpenses = normalExpenses.map(exp => ({
             id: exp.id,
             projectId: exp.project_id,
             title: exp.title,
@@ -1981,12 +1986,24 @@ export default function App() {
             notes: exp.notes,
             updatedAt: exp.updated_at
           }));
+
+          const mappedSettlements = settlementExpenses.map(exp => ({
+            id: exp.id,
+            from: exp.paid_by,
+            to: exp.owed_by,
+            amount: Number(exp.amount),
+            paidAt: exp.created_at
+          }));
           
           const cleanTransactions = current.projectTransactions.filter(t => t.projectId !== selectedProject);
           const nextTransactions = [...mappedExpenses, ...cleanTransactions];
           
           const mappedParticipants = cloudParticipants.map(p => p.name);
-          const nextProjects = current.projects.map(p => p.id === selectedProject ? { ...p, participants: mappedParticipants } : p);
+          const nextProjects = current.projects.map(p => 
+            p.id === selectedProject 
+              ? { ...p, participants: mappedParticipants, paidSettlements: mappedSettlements } 
+              : p
+          );
           
           return {
             ...current,
@@ -2148,7 +2165,9 @@ export default function App() {
   const remove = (collection, itemId, label = "item", options = {}) => {
     requestConfirm({
       title: options.title || `Delete ${label}?`,
-      message: options.message || `Are you sure you want to delete this ${label}? This action cannot be undone.`,
+      message: options.message || (collection === "projectTransactions"
+        ? "Are you sure you want to delete this expense? This might affect the splits and pending balances."
+        : `Are you sure you want to delete this ${label}? This action cannot be undone.`),
       confirmLabel: options.confirmLabel || "Delete",
       tone: "danger",
       onConfirm: () => {
@@ -4890,7 +4909,7 @@ function ProjectsView({ state, selectedProject, setSelectedProject, openAdd, set
             <ProjectParticipantBreakdown project={active} transactions={transactions} />
             <Segmented value={projectTab} onChange={setProjectTab} options={[["transactions", "Transactions"], ["split", "Split"]]} />
             {projectTab === "transactions" ? (
-              <DateGroupedRecordTable list={transactions} type="projectTransaction" setModal={setModal} remove={(id) => remove("projectTransactions", id, "project transaction")} />
+              <DateGroupedRecordTable list={transactions} type="projectTransaction" setModal={setModal} remove={(id) => remove("projectTransactions", id, "project transaction")} project={active} upsert={upsert} />
             ) : (
               <ProjectSplitView project={active} transactions={transactions} upsert={upsert} requestConfirm={requestConfirm} />
             )}
@@ -7409,25 +7428,167 @@ function TransactionRow({ item }) {
   );
 }
 
-function RecordTable({ list, type, setModal, remove }) {
+function ExpenseSplitInlineDetails({ expense, project, isCloud, onMarkPaid }) {
+  const [expanded, setExpanded] = useState(false);
+  const [customKey, setCustomKey] = useState("");
+  const [customAmount, setCustomAmount] = useState("");
+
+  const splitMode = expense.splitMode || (expense.owed_by ? "Direct owed" : (expense.participants && expense.participants.length > 0 ? "Equal split" : "No split"));
+  if (splitMode === "No split") return null;
+
+  let rows = [];
+  const amtVal = Number(expense.amount || 0);
+  const paidBy = expense.paidBy || expense.paid_by;
+
+  if (splitMode === "Direct owed") {
+    const owedBy = expense.owedBy || expense.owed_by;
+    if (paidBy && owedBy && paidBy !== owedBy) {
+      rows = [{ from: owedBy, to: paidBy, amount: Math.round(amtVal), label: "owes" }];
+    }
+  } else if (splitMode === "Equal split") {
+    const splitMembers = (expense.participants || []).filter(Boolean);
+    if (paidBy && splitMembers.length > 0) {
+      const share = amtVal / splitMembers.length;
+      rows = splitMembers
+        .filter((name) => name !== paidBy)
+        .map((name) => ({ from: name, to: paidBy, amount: Math.round(share), label: "owes" }));
+    }
+  }
+
+  if (rows.length === 0) return null;
+
+  return (
+    <div className="expense-inline-splits" style={{ marginTop: "0.5rem", fontSize: "0.85rem", width: "100%", borderTop: "1px dashed rgba(0,0,0,0.06)", paddingTop: "0.4rem" }}>
+      <div 
+        style={{ display: "flex", alignItems: "center", gap: "0.4rem", color: "var(--brand, #6f68d8)", cursor: "pointer", fontWeight: 700 }}
+        onClick={() => setExpanded(!expanded)}
+      >
+        <span>👥 This payment is split ({splitMode})</span>
+        <span style={{ fontSize: "0.75rem", opacity: 0.8 }}>(Click arrow to see owed details)</span>
+        <span style={{ display: "inline-flex", transform: expanded ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s" }}>
+          ▼
+        </span>
+      </div>
+      
+      {expanded && (
+        <div style={{ marginTop: "0.4rem", padding: "0.6rem 0.8rem", background: "rgba(0,0,0,0.02)", borderRadius: "10px", border: "1px dashed rgba(0,0,0,0.08)", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+          {rows.map((row, idx) => {
+            const rowKey = `${row.from}_${row.to}_${idx}`;
+            return (
+              <div key={rowKey} style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.5rem" }}>
+                  <span>
+                    <strong>{row.from}</strong> owes <strong>{row.to}</strong>: <strong>{rupee.format(row.amount)}</strong>
+                  </span>
+                  <div style={{ display: "flex", gap: "0.3rem" }}>
+                    <button 
+                      className="secondary tactile" 
+                      style={{ padding: "2px 6px", fontSize: "0.72rem" }} 
+                      type="button" 
+                      onClick={() => onMarkPaid(row, row.amount, "Full")}
+                    >
+                      Fully Paid
+                    </button>
+                    <button 
+                      className="secondary tactile" 
+                      style={{ padding: "2px 6px", fontSize: "0.72rem" }} 
+                      type="button" 
+                      onClick={() => {
+                        setCustomKey(customKey === rowKey ? "" : rowKey);
+                        setCustomAmount("");
+                      }}
+                    >
+                      Custom
+                    </button>
+                  </div>
+                </div>
+                {customKey === rowKey && (
+                  <div style={{ display: "flex", gap: "0.4rem", alignItems: "center", marginTop: "0.2rem" }}>
+                    <input
+                      type="number"
+                      value={customAmount}
+                      onChange={(e) => setCustomAmount(e.target.value)}
+                      placeholder={`Max ${row.amount}`}
+                      min="1"
+                      max={row.amount}
+                      style={{ padding: "2px 6px", width: "80px", fontSize: "0.8rem", border: "1px solid var(--line)", borderRadius: "6px" }}
+                    />
+                    <button 
+                      className="primary tactile" 
+                      style={{ padding: "2px 8px", fontSize: "0.72rem" }} 
+                      type="button" 
+                      onClick={() => {
+                        const safeAmt = Math.min(Math.max(Number(customAmount), 0), row.amount);
+                        if (safeAmt > 0) {
+                          onMarkPaid(row, safeAmt, "Custom");
+                          setCustomKey("");
+                          setCustomAmount("");
+                        }
+                      }}
+                    >
+                      Save
+                    </button>
+                    <button 
+                      className="secondary tactile" 
+                      style={{ padding: "2px 6px", fontSize: "0.72rem" }} 
+                      type="button" 
+                      onClick={() => setCustomKey("")}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RecordTable({ list, type, setModal, remove, project, upsert }) {
   return (
     <div className="record-table">
       {list.length ? list.map((item) => (
-        <div className="transaction-row" key={item.id}>
-          <div>
-            <strong>{item.title}</strong>
-            <small>{item.category || item.source} - {formatDate(item.date || item.receivedDate)}</small>
+        <div className="transaction-row" key={item.id} style={{ display: "flex", flexDirection: "column", alignItems: "stretch", minHeight: "auto" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}>
+            <div>
+              <strong>{item.title}</strong>
+              <small>{item.category || item.source} - {formatDate(item.date || item.receivedDate)}</small>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+              <span className={item.type === "Credit" ? "credit" : "debit"}>{item.amount ? rupee.format(amount(item.amount)) : item.status}</span>
+              <button className="icon-button tactile" type="button" onClick={() => setModal({ kind: type, item })}><Edit3 size={16} /></button>
+              <button className="icon-button tactile danger" type="button" onClick={() => remove(item.id)}><Trash2 size={16} /></button>
+            </div>
           </div>
-          <span className={item.type === "Credit" ? "credit" : "debit"}>{item.amount ? rupee.format(amount(item.amount)) : item.status}</span>
-          <button className="icon-button tactile" onClick={() => setModal({ kind: type, item })}><Edit3 size={16} /></button>
-          <button className="icon-button tactile danger" onClick={() => remove(item.id)}><Trash2 size={16} /></button>
+          {type === "projectTransaction" && (
+            <ExpenseSplitInlineDetails 
+              expense={item} 
+              project={project} 
+              isCloud={false} 
+              onMarkPaid={(row, amt, paymentType) => {
+                if (!project || !upsert) return;
+                const paid = {
+                  id: id("settlement"),
+                  from: row.from,
+                  to: row.to,
+                  amount: Math.round(amt),
+                  paymentType,
+                  paidAt: new Date().toISOString()
+                };
+                upsert("projects", { ...project, paidSettlements: [paid, ...(project.paidSettlements || [])] }, "project");
+              }} 
+            />
+          )}
         </div>
       )) : <EmptyState text="No records match this view." />}
     </div>
   );
 }
 
-function DateGroupedRecordTable({ list, type, setModal, remove }) {
+function DateGroupedRecordTable({ list, type, setModal, remove, project, upsert }) {
   const groups = list.reduce((acc, item) => {
     const date = item.date || item.receivedDate || "No date";
     acc[date] = acc[date] || [];
@@ -7444,7 +7605,7 @@ function DateGroupedRecordTable({ list, type, setModal, remove }) {
             <strong>{date === todayISO() ? "Today" : formatDate(date)}</strong>
             <span>{rupee.format(sum(groups[date], (item) => item.type === "Debit"))} debit - {rupee.format(sum(groups[date], (item) => item.type === "Credit"))} credit</span>
           </div>
-          <RecordTable list={groups[date].sort(sortByTimeDesc)} type={type} setModal={setModal} remove={remove} />
+          <RecordTable list={groups[date].sort(sortByTimeDesc)} type={type} setModal={setModal} remove={remove} project={project} upsert={upsert} />
         </section>
       ))}
     </div>
@@ -7486,13 +7647,54 @@ function ProjectSplitView({ project, transactions, upsert, requestConfirm }) {
       paymentType,
       paidAt: new Date().toISOString()
     };
-    upsert("projects", { ...project, paidSettlements: [paid, ...(project.paidSettlements || [])] }, "project");
+    if (project.isCloud && hasSupabase()) {
+      upsertCloudExpense({
+        id: paid.id,
+        project_id: project.id,
+        title: `Settlement: ${item.from} paid ${item.to}`,
+        amount: paid.amount,
+        category: "Settlement",
+        date: todayISO(),
+        time: nowTime(),
+        paid_by: item.from,
+        owed_by: item.to,
+        participants: [],
+        payment_method: "UPI",
+        notes: `Settlement payment (${paymentType})`,
+        created_by: project.owner_name || "Owner",
+        created_at: paid.paidAt
+      })
+      .then(() => {
+        addCloudActivity(
+          project.id,
+          "add_settlement",
+          `Settlement of ₹${paid.amount} from ${item.from} to ${item.to} was paid`,
+          project.owner_name || "Owner"
+        ).catch(console.error);
+      })
+      .catch(console.error);
+    } else {
+      upsert("projects", { ...project, paidSettlements: [paid, ...(project.paidSettlements || [])] }, "project");
+    }
     setCustomSettlementKey("");
     setCustomAmount("");
   };
   const deleteSettlementPaid = (settlement) => {
     const applyDelete = () => {
-      upsert("projects", { ...project, paidSettlements: (project.paidSettlements || []).filter((item) => item.id !== settlement.id) }, "project");
+      if (project.isCloud && hasSupabase()) {
+        deleteCloudExpense(settlement.id)
+        .then(() => {
+          addCloudActivity(
+            project.id,
+            "delete_settlement",
+            `Settlement payment of ₹${settlement.amount} from ${settlement.from} to ${settlement.to} was deleted`,
+            project.owner_name || "Owner"
+          ).catch(console.error);
+        })
+        .catch(console.error);
+      } else {
+        upsert("projects", { ...project, paidSettlements: (project.paidSettlements || []).filter((item) => item.id !== settlement.id) }, "project");
+      }
     };
     if (requestConfirm) {
       requestConfirm({
@@ -7514,14 +7716,43 @@ function ProjectSplitView({ project, transactions, upsert, requestConfirm }) {
     const max = editableMax(settlement);
     const safeAmount = Math.min(Math.max(amount(editingAmount), 0), max);
     if (safeAmount <= 0) return;
-    upsert("projects", {
-      ...project,
-      paidSettlements: (project.paidSettlements || []).map((item) =>
-        item.id === settlement.id
-          ? { ...item, amount: Math.round(safeAmount), paymentType: safeAmount >= max ? "Full" : "Custom", updatedAt: new Date().toISOString() }
-          : item
-      )
-    }, "project");
+    if (project.isCloud && hasSupabase()) {
+      upsertCloudExpense({
+        id: settlement.id,
+        project_id: project.id,
+        title: `Settlement: ${settlement.from} paid ${settlement.to}`,
+        amount: Math.round(safeAmount),
+        category: "Settlement",
+        date: todayISO(),
+        time: nowTime(),
+        paid_by: settlement.from,
+        owed_by: settlement.to,
+        participants: [],
+        payment_method: "UPI",
+        notes: `Settlement payment (Custom) - edited`,
+        created_by: project.owner_name || "Owner",
+        created_at: settlement.paidAt || new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .then(() => {
+        addCloudActivity(
+          project.id,
+          "edit_settlement",
+          `Settlement payment from ${settlement.from} to ${settlement.to} was updated to ₹${Math.round(safeAmount)}`,
+          project.owner_name || "Owner"
+        ).catch(console.error);
+      })
+      .catch(console.error);
+    } else {
+      upsert("projects", {
+        ...project,
+        paidSettlements: (project.paidSettlements || []).map((item) =>
+          item.id === settlement.id
+            ? { ...item, amount: Math.round(safeAmount), paymentType: safeAmount >= max ? "Full" : "Custom", updatedAt: new Date().toISOString() }
+            : item
+        )
+      }, "project");
+    }
     setEditingSettlementId("");
     setEditingAmount("");
   };
@@ -10296,10 +10527,31 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
   const [projectError, setProjectError] = useState("");
 
   const [joined, setJoined] = useState(() => {
-    return sessionStorage.getItem(`lifepilot.project.${projectId}.joined`) === "true";
+    const isJoined = localStorage.getItem(`lifepilot.project.${projectId}.joined`) === "true";
+    const loginTime = localStorage.getItem(`lifepilot.project.${projectId}.loginTime`);
+    if (isJoined && loginTime) {
+      const elapsed = Date.now() - Number(loginTime);
+      if (elapsed < 12 * 60 * 60 * 1000) { // 12 hours
+        return true;
+      }
+    }
+    // Clean up if expired
+    localStorage.removeItem(`lifepilot.project.${projectId}.joined`);
+    localStorage.removeItem(`lifepilot.project.${projectId}.name`);
+    localStorage.removeItem(`lifepilot.project.${projectId}.loginTime`);
+    return false;
   });
+
   const [displayName, setDisplayName] = useState(() => {
-    return sessionStorage.getItem(`lifepilot.project.${projectId}.name`) || "";
+    const isJoined = localStorage.getItem(`lifepilot.project.${projectId}.joined`) === "true";
+    const loginTime = localStorage.getItem(`lifepilot.project.${projectId}.loginTime`);
+    if (isJoined && loginTime) {
+      const elapsed = Date.now() - Number(loginTime);
+      if (elapsed < 12 * 60 * 60 * 1000) {
+        return localStorage.getItem(`lifepilot.project.${projectId}.name`) || "";
+      }
+    }
+    return "";
   });
 
   const [enteredPin, setEnteredPin] = useState(""); // empty by default
@@ -10342,9 +10594,18 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
   // Welcome message banner
   const [welcomeMessage, setWelcomeMessage] = useState(null);
 
+  // Confirm Dialog state
+  const [confirmDialog, setConfirmDialog] = useState(null);
+
   // Chat state
   const [chatText, setChatText] = useState("");
   const chatEndRef = useRef(null);
+
+  // Room settlement UI states
+  const [customSettlementKey, setCustomSettlementKey] = useState("");
+  const [customAmount, setCustomAmount] = useState("");
+  const [expandedExpenses, setExpandedExpenses] = useState({});
+  const settlementKey = (item) => `${item.from}__${item.to}`;
 
   // Local forms state
   const [expForm, setExpForm] = useState({
@@ -10356,6 +10617,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
     paidBy: "",
     splitMode: "No split",
     participants: [],
+    owedBy: "",
     paymentMethod: "UPI",
     notes: ""
   });
@@ -10472,23 +10734,73 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
           }
         }
       })
-      .on("postgres_changes", { event: "*", schema: "public", table: "cloud_participants", filter: `project_id=eq.${projectId}` }, () => {
-        getCloudParticipants(projectId).then(setParticipants).catch(console.error);
+      .on("postgres_changes", { event: "*", schema: "public", table: "cloud_participants", filter: `project_id=eq.${projectId}` }, (payload) => {
+        if (payload.eventType === "INSERT") {
+          setParticipants(prev => {
+            if (prev.find(p => p.id === payload.new.id)) return prev;
+            return [...prev, payload.new];
+          });
+        } else if (payload.eventType === "UPDATE") {
+          setParticipants(prev => prev.map(p => p.id === payload.new.id ? payload.new : p));
+        } else if (payload.eventType === "DELETE") {
+          setParticipants(prev => prev.filter(p => p.id !== payload.old.id));
+        }
       })
-      .on("postgres_changes", { event: "*", schema: "public", table: "cloud_expenses", filter: `project_id=eq.${projectId}` }, () => {
-        getCloudExpenses(projectId).then(setExpenses).catch(console.error);
+      .on("postgres_changes", { event: "*", schema: "public", table: "cloud_expenses", filter: `project_id=eq.${projectId}` }, (payload) => {
+        if (payload.eventType === "INSERT") {
+          setExpenses(prev => {
+            if (prev.find(e => e.id === payload.new.id)) return prev;
+            return [payload.new, ...prev];
+          });
+        } else if (payload.eventType === "UPDATE") {
+          setExpenses(prev => prev.map(e => e.id === payload.new.id ? payload.new : e));
+        } else if (payload.eventType === "DELETE") {
+          setExpenses(prev => prev.filter(e => e.id !== payload.old.id));
+        }
       })
-      .on("postgres_changes", { event: "*", schema: "public", table: "cloud_messages", filter: `project_id=eq.${projectId}` }, () => {
-        getCloudMessages(projectId).then(setMessages).catch(console.error);
+      .on("postgres_changes", { event: "*", schema: "public", table: "cloud_messages", filter: `project_id=eq.${projectId}` }, (payload) => {
+        if (payload.eventType === "INSERT") {
+          setMessages(prev => {
+            if (prev.find(m => m.id === payload.new.id)) return prev;
+            return [...prev, payload.new];
+          });
+        } else if (payload.eventType === "UPDATE") {
+          setMessages(prev => prev.map(m => m.id === payload.new.id ? payload.new : m));
+        } else if (payload.eventType === "DELETE") {
+          setMessages(prev => prev.filter(m => m.id !== payload.old.id));
+        }
       })
-      .on("postgres_changes", { event: "*", schema: "public", table: "cloud_activities", filter: `project_id=eq.${projectId}` }, () => {
-        getCloudActivities(projectId).then(setActivities).catch(console.error);
+      .on("postgres_changes", { event: "*", schema: "public", table: "cloud_activities", filter: `project_id=eq.${projectId}` }, (payload) => {
+        if (payload.eventType === "INSERT") {
+          setActivities(prev => {
+            if (prev.find(a => a.id === payload.new.id)) return prev;
+            return [payload.new, ...prev];
+          });
+        }
       })
-      .on("postgres_changes", { event: "*", schema: "public", table: "cloud_tasks", filter: `project_id=eq.${projectId}` }, () => {
-        getCloudTasks(projectId).then(setTasks).catch(console.error);
+      .on("postgres_changes", { event: "*", schema: "public", table: "cloud_tasks", filter: `project_id=eq.${projectId}` }, (payload) => {
+        if (payload.eventType === "INSERT") {
+          setTasks(prev => {
+            if (prev.find(t => t.id === payload.new.id)) return prev;
+            return [...prev, payload.new];
+          });
+        } else if (payload.eventType === "UPDATE") {
+          setTasks(prev => prev.map(t => t.id === payload.new.id ? payload.new : t));
+        } else if (payload.eventType === "DELETE") {
+          setTasks(prev => prev.filter(t => t.id !== payload.old.id));
+        }
       })
-      .on("postgres_changes", { event: "*", schema: "public", table: "cloud_documents", filter: `project_id=eq.${projectId}` }, () => {
-        getCloudDocuments(projectId).then(setDocuments).catch(console.error);
+      .on("postgres_changes", { event: "*", schema: "public", table: "cloud_documents", filter: `project_id=eq.${projectId}` }, (payload) => {
+        if (payload.eventType === "INSERT") {
+          setDocuments(prev => {
+            if (prev.find(d => d.id === payload.new.id)) return prev;
+            return [payload.new, ...prev];
+          });
+        } else if (payload.eventType === "UPDATE") {
+          setDocuments(prev => prev.map(d => d.id === payload.new.id ? payload.new : d));
+        } else if (payload.eventType === "DELETE") {
+          setDocuments(prev => prev.filter(d => d.id !== payload.old.id));
+        }
       })
       .subscribe();
 
@@ -10556,9 +10868,10 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
       // Log join activity
       await addCloudActivity(projectId, "join", `${cleanName} joined the project room`, cleanName);
 
-      // Store session
-      sessionStorage.setItem(`lifepilot.project.${projectId}.joined`, "true");
-      sessionStorage.setItem(`lifepilot.project.${projectId}.name`, cleanName);
+      // Store session for 12 hours
+      localStorage.setItem(`lifepilot.project.${projectId}.joined`, "true");
+      localStorage.setItem(`lifepilot.project.${projectId}.name`, cleanName);
+      localStorage.setItem(`lifepilot.project.${projectId}.loginTime`, String(Date.now()));
 
       setDisplayName(cleanName);
       setJoined(true);
@@ -10596,9 +10909,75 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
   const handleLeave = () => {
     sessionStorage.removeItem(`lifepilot.project.${projectId}.joined`);
     sessionStorage.removeItem(`lifepilot.project.${projectId}.name`);
+    localStorage.removeItem(`lifepilot.project.${projectId}.joined`);
+    localStorage.removeItem(`lifepilot.project.${projectId}.name`);
+    localStorage.removeItem(`lifepilot.project.${projectId}.loginTime`);
     setJoined(false);
     setDisplayName("");
     setProject(null);
+  };
+
+  const handleMarkSettlementPaid = async (settlementItem, paidAmt, type = "Full") => {
+    const safeAmount = Math.min(Math.max(Number(paidAmt), 0), Number(settlementItem.amount));
+    if (safeAmount <= 0) return;
+    try {
+      const settlementId = "settlement-" + Math.random().toString(36).substring(2, 11);
+      
+      await upsertCloudExpense({
+        id: settlementId,
+        project_id: projectId,
+        title: `Settlement: ${settlementItem.from} paid ${settlementItem.to}`,
+        amount: safeAmount,
+        category: "Settlement",
+        date: todayISO(),
+        time: nowTime(),
+        paid_by: settlementItem.from,
+        owed_by: settlementItem.to,
+        participants: [],
+        payment_method: "UPI",
+        notes: `Settlement payment (${type})`,
+        created_by: displayName,
+        created_at: new Date().toISOString()
+      });
+
+      await addCloudActivity(
+        projectId,
+        "add_settlement",
+        `${displayName} marked settlement of ₹${safeAmount} from ${settlementItem.from} to ${settlementItem.to} as paid`,
+        displayName
+      );
+
+      setCustomSettlementKey("");
+      setCustomAmount("");
+      setToast("Settlement recorded!");
+    } catch (err) {
+      console.error(err);
+      setToast("Failed to record settlement.");
+    }
+  };
+
+  const handleDeleteSettlement = async (settlement) => {
+    setConfirmDialog({
+      title: "Delete Settlement Payment?",
+      message: `${settlement.from} paid ${rupee.format(settlement.amount)} to ${settlement.to}. Deleting this will add the amount back to pending owes.`,
+      confirmLabel: "Delete Payment",
+      tone: "danger",
+      onConfirm: async () => {
+        try {
+          await deleteCloudExpense(settlement.id);
+          await addCloudActivity(
+            projectId,
+            "delete_settlement",
+            `${displayName} deleted settlement payment of ₹${settlement.amount} from ${settlement.from} to ${settlement.to}`,
+            displayName
+          );
+          setToast("Settlement deleted.");
+        } catch (err) {
+          console.error(err);
+          setToast("Failed to delete settlement.");
+        }
+      }
+    });
   };
 
   // Add transactions
@@ -10831,25 +11210,37 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
   };
 
   const handleDeleteExpense = async (expId, expTitle) => {
-    // Optimistic delete
-    setExpenses(prev => prev.filter(e => e.id !== expId));
-    try {
-      await deleteCloudExpense(expId);
-      await addCloudActivity(
-        projectId,
-        "delete_expense",
-        `${displayName} deleted expense "${expTitle}"`,
-        displayName
-      );
-      setToast("Expense deleted");
-    } catch (err) {
-      setToast("Failed to delete: " + err.message);
-      getCloudExpenses(projectId).then(setExpenses).catch(console.error);
-    }
+    setConfirmDialog({
+      title: "Delete Expense?",
+      message: `Are you sure you want to delete "${expTitle}"? This might affect the splits and pending balances.`,
+      confirmLabel: "Delete",
+      tone: "danger",
+      onConfirm: async () => {
+        // Optimistic delete
+        setExpenses(prev => prev.filter(e => e.id !== expId));
+        try {
+          await deleteCloudExpense(expId);
+          await addCloudActivity(
+            projectId,
+            "delete_expense",
+            `${displayName} deleted expense "${expTitle}"`,
+            displayName
+          );
+          setToast("Expense deleted");
+        } catch (err) {
+          setToast("Failed to delete: " + err.message);
+          getCloudExpenses(projectId).then(setExpenses).catch(console.error);
+        }
+      }
+    });
   };
 
   // --- Calculations for UI ---
-  const totalSpent = expenses.reduce((sum, item) => sum + Number(item.amount), 0);
+  // Separate out Settlements from normal expenses
+  const normalExpenses = expenses.filter(e => e.category !== "Settlement");
+  const settlementExpenses = expenses.filter(e => e.category === "Settlement");
+
+  const totalSpent = normalExpenses.reduce((sum, item) => sum + Number(item.amount), 0);
   const budgetVal = project?.budget || 0;
   const remainingBudget = budgetVal - totalSpent;
   const isOverspent = totalSpent > budgetVal;
@@ -10857,7 +11248,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
   const usagePercentage = budgetVal > 0 ? Math.min((totalSpent / budgetVal) * 100, 100) : 0;
 
   // Filtered expenses
-  const filteredExpenses = expenses
+  const filteredExpenses = normalExpenses
     .filter(item => categoryFilter === "All" || item.category === categoryFilter)
     .filter(item => participantFilter === "All" || item.paid_by === participantFilter)
     .filter(item => {
@@ -10875,16 +11266,23 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
   const participantNamesList = participants.map(p => p.name);
 
   // Calculate project split summary dynamically
-  const mappedExpensesForSplit = expenses.map(e => ({
+  const mappedExpensesForSplit = normalExpenses.map(e => ({
     ...e,
     paidBy: e.paid_by,
     type: "Debit",
-    splitMode: e.participants && e.participants.length > 0 ? "Equal split" : "No split",
-    participants: e.participants || []
+    splitMode: e.owed_by ? "Direct owed" : (e.participants && e.participants.length > 0 ? "Equal split" : "No split"),
+    participants: e.participants || [],
+    owedBy: e.owed_by || ""
   }));
   const mappedProjectForSplit = {
     participants: participantNamesList,
-    paidSettlements: project?.paid_settlements || []
+    paidSettlements: settlementExpenses.map(e => ({
+      id: e.id,
+      from: e.paid_by,
+      to: e.owed_by,
+      amount: Number(e.amount),
+      paidAt: e.created_at
+    }))
   };
   const splitSummary = projectSplitSummary(mappedProjectForSplit, mappedExpensesForSplit);
 
@@ -10893,7 +11291,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
 
   // Spending by participant for Analytics
   const participantSpendSummary = participants.map(p => {
-    const spent = expenses
+    const spent = normalExpenses
       .filter(e => e.paid_by === p.name)
       .reduce((sum, e) => sum + Number(e.amount), 0);
     return { name: p.name, spent };
@@ -11025,7 +11423,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                         }}>
                           {initials}
                         </div>
-                        <span style={{ textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap", width: "100%", textAlign: "center" }}>
+                        <span style={{ overflowWrap: "break-word", wordBreak: "break-word", whiteSpace: "normal", fontSize: "0.75rem", width: "100%", textAlign: "center", display: "block", lineHeight: "1.1" }}>
                           {p.name}
                         </span>
                       </button>
@@ -11069,7 +11467,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                     }}>
                       +
                     </div>
-                    <span>Other</span>
+                    <span style={{ overflowWrap: "break-word", wordBreak: "break-word", whiteSpace: "normal", fontSize: "0.75rem", width: "100%", textAlign: "center", display: "block", lineHeight: "1.1" }}>Other</span>
                   </button>
                 </div>
                 {showCustomNameInput && (
@@ -11244,24 +11642,32 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                   <SectionHeader title="Recent Transactions" action={<button className="secondary tactile" style={{ padding: "2px 8px", fontSize: "0.75rem" }} onClick={() => setActiveTab("expenses")}>View All</button>} />
                   <div style={{ display: "grid", gap: "0.65rem", marginTop: "0.5rem" }}>
                     {expenses.slice(0, 5).map(item => (
-                      <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.9rem", paddingBottom: "0.45rem", borderBottom: "1px dashed rgba(0,0,0,0.06)" }}>
-                        <div>
-                          <strong style={{ fontWeight: 800 }}>{item.title}</strong>
-                          <span style={{ fontSize: "0.75rem", color: "var(--muted)", marginLeft: "0.5rem" }}>{item.category} | by {item.paid_by}</span>
+                      <div key={item.id} style={{ display: "flex", flexDirection: "column", paddingBottom: "0.45rem", borderBottom: "1px dashed rgba(0,0,0,0.06)" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.9rem" }}>
+                          <div>
+                            <strong style={{ fontWeight: 800 }}>{item.title}</strong>
+                            <span style={{ fontSize: "0.75rem", color: "var(--muted)", marginLeft: "0.5rem" }}>{item.category} | by {item.paid_by}</span>
+                          </div>
+                          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                            <strong style={{ color: "var(--ink)" }}>{rupee.format(item.amount)}</strong>
+                            {item.created_by === displayName && (
+                              <button 
+                                className="icon-button tactile danger" 
+                                style={{ padding: "2px", border: "none", background: "transparent" }}
+                                onClick={() => handleDeleteExpense(item.id, item.title)}
+                                title="Delete"
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            )}
+                          </div>
                         </div>
-                        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                          <strong style={{ color: "var(--ink)" }}>{rupee.format(item.amount)}</strong>
-                          {item.created_by === displayName && (
-                            <button 
-                              className="icon-button tactile danger" 
-                              style={{ padding: "2px", border: "none", background: "transparent" }}
-                              onClick={() => handleDeleteExpense(item.id, item.title)}
-                              title="Delete"
-                            >
-                              <Trash2 size={13} />
-                            </button>
-                          )}
-                        </div>
+                        <ExpenseSplitInlineDetails 
+                          expense={item} 
+                          project={project} 
+                          isCloud={true} 
+                          onMarkPaid={handleMarkSettlementPaid} 
+                        />
                       </div>
                     ))}
                     {expenses.length === 0 && <EmptyState text="No expenses added yet." />}
@@ -11289,11 +11695,45 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                   {/* Who Pays Whom */}
                   <div className="panel" style={{ padding: "1.2rem" }}>
                     <SectionHeader title="Pending Payments" />
-                    <div style={{ display: "grid", gap: "0.80rem", marginTop: "0.55rem", maxHeight: "200px", overflowY: "auto" }}>
+                    <div style={{ display: "grid", gap: "0.80rem", marginTop: "0.55rem", maxHeight: "250px", overflowY: "auto" }}>
                       {splitSummary.settlements.map((item, index) => (
-                        <div key={`${item.from}-${item.to}-${index}`} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.92rem", paddingBottom: "0.4rem", borderBottom: "1px dashed rgba(0,0,0,0.06)" }}>
-                          <span>{item.from} ➔ {item.to}</span>
-                          <strong style={{ color: "var(--brand)" }}>pays {rupee.format(item.amount)}</strong>
+                        <div key={`${item.from}-${item.to}-${index}`} style={{ display: "flex", flexDirection: "column", gap: "0.3rem", paddingBottom: "0.4rem", borderBottom: "1px dashed rgba(0,0,0,0.06)" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.92rem", flexWrap: "wrap", gap: "0.5rem" }}>
+                            <span>{item.from} ➔ {item.to}</span>
+                            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                              <strong style={{ color: "var(--brand)" }}>pays {rupee.format(item.amount)}</strong>
+                              <div style={{ display: "flex", gap: "0.3rem" }}>
+                                <button className="secondary tactile" style={{ padding: "2px 6px", fontSize: "0.72rem" }} type="button" onClick={() => handleMarkSettlementPaid(item, item.amount, "Full")}>Fully Paid</button>
+                                <button className={`secondary tactile ${customSettlementKey === settlementKey(item) ? "active" : ""}`} style={{ padding: "2px 6px", fontSize: "0.72rem" }} type="button" onClick={() => {
+                                  setCustomSettlementKey(customSettlementKey === settlementKey(item) ? "" : settlementKey(item));
+                                  setCustomAmount("");
+                                }}>Custom</button>
+                              </div>
+                            </div>
+                          </div>
+                          {customSettlementKey === settlementKey(item) && (
+                            <div style={{ display: "flex", gap: "0.4rem", alignItems: "center", marginTop: "0.2rem", justifyContent: "flex-end" }}>
+                              <span style={{ fontSize: "0.8rem", color: "var(--muted)" }}>Paid now:</span>
+                              <input
+                                value={customAmount}
+                                onChange={(event) => setCustomAmount(event.target.value)}
+                                type="number"
+                                min="1"
+                                max={Math.round(item.amount)}
+                                placeholder={`Max ${Math.round(item.amount)}`}
+                                style={{ padding: "2px 6px", width: "80px", fontSize: "0.8rem", border: "1px solid var(--line)", borderRadius: "6px" }}
+                              />
+                              <button className="primary tactile" style={{ padding: "2px 8px", fontSize: "0.72rem" }} type="button" onClick={() => {
+                                const safeAmt = Math.min(Math.max(Number(customAmount), 0), item.amount);
+                                if (safeAmt > 0) {
+                                  handleMarkSettlementPaid(item, safeAmt, "Custom");
+                                  setCustomSettlementKey("");
+                                  setCustomAmount("");
+                                }
+                              }}>Save</button>
+                              <button className="secondary tactile" style={{ padding: "2px 6px", fontSize: "0.72rem" }} type="button" onClick={() => setCustomSettlementKey("")}>Cancel</button>
+                            </div>
+                          )}
                         </div>
                       ))}
                       {splitSummary.settlements.length === 0 && <EmptyState text="All settled up! No pending payments." small />}
@@ -11440,6 +11880,12 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                             {item.notes && <span style={{ fontStyle: "italic", opacity: 0.8 }}>"{item.notes}"</span>}
                             <span className="creator-tag" style={{ marginLeft: "auto" }}>Created by {item.created_by}</span>
                           </div>
+                          <ExpenseSplitInlineDetails 
+                            expense={item} 
+                            project={project} 
+                            isCloud={true} 
+                            onMarkPaid={handleMarkSettlementPaid} 
+                          />
                         </div>
 
                         {item.created_by === displayName && (
@@ -11659,9 +12105,43 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                     <SectionHeader title="Suggested Debts Settlements" />
                     <div style={{ display: "grid", gap: "0.75rem", marginTop: "0.75rem" }}>
                       {splitSummary.settlements.map((item, index) => (
-                        <div key={`${item.from}-${item.to}-${index}`} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.92rem", paddingBottom: "0.4rem", borderBottom: "1px dashed rgba(0,0,0,0.06)" }}>
-                          <span>{item.from} ➔ {item.to}</span>
-                          <strong style={{ color: "var(--brand)" }}>pays {rupee.format(item.amount)}</strong>
+                        <div key={`${item.from}-${item.to}-${index}`} style={{ display: "flex", flexDirection: "column", gap: "0.3rem", paddingBottom: "0.4rem", borderBottom: "1px dashed rgba(0,0,0,0.06)" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.92rem", flexWrap: "wrap", gap: "0.5rem" }}>
+                            <span>{item.from} ➔ {item.to}</span>
+                            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                              <strong style={{ color: "var(--brand)" }}>pays {rupee.format(item.amount)}</strong>
+                              <div style={{ display: "flex", gap: "0.3rem" }}>
+                                <button className="secondary tactile" style={{ padding: "2px 6px", fontSize: "0.72rem" }} type="button" onClick={() => handleMarkSettlementPaid(item, item.amount, "Full")}>Fully Paid</button>
+                                <button className={`secondary tactile ${customSettlementKey === settlementKey(item) ? "active" : ""}`} style={{ padding: "2px 6px", fontSize: "0.72rem" }} type="button" onClick={() => {
+                                  setCustomSettlementKey(customSettlementKey === settlementKey(item) ? "" : settlementKey(item));
+                                  setCustomAmount("");
+                                }}>Custom</button>
+                              </div>
+                            </div>
+                          </div>
+                          {customSettlementKey === settlementKey(item) && (
+                            <div style={{ display: "flex", gap: "0.4rem", alignItems: "center", marginTop: "0.2rem", justifyContent: "flex-end" }}>
+                              <span style={{ fontSize: "0.8rem", color: "var(--muted)" }}>Paid now:</span>
+                              <input
+                                value={customAmount}
+                                onChange={(event) => setCustomAmount(event.target.value)}
+                                type="number"
+                                min="1"
+                                max={Math.round(item.amount)}
+                                placeholder={`Max ${Math.round(item.amount)}`}
+                                style={{ padding: "2px 6px", width: "80px", fontSize: "0.8rem", border: "1px solid var(--line)", borderRadius: "6px" }}
+                              />
+                              <button className="primary tactile" style={{ padding: "2px 8px", fontSize: "0.72rem" }} type="button" onClick={() => {
+                                const safeAmt = Math.min(Math.max(Number(customAmount), 0), item.amount);
+                                if (safeAmt > 0) {
+                                  handleMarkSettlementPaid(item, safeAmt, "Custom");
+                                  setCustomSettlementKey("");
+                                  setCustomAmount("");
+                                }
+                              }}>Save</button>
+                              <button className="secondary tactile" style={{ padding: "2px 6px", fontSize: "0.72rem" }} type="button" onClick={() => setCustomSettlementKey("")}>Cancel</button>
+                            </div>
+                          )}
                         </div>
                       ))}
                       {splitSummary.settlements.length === 0 && <EmptyState text="Everything settled! No debts to pay." small />}
@@ -11789,7 +12269,6 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                                  : expForm.participants.filter(n => n !== name);
                                setExpForm({ ...expForm, participants: next });
                              }}
-                             style={{ width: "18px", height: "18px" }}
                            />
                            {name}
                          </label>
@@ -11908,8 +12387,12 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
            </form>
          </div>
        )}
+       {confirmDialog && (
+         <ConfirmModal
+           dialog={confirmDialog}
+           close={() => setConfirmDialog(null)}
+         />
+       )}
     </div>
   );
 }
-
-
