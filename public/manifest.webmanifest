@@ -1,0 +1,16 @@
+{
+  "name": "LifePilot",
+  "short_name": "LifePilot",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#c7c8f4",
+  "theme_color": "#c7c8f4",
+  "icons": [
+    {
+      "src": "/icons/logo.png",
+      "sizes": "1024x1024",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -2620,16 +2620,16 @@ export default function App() {
         />
       )}
       {viewingImage && (
-        <div className="modal-backdrop" style={{ zIndex: 99999 }} onClick={() => setViewingImage(null)}>
-          <div className="modal" style={{ maxWidth: "95vw", maxHeight: "95vh", background: "transparent", border: "none", boxShadow: "none", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", position: "relative" }} onClick={e => e.stopPropagation()}>
+        <div className="modal-backdrop" style={{ zIndex: 99999, padding: "1rem", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setViewingImage(null)}>
+          <div className="modal" style={{ maxWidth: "100%", maxHeight: "100%", background: "transparent", border: "none", boxShadow: "none", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", position: "relative", padding: 0 }} onClick={e => e.stopPropagation()}>
             <button
               type="button"
               onClick={() => setViewingImage(null)}
-              style={{ position: "absolute", top: "-15px", right: "-15px", background: "#ff4d4d", color: "#fff", border: "none", borderRadius: "50%", width: "40px", height: "40px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 12px rgba(0,0,0,0.3)" }}
+              style={{ position: "absolute", top: "10px", right: "10px", background: "rgba(0,0,0,0.6)", color: "#fff", border: "none", borderRadius: "50%", width: "36px", height: "36px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10, backdropFilter: "blur(4px)" }}
             >
-              <X size={24} />
+              <X size={20} />
             </button>
-            <img src={viewingImage} alt="Full screen proof" style={{ maxWidth: "100%", maxHeight: "90vh", borderRadius: "12px", objectFit: "contain", background: "#fff" }} loading="lazy" />
+            <img src={viewingImage} alt="Full screen proof" style={{ maxWidth: "100%", maxHeight: "85vh", borderRadius: "8px", objectFit: "contain", background: "transparent" }} loading="lazy" />
           </div>
         </div>
       )}
@@ -12462,7 +12462,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                               onChange={() => handleToggleTask(item)}
                               style={{ width: "16px", height: "16px", cursor: "pointer", flexShrink: 0 }}
                             />
-                            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</span>
+                            <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</span>
                           </div>
                           <span style={{ color: "var(--warn)", fontSize: "0.78rem", fontWeight: "bold", flexShrink: 0 }}>
                             {item.due_date === todayISO() ? "Today" : item.due_date}
@@ -12481,7 +12481,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                         <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.88rem", paddingBottom: "0.45rem", borderBottom: "1px dashed rgba(0,0,0,0.06)" }}>
                           <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", flex: 1, minWidth: 0 }}>
                             <FileText size={14} style={{ color: "var(--brand)", flexShrink: 0 }} />
-                            <a href={item.url.startsWith("http") ? item.url : `https://${item.url}`} target="_blank" rel="noopener noreferrer" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            <a href={item.url.startsWith("http") ? item.url : `https://${item.url}`} target="_blank" rel="noopener noreferrer" style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                               {item.title}
                             </a>
                           </div>
@@ -13712,16 +13712,16 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
          </div>
        )}
        {viewingImage && (
-         <div className="modal-backdrop" style={{ zIndex: 99999 }} onClick={() => setViewingImage(null)}>
-           <div className="modal" style={{ maxWidth: "95vw", maxHeight: "95vh", background: "transparent", border: "none", boxShadow: "none", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", position: "relative" }} onClick={e => e.stopPropagation()}>
+         <div className="modal-backdrop" style={{ zIndex: 99999, padding: "1rem", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setViewingImage(null)}>
+           <div className="modal" style={{ maxWidth: "100%", maxHeight: "100%", background: "transparent", border: "none", boxShadow: "none", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", position: "relative", padding: 0 }} onClick={e => e.stopPropagation()}>
              <button
                type="button"
                onClick={() => setViewingImage(null)}
-               style={{ position: "absolute", top: "-15px", right: "-15px", background: "#ff4d4d", color: "#fff", border: "none", borderRadius: "50%", width: "40px", height: "40px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 12px rgba(0,0,0,0.3)" }}
+               style={{ position: "absolute", top: "10px", right: "10px", background: "rgba(0,0,0,0.6)", color: "#fff", border: "none", borderRadius: "50%", width: "36px", height: "36px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10, backdropFilter: "blur(4px)" }}
              >
-               <X size={24} />
+               <X size={20} />
              </button>
-             <img src={viewingImage} alt="Full screen proof" style={{ maxWidth: "100%", maxHeight: "90vh", borderRadius: "12px", objectFit: "contain", background: "#fff" }} loading="lazy" />
+             <img src={viewingImage} alt="Full screen proof" style={{ maxWidth: "100%", maxHeight: "85vh", borderRadius: "8px", objectFit: "contain", background: "transparent" }} loading="lazy" />
            </div>
          </div>
        )}
