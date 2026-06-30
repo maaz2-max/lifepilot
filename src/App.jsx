@@ -5058,7 +5058,7 @@ function ProjectsView({ state, selectedProject, setSelectedProject, openAdd, set
             <ProjectParticipantBreakdown project={active} transactions={transactions} />
             <Segmented value={projectTab} onChange={setProjectTab} options={[["transactions", "Transactions"], ["split", "Split"]]} />
             {projectTab === "transactions" ? (
-              <DateGroupedRecordTable list={transactions} type="projectTransaction" setModal={setModal} remove={(id) => remove("projectTransactions", id, "project transaction")} project={active} upsert={upsert} requestConfirm={requestConfirm} />
+              <DateGroupedRecordTable list={transactions} type="projectTransaction" setModal={setModal} remove={(id) => remove("projectTransactions", id, "project transaction")} project={active} upsert={upsert} requestConfirm={requestConfirm} setViewingImage={setViewingImage} />
             ) : (
               <ProjectSplitView project={active} transactions={transactions} upsert={upsert} requestConfirm={requestConfirm} setViewingImage={setViewingImage} />
             )}
@@ -7811,7 +7811,7 @@ function ExpenseSplitInlineDetails({ expense, project, isCloud, onMarkPaid, onDe
   );
 }
 
-function RecordTable({ list, type, setModal, remove, project, upsert, requestConfirm }) {
+function RecordTable({ list, type, setModal, remove, project, upsert, requestConfirm, setViewingImage }) {
   return (
     <div className="record-table">
       {list.length ? list.map((item) => (
@@ -7869,7 +7869,7 @@ function RecordTable({ list, type, setModal, remove, project, upsert, requestCon
   );
 }
 
-function DateGroupedRecordTable({ list, type, setModal, remove, project, upsert, requestConfirm }) {
+function DateGroupedRecordTable({ list, type, setModal, remove, project, upsert, requestConfirm, setViewingImage }) {
   const groups = list.reduce((acc, item) => {
     const date = item.date || item.receivedDate || "No date";
     acc[date] = acc[date] || [];
@@ -7886,7 +7886,7 @@ function DateGroupedRecordTable({ list, type, setModal, remove, project, upsert,
             <strong>{date === todayISO() ? "Today" : formatDate(date)}</strong>
             <span>{rupee.format(sum(groups[date], (item) => item.type === "Debit"))} debit - {rupee.format(sum(groups[date], (item) => item.type === "Credit"))} credit</span>
           </div>
-          <RecordTable list={groups[date].sort(sortByTimeDesc)} type={type} setModal={setModal} remove={remove} project={project} upsert={upsert} requestConfirm={requestConfirm} />
+          <RecordTable list={groups[date].sort(sortByTimeDesc)} type={type} setModal={setModal} remove={remove} project={project} upsert={upsert} requestConfirm={requestConfirm} setViewingImage={setViewingImage} />
         </section>
       ))}
     </div>
