@@ -1381,6 +1381,7 @@ export default function App() {
   const [toast, setToast] = useState("");
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [aiOpen, setAiOpen] = useState(false);
+  const [viewingImage, setViewingImage] = useState(null);
   const [selectedDate, setSelectedDate] = useState(todayISO());
   const [expenseTab, setExpenseTab] = useState("command");
   const [selectedSalary, setSelectedSalary] = useState("");
@@ -5059,7 +5060,7 @@ function ProjectsView({ state, selectedProject, setSelectedProject, openAdd, set
             {projectTab === "transactions" ? (
               <DateGroupedRecordTable list={transactions} type="projectTransaction" setModal={setModal} remove={(id) => remove("projectTransactions", id, "project transaction")} project={active} upsert={upsert} requestConfirm={requestConfirm} />
             ) : (
-              <ProjectSplitView project={active} transactions={transactions} upsert={upsert} requestConfirm={requestConfirm} />
+              <ProjectSplitView project={active} transactions={transactions} upsert={upsert} requestConfirm={requestConfirm} setViewingImage={setViewingImage} />
             )}
             <button
               className="secondary danger tactile spaced"
@@ -7595,7 +7596,7 @@ function TransactionRow({ item }) {
   );
 }
 
-function ExpenseSplitInlineDetails({ expense, project, isCloud, onMarkPaid, onDeletePaid, setConfirmDialog }) {
+function ExpenseSplitInlineDetails({ expense, project, isCloud, onMarkPaid, onDeletePaid, setConfirmDialog, setViewingImage }) {
   const [expanded, setExpanded] = useState(false);
   const [customKey, setCustomKey] = useState("");
   const [customAmount, setCustomAmount] = useState("");
@@ -7667,7 +7668,7 @@ function ExpenseSplitInlineDetails({ expense, project, isCloud, onMarkPaid, onDe
                           <>
                             {urls && urls.map((url, uidx) => (
                               <span key={uidx} style={{ display: "inline-flex", alignItems: "center", background: "rgba(16, 185, 129, 0.08)", color: "#10b981", padding: "2px 8px", borderRadius: "8px", border: "1px solid rgba(16, 185, 129, 0.12)", fontWeight: "bold", fontSize: "0.78rem" }}>
-                                <a href={url} target="_blank" rel="noreferrer" style={{ color: "inherit", textDecoration: "none" }}>Proof {urls.length > 1 ? `#${uidx + 1}` : ""}</a>
+                                <a href={url} onClick={(e) => { e.preventDefault(); setViewingImage?.(url); }} style={{ color: "inherit", textDecoration: "none" }}>Proof {urls.length > 1 ? `#${uidx + 1}` : ""}</a>
                               </span>
                             ))}
                             {hasNoProof && (
@@ -7832,6 +7833,7 @@ function RecordTable({ list, type, setModal, remove, project, upsert, requestCon
               project={project} 
               isCloud={false} 
               setConfirmDialog={requestConfirm} 
+              setViewingImage={setViewingImage}
               onMarkPaid={(row, amt, paymentType, existingSettlementId) => {
                 if (!project || !upsert) return;
                 if (existingSettlementId) {
@@ -7908,7 +7910,7 @@ function ProjectParticipantBreakdown({ project, transactions }) {
   );
 }
 
-function ProjectSplitView({ project, transactions, upsert, requestConfirm }) {
+function ProjectSplitView({ project, transactions, upsert, requestConfirm, setViewingImage }) {
   const { stats, settlements, splitTransactions, equalSplits, directOwedSplits, paidSettlements } = projectSplitSummary(project, transactions);
   const [customSettlementKey, setCustomSettlementKey] = useState("");
   const [customAmount, setCustomAmount] = useState("");
@@ -8117,7 +8119,7 @@ function ProjectSplitView({ project, transactions, upsert, requestConfirm }) {
                   <span style={{ display: "flex", gap: "0.4rem" }}>
                     {urls && urls.map((url, uidx) => (
                       <span key={uidx} style={{ display: "inline-flex", alignItems: "center", background: "rgba(16, 185, 129, 0.08)", color: "#10b981", padding: "2px 8px", borderRadius: "8px", border: "1px solid rgba(16, 185, 129, 0.12)", fontWeight: "bold", fontSize: "0.75rem" }}>
-                        <a href={url} target="_blank" rel="noreferrer" style={{ color: "inherit", textDecoration: "none" }}>Proof {urls.length > 1 ? `#${uidx + 1}` : ""}</a>
+                        <a href={url} onClick={(e) => { e.preventDefault(); setViewingImage?.(url); }} style={{ color: "inherit", textDecoration: "none" }}>Proof {urls.length > 1 ? `#${uidx + 1}` : ""}</a>
                       </span>
                     ))}
                     {hasNoProof && (
@@ -12673,7 +12675,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                                                 {cleanNotes && <span style={{ fontStyle: "italic", opacity: 0.7 }}>"<Linkify>{cleanNotes}</Linkify>"</span>}
                                                 {urls && urls.map((url, uidx) => (
                                                   <span key={uidx} style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", background: "rgba(16, 185, 129, 0.08)", color: "#10b981", padding: "2px 8px", borderRadius: "6px", border: "1px solid rgba(16, 185, 129, 0.12)", fontWeight: "bold" }}>
-                                                    <a href={url} target="_blank" rel="noreferrer" style={{ color: "inherit", textDecoration: "none" }}>Receipt {urls.length > 1 ? `#${uidx + 1}` : ""}</a>
+                                                    <a href={url} onClick={(e) => { e.preventDefault(); setViewingImage?.(url); }} style={{ color: "inherit", textDecoration: "none" }}>Receipt {urls.length > 1 ? `#${uidx + 1}` : ""}</a>
                                                   </span>
                                                 ))}
                                                 {hasNoProof && (
@@ -13691,6 +13693,20 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                </button>
              </div>
            </form>
+         </div>
+       )}
+       {viewingImage && (
+         <div className="modal-backdrop" style={{ zIndex: 99999 }} onClick={() => setViewingImage(null)}>
+           <div className="modal" style={{ maxWidth: "95vw", maxHeight: "95vh", background: "transparent", border: "none", boxShadow: "none", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", position: "relative" }} onClick={e => e.stopPropagation()}>
+             <button
+               type="button"
+               onClick={() => setViewingImage(null)}
+               style={{ position: "absolute", top: "-15px", right: "-15px", background: "#ff4d4d", color: "#fff", border: "none", borderRadius: "50%", width: "40px", height: "40px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 12px rgba(0,0,0,0.3)" }}
+             >
+               <X size={24} />
+             </button>
+             <img src={viewingImage} alt="Full screen proof" style={{ maxWidth: "100%", maxHeight: "90vh", borderRadius: "12px", objectFit: "contain", background: "#fff" }} loading="lazy" />
+           </div>
          </div>
        )}
        {confirmDialog && (
