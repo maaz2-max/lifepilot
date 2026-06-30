@@ -2619,6 +2619,20 @@ export default function App() {
           setToast={setToast}
         />
       )}
+      {viewingImage && (
+        <div className="modal-backdrop" style={{ zIndex: 99999 }} onClick={() => setViewingImage(null)}>
+          <div className="modal" style={{ maxWidth: "95vw", maxHeight: "95vh", background: "transparent", border: "none", boxShadow: "none", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", position: "relative" }} onClick={e => e.stopPropagation()}>
+            <button
+              type="button"
+              onClick={() => setViewingImage(null)}
+              style={{ position: "absolute", top: "-15px", right: "-15px", background: "#ff4d4d", color: "#fff", border: "none", borderRadius: "50%", width: "40px", height: "40px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 12px rgba(0,0,0,0.3)" }}
+            >
+              <X size={24} />
+            </button>
+            <img src={viewingImage} alt="Full screen proof" style={{ maxWidth: "100%", maxHeight: "90vh", borderRadius: "12px", objectFit: "contain", background: "#fff" }} loading="lazy" />
+          </div>
+        </div>
+      )}
       {confirmDialog && (
         <ConfirmModal
           dialog={confirmDialog}
@@ -10849,6 +10863,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
   const [projectMetadata, setProjectMetadata] = useState(null);
   const [sharingDisabled, setSharingDisabled] = useState(false);
   const [projectError, setProjectError] = useState("");
+  const [viewingImage, setViewingImage] = useState(null);
 
   const [joined, setJoined] = useState(() => {
     const isJoined = localStorage.getItem(`lifepilot.project.${projectId}.joined`) === "true";
@@ -12729,6 +12744,7 @@ export function SharedProjectWorkspace({ projectId, setToast, globalTheme }) {
                                               onMarkPaid={handleMarkSettlementPaid} 
                                               onDeletePaid={handleDeleteSettlementInline}
                                               setConfirmDialog={setConfirmDialog}
+                                              setViewingImage={setViewingImage}
                                             />
                                           </div>
                                         )}
