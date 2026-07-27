@@ -2513,6 +2513,7 @@ export default function App() {
             requestConfirm={requestConfirm}
             setToast={setToast}
             setState={setState}
+            setViewingImage={setViewingImage}
           />
         )}
         {active === "loans" && (
@@ -3719,7 +3720,7 @@ function WorkList({ type, state, openAdd, setModal, remove, upsert, requestConfi
   );
 }
 
-function ExpenseView({ state, expenseTab, setExpenseTab, selectedSalary, setSelectedSalary, selectedProject, setSelectedProject, openAdd, setModal, remove, upsert, requestConfirm, setToast, setState }) {
+function ExpenseView({ state, expenseTab, setExpenseTab, selectedSalary, setSelectedSalary, selectedProject, setSelectedProject, openAdd, setModal, remove, upsert, requestConfirm, setToast, setState, setViewingImage = () => {} }) {
   const tabs = [["command", "Command"], ["daily", "Daily"], ["bills", "Bills"], ["salary", "Salary"], ["projects", "Projects"], ["analytics", "Analytics"]];
   const downloadReport = () => {
     openExpensePdfReport(state);
@@ -3732,10 +3733,10 @@ function ExpenseView({ state, expenseTab, setExpenseTab, selectedSalary, setSele
         action={<div className="money-tabs-wrap"><Segmented className="money-tabs" value={expenseTab} onChange={setExpenseTab} options={tabs} /><button className="icon-button tactile pdf-tab-icon" type="button" title="Download money PDF" aria-label="Download money PDF" onClick={downloadReport}><Download size={16} /></button></div>}
       />
       {expenseTab === "command" && <MoneyCommand state={state} openAdd={openAdd} />}
-      {expenseTab === "daily" && <DailyExpenses state={state} openAdd={openAdd} setModal={setModal} remove={remove} setToast={setToast} />}
+      {expenseTab === "daily" && <DailyExpenses state={state} openAdd={openAdd} setModal={setModal} remove={remove} setToast={setToast} setViewingImage={setViewingImage} />}
       {expenseTab === "bills" && <BillsView state={state} openAdd={openAdd} setModal={setModal} remove={remove} upsert={upsert} />}
-      {expenseTab === "salary" && <SalaryView state={state} selectedSalary={selectedSalary} setSelectedSalary={setSelectedSalary} openAdd={openAdd} setModal={setModal} remove={remove} />}
-      {expenseTab === "projects" && <ProjectsView state={state} selectedProject={selectedProject} setSelectedProject={setSelectedProject} openAdd={openAdd} setModal={setModal} remove={remove} upsert={upsert} requestConfirm={requestConfirm} setToast={setToast} setState={setState} />}
+      {expenseTab === "salary" && <SalaryView state={state} selectedSalary={selectedSalary} setSelectedSalary={setSelectedSalary} openAdd={openAdd} setModal={setModal} remove={remove} setViewingImage={setViewingImage} />}
+      {expenseTab === "projects" && <ProjectsView state={state} selectedProject={selectedProject} setSelectedProject={setSelectedProject} openAdd={openAdd} setModal={setModal} remove={remove} upsert={upsert} requestConfirm={requestConfirm} setToast={setToast} setState={setState} setViewingImage={setViewingImage} />}
       {expenseTab === "analytics" && <Analytics state={state} />}
     </section>
   );
@@ -3784,7 +3785,7 @@ function MoneyCommand({ state, openAdd }) {
   );
 }
 
-function DailyExpenses({ state, openAdd, setModal, remove, setToast }) {
+function DailyExpenses({ state, openAdd, setModal, remove, setToast, setViewingImage = () => {} }) {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("This month");
   const list = state.expenses.filter((item) => matchesQuery(item, query)).filter((item) => matchesMoneyFilter(item, filter));
@@ -3818,7 +3819,7 @@ function DailyExpenses({ state, openAdd, setModal, remove, setToast }) {
         <button className="primary tactile" onClick={() => openAdd("expense")}><Plus size={18} />Add Entry</button>
         <button className="icon-button tactile pdf-tab-icon" type="button" title="Download daily PDF" aria-label="Download daily PDF" onClick={downloadDailyReport}><Download size={16} /></button>
       </div>
-      <RecordTable list={list} type="expense" setModal={setModal} remove={(id) => remove("expenses", id, "daily expense")} />
+      <RecordTable list={list} type="expense" setModal={setModal} remove={(id) => remove("expenses", id, "daily expense")} setViewingImage={setViewingImage} />
       <section className="sub-panel daily-split-panel">
         <SectionHeader title="Daily Split and Owes" />
         {dailySplit.settlements.length ? dailySplit.settlements.map((item, index) => (
@@ -4737,7 +4738,7 @@ function LoansView({ state, openAdd, setModal, remove, upsert, requestConfirm, s
   );
 }
 
-function SalaryView({ state, selectedSalary, setSelectedSalary, openAdd, setModal, remove }) {
+function SalaryView({ state, selectedSalary, setSelectedSalary, openAdd, setModal, remove, setViewingImage = () => {} }) {
   const active = state.salaries.find((salary) => salary.id === selectedSalary) || state.salaries[0];
   const linked = active ? state.salaryExpenses.filter((expense) => expense.salaryId === active.id) : [];
   const spent = sum(linked, (expense) => expense.type !== "Credit");
@@ -4779,7 +4780,7 @@ function SalaryView({ state, selectedSalary, setSelectedSalary, openAdd, setModa
             <SectionHeader title={active.title} action={<button className="secondary tactile" onClick={() => setModal({ kind: "salary", item: active })}>Edit</button>} />
             <MetricGrid metrics={[["Salary amount", active.amount], ["Total spent", spent], ["Remaining", amount(active.amount) - spent], ["Usage", `${Math.round((spent / Math.max(amount(active.amount), 1)) * 100)}%`]]} />
             <button className="primary tactile spaced" onClick={() => openAdd("salaryExpense", { salaryId: active.id })}>Add Expense from Salary</button>
-            <RecordTable list={linked} type="salaryExpense" setModal={setModal} remove={(id) => remove("salaryExpenses", id, "salary-linked expense")} />
+            <RecordTable list={linked} type="salaryExpense" setModal={setModal} remove={(id) => remove("salaryExpenses", id, "salary-linked expense")} setViewingImage={setViewingImage} />
             
             {prevTotalAmount > 0 && (
               <div className="month-comparison-card">
@@ -4833,7 +4834,7 @@ function SalaryView({ state, selectedSalary, setSelectedSalary, openAdd, setModa
   );
 }
 
-function ProjectsView({ state, selectedProject, setSelectedProject, openAdd, setModal, remove, upsert, requestConfirm, setToast, setState }) {
+function ProjectsView({ state, selectedProject, setSelectedProject, openAdd, setModal, remove, upsert, requestConfirm, setToast, setState, setViewingImage = () => {} }) {
   const active = state.projects.find((project) => project.id === selectedProject) || null;
   const transactions = active ? state.projectTransactions.filter((item) => item.projectId === active.id).sort(sortByDateDesc) : [];
   const [projectTab, setProjectTab] = useState("transactions");
@@ -7944,7 +7945,7 @@ function TransactionRow({ item }) {
   );
 }
 
-function ExpenseSplitInlineDetails({ expense, project, isCloud, onMarkPaid, onDeletePaid, setConfirmDialog, setViewingImage }) {
+function ExpenseSplitInlineDetails({ expense, project, isCloud, onMarkPaid, onDeletePaid, setConfirmDialog, setViewingImage = () => {} }) {
   const [expanded, setExpanded] = useState(false);
   const [customKey, setCustomKey] = useState("");
   const [customAmount, setCustomAmount] = useState("");
@@ -8159,7 +8160,7 @@ function ExpenseSplitInlineDetails({ expense, project, isCloud, onMarkPaid, onDe
   );
 }
 
-function RecordTable({ list, type, setModal, remove, project, upsert, requestConfirm, setViewingImage }) {
+function RecordTable({ list, type, setModal, remove, project, upsert, requestConfirm, setViewingImage = () => {} }) {
   return (
     <div className="record-table">
       {list.length ? list.map((item) => (
@@ -8217,7 +8218,7 @@ function RecordTable({ list, type, setModal, remove, project, upsert, requestCon
   );
 }
 
-function DateGroupedRecordTable({ list, type, setModal, remove, project, upsert, requestConfirm, setViewingImage }) {
+function DateGroupedRecordTable({ list, type, setModal, remove, project, upsert, requestConfirm, setViewingImage = () => {} }) {
   const groups = list.reduce((acc, item) => {
     const date = item.date || item.receivedDate || "No date";
     acc[date] = acc[date] || [];
@@ -8258,7 +8259,7 @@ function ProjectParticipantBreakdown({ project, transactions }) {
   );
 }
 
-function ProjectSplitView({ project, transactions, upsert, requestConfirm, setViewingImage }) {
+function ProjectSplitView({ project, transactions, upsert, requestConfirm, setViewingImage = () => {} }) {
   const { stats, settlements, splitTransactions, equalSplits, directOwedSplits, paidSettlements } = projectSplitSummary(project, transactions);
   const [customSettlementKey, setCustomSettlementKey] = useState("");
   const [customAmount, setCustomAmount] = useState("");
