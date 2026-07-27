@@ -6052,13 +6052,15 @@ function AiAssistant({ state, setState, upsert, setToast, close }) {
       return;
     }
 
-    const bankParse = parseBankMessage(text);
+    const bankParse = parseBankMessage(text, state);
     if (bankParse) {
       addMessage({
         role: "ai",
-        text: bankParse.needsReview
+        text: bankParse.isDuplicate
+          ? `⚠️ **Duplicate Detected**: A transaction of ₹${bankParse.amount} for "${bankParse.title}" on ${bankParse.date} is already in your records. Review or confirm below to save anyway.`
+          : bankParse.needsReview
           ? "I found a bank-style message but need you to confirm the missing fields before saving."
-          : "I parsed this bank message. Choose where to save it, review the fields, then confirm.",
+          : `⚡ I parsed this bank transaction (${bankParse.bankName ? bankParse.bankName + " - " : ""}${bankParse.title}: ₹${bankParse.amount}). Review fields and confirm to save.`,
         bankParse,
         actions: []
       });
@@ -6095,11 +6097,54 @@ function AiAssistant({ state, setState, upsert, setToast, close }) {
   };
 
   const autoParseAndAdd = (event) => {
-    event.preventDefault();
+    event?.preventDefault();
     const text = input.trim();
     if (!text) return;
     setInput("");
     addMessage({ role: "user", text });
+
+    const bankParse = parseBankMessage(text, state);
+    if (bankParse) {
+      if (bankParse.isDuplicate) {
+        addMessage({
+          role: "ai",
+          text: `⚠️ **Duplicate Detected**: A transaction of ₹${bankParse.amount} for "${bankParse.title}" on ${bankParse.date} is already in your records. Check the card below if you wish to add it anyway.`,
+          bankParse,
+          actions: []
+        });
+        setToast("Duplicate transaction detected");
+        return;
+      }
+
+      const base = {
+        title: bankParse.title,
+        amount: amount(bankParse.amount),
+        type: bankParse.type,
+        category: bankParse.category,
+        paymentMethod: bankParse.paymentMethod,
+        notes: bankParse.notes,
+        id: id(bankParse.destination === "bill" ? "bill" : "expense"),
+        updatedAt: new Date().toISOString()
+      };
+      if (bankParse.destination === "bill") {
+        setState((current) => ({
+          ...current,
+          bills: [{ ...base, dueDate: bankParse.date, status: bankParse.billStatus, reminderBefore: bankParse.reminderBefore }, ...current.bills]
+        }));
+      } else {
+        setState((current) => ({
+          ...current,
+          expenses: [{ ...base, date: bankParse.date, time: bankParse.time, reminder: false }, ...current.expenses]
+        }));
+      }
+      addMessage({
+        role: "ai",
+        text: `⚡ **Auto-Added Bank Transaction**: ${bankParse.title} (₹${bankParse.amount}, ${bankParse.type})`,
+        actions: []
+      });
+      setToast(`Auto-added: ${bankParse.title} (₹${bankParse.amount})`);
+      return;
+    }
 
     const natural = parseNaturalMessage(text);
     if (natural && natural.action) {
@@ -6111,19 +6156,36 @@ function AiAssistant({ state, setState, upsert, setToast, close }) {
       });
       setToast(`Auto-added: ${natural.action.data.title || "Record"}`);
     } else {
-      const bankParse = parseBankMessage(text);
-      if (bankParse) {
-        addMessage({
-          role: "ai",
-          text: bankParse.needsReview
-            ? "I found a bank-style message but need you to confirm the missing fields before saving."
-            : "I parsed this bank message. Choose where to save it, review the fields, then confirm.",
-          bankParse,
-          actions: []
-        });
-      } else {
-        submitPrompt(text);
+      submitPrompt(text);
+    }
+  };
+
+  const pasteFromClipboardAndParse = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!text || !text.trim()) {
+        setToast("Clipboard is empty");
+        return;
       }
+      const trimmed = text.trim();
+      setInput(trimmed);
+
+      const bank = parseBankMessage(trimmed, state);
+      const natural = parseNaturalMessage(trimmed);
+
+      if (bank) {
+        if (bank.isDuplicate) {
+          setToast(`⚠️ Duplicate detected: ₹${bank.amount} (${bank.title})`);
+        } else {
+          setToast(`Pasted & parsed SMS: ${bank.title} (₹${bank.amount})`);
+        }
+      } else if (natural) {
+        setToast(`Pasted & parsed message: ${natural.summary}`);
+      } else {
+        setToast("Pasted from clipboard");
+      }
+    } catch {
+      setToast("Clipboard access denied or empty");
     }
   };
 
@@ -6261,10 +6323,11 @@ function AiAssistant({ state, setState, upsert, setToast, close }) {
                 submitPrompt(input);
               }
             }}
-            placeholder="Type 'had tea for 20', 'paid 150 for cab', 'note: shopping', or ask AI..."
+            placeholder="Type 'had tea for 20', 'paid 150 for cab', 'note: shopping', or paste Bank SMS..."
             rows={2}
           />
-          <div className="cluster" style={{ gap: "0.4rem" }}>
+          <div className="cluster" style={{ gap: "0.4rem", flexWrap: "wrap", justifyContent: "flex-end", width: "100%" }}>
+            <button className="secondary tactile" type="button" onClick={pasteFromClipboardAndParse} title="Paste SMS or text from clipboard" style={{ whiteSpace: "nowrap", fontSize: "0.82rem", padding: "0.55rem 0.8rem" }}>📋 Paste SMS</button>
             <button className="secondary tactile" type="button" onClick={autoParseAndAdd} title="Parse and auto-add expense/note instantly" style={{ whiteSpace: "nowrap", fontSize: "0.82rem", padding: "0.55rem 0.8rem" }}>⚡ Auto-Add</button>
             <button className="primary tactile" type="submit" disabled={loading}><SendHorizontal size={18} /></button>
           </div>
@@ -6446,10 +6509,20 @@ function BankParseCard({ state, setState, parsed, setToast }) {
   };
 
   return (
-    <div className={`ai-action-card bank-parse-card ${saved ? "done" : ""}`}>
-      <strong>{saved ? "Saved" : "Bank message parsed"}</strong>
-      <small>Parsed confidence: {parsed.confidence}. Review before saving.</small>
-      <div className="form-grid compact-form">
+    <div className={`ai-action-card bank-parse-card ${saved ? "done" : ""} ${parsed.isDuplicate ? "duplicate-warning" : ""}`}>
+      <strong>{saved ? "Saved" : parsed.isDuplicate ? "⚠️ Duplicate Transaction Detected" : "Bank message parsed"}</strong>
+      <small>{parsed.isDuplicate ? `Matching record of ₹${parsed.amount} for "${parsed.title}" on ${parsed.date} already exists.` : `Parsed confidence: ${parsed.confidence}. Review before saving.`}</small>
+      
+      {(parsed.bankName || parsed.merchant || parsed.accountNum || parsed.utrNumber) && (
+        <div className="cluster" style={{ gap: "0.35rem", marginTop: "0.4rem" }}>
+          {parsed.bankName && <span className="chip" style={{ background: "rgba(59, 130, 246, 0.12)", color: "#1d4ed8", fontSize: "0.76rem" }}>🏦 {parsed.bankName}</span>}
+          {parsed.merchant && <span className="chip" style={{ background: "rgba(16, 185, 129, 0.12)", color: "#047857", fontSize: "0.76rem" }}>🛒 {parsed.merchant}</span>}
+          {parsed.accountNum && <span className="chip" style={{ background: "rgba(107, 114, 128, 0.12)", fontSize: "0.76rem" }}>💳 A/C XX{parsed.accountNum}</span>}
+          {parsed.utrNumber && <span className="chip" style={{ background: "rgba(139, 92, 246, 0.12)", color: "#6d28d9", fontSize: "0.76rem" }}>🔖 Ref: {parsed.utrNumber}</span>}
+        </div>
+      )}
+
+      <div className="form-grid compact-form" style={{ marginTop: "0.6rem" }}>
         <label>Save to<Select value={form.destination} onChange={(value) => set("destination", value)} options={[["daily", "Daily expense"], ["project", "Project expense"], ["bill", "Bill tracker"]]} /></label>
         {form.destination === "project" && <label>Project<Select value={form.projectId} onChange={(value) => set("projectId", value)} options={[["", "Select project"], ...state.projects.map((project) => [project.id, project.name])]} /></label>}
         <label>Type<Select value={form.type} onChange={(value) => set("type", value)} options={["Debit", "Credit"]} /></label>
@@ -6466,7 +6539,7 @@ function BankParseCard({ state, setState, parsed, setToast }) {
       </div>
       {parsed.questions.length ? <p className="warning">Please confirm: {parsed.questions.join(", ")}</p> : null}
       <div className="cluster">
-        <button className="primary tactile" type="button" onClick={save} disabled={saved}>{saved ? "Saved" : "Confirm & Save"}</button>
+        <button className="primary tactile" type="button" onClick={save} disabled={saved}>{saved ? "Saved" : parsed.isDuplicate ? "Add Duplicate Anyway" : "Confirm & Save"}</button>
       </div>
     </div>
   );
@@ -7140,45 +7213,136 @@ function parseNaturalMessage(text) {
   return null;
 }
 
-function parseBankMessage(text) {
+function parseBankMessage(text, state = null) {
   const raw = String(text || "").trim();
+  if (!raw) return null;
   const lower = raw.toLowerCase();
-  const bankWords = /(bill|due|statement|minimum amount|min amt|payment reminder|debited|credited|debit|credit|spent|withdrawn|received|deposited|transaction|upi|imps|neft|rtgs|a\/c|acct|account|card|available balance|avl bal|inr|rs\.?|\u20b9)/i;
+
+  const bankWords = /(bill|due|statement|minimum amount|min amt|payment reminder|debited|credited|debit|credit|spent|withdrawn|received|deposited|transaction|upi|imps|neft|rtgs|a\/c|acct|account|card|available balance|avl bal|inr|rs\.?|\u20b9|\$)/i;
   if (!bankWords.test(raw)) return null;
-  const amountMatch = raw.match(/(?:inr|rs\.?|\u20b9)\s*([\d,]+(?:\.\d{1,2})?)/i) || raw.match(/([\d,]+(?:\.\d{1,2})?)\s*(?:inr|rs\.?|\u20b9)/i);
+
+  const amountMatch = raw.match(/(?:inr|rs\.?|\u20b9|\$)\s*([\d,]+(?:\.\d{1,2})?)/i) || raw.match(/([\d,]+(?:\.\d{1,2})?)\s*(?:inr|rs\.?|\u20b9|\$)/i);
   if (!amountMatch) return null;
   const amountValue = Number(String(amountMatch[1]).replace(/,/g, ""));
   if (!amountValue || Number.isNaN(amountValue)) return null;
+
   const isBillReminder = /(bill|due date|due on|pay by|payment due|minimum amount|min amt|statement|outstanding|total amount due|amount due)/i.test(lower);
   const debit = /(debited|debit|spent|paid|withdrawn|purchase|\bdr\b|sent)/i.test(lower);
   const credit = /(credited|received|deposited|refund|\bcr\b)/i.test(lower);
-  const merchantMatch = raw.match(/\b(?:to|at|for|towards|from|by|biller|merchant)\s+([A-Z0-9][A-Z0-9 ._&-]{2,40})/i);
+
+  // 1. Extract Bank Name
+  const bankRegex = /\b(hdfc|sbi|icici|axis|paytm|phonepe|googlepay|gpay|kotak|bob|bank of baroda|pnb|canara|union bank|federal|indusind|idfc|yes bank|standard chartered|hsbc|cred|jupiter|fi bank|slice)\b/i;
+  const bankMatch = raw.match(bankRegex);
+  const bankName = bankMatch ? bankMatch[1].toUpperCase() : "";
+
+  // 2. Extract Merchant / Biller Name
+  const merchantMatch =
+    raw.match(/\b(?:to|at|for|towards|from|by|biller|merchant|vpa)\s+([A-Z0-9][A-Z0-9 ._&-]{2,40})/i) ||
+    raw.match(/\binfo:\s*([A-Z0-9._&-]{2,30})/i);
+  let merchant = merchantMatch ? merchantMatch[1].replace(/\s+(on|dt|date|ref|utr|a\/c|acct|account|card|rs|inr|bal).*$/i, "").trim() : "";
+
+  // Known merchant cleanup
+  if (/swiggy/i.test(raw)) merchant = "Swiggy";
+  else if (/zomato/i.test(raw)) merchant = "Zomato";
+  else if (/amazon/i.test(raw)) merchant = "Amazon";
+  else if (/flipkart/i.test(raw)) merchant = "Flipkart";
+  else if (/uber/i.test(raw)) merchant = "Uber";
+  else if (/ola/i.test(raw)) merchant = "Ola";
+  else if (/dmart|d-mart/i.test(raw)) merchant = "D-Mart";
+  else if (/jio/i.test(raw)) merchant = "Jio";
+  else if (/airtel/i.test(raw)) merchant = "Airtel";
+  else if (/petrol|fuel|shell|hpcl|bpcl|iocl/i.test(raw)) merchant = "Petrol Pump";
+
+  // 3. Extract UTR / Ref Number
+  const utrMatch = raw.match(/\b(?:ref|utr|txn id|transaction id|ref no|rrn)\s*[:#-]?\s*([a-z0-9]{6,20})\b/i);
+  const utrNumber = utrMatch ? utrMatch[1] : "";
+
+  // 4. Extract Account / Card Number
   const accountMatch = raw.match(/(?:a\/c|acct|account|card)\s*(?:xx|x+|\*)?(\d{3,6})/i);
+  const accountNum = accountMatch ? accountMatch[1] : "";
+
+  // 5. Date & Time
   const extractedDate = extractMessageDate(raw, isBillReminder ? "due" : "transaction");
   const timeMatch = raw.match(/\b(\d{1,2}):(\d{2})(?:\s?([ap]m))?\b/i);
   const parsedDate = extractedDate || todayISO();
   const parsedTime = timeMatch ? normalizeSmsTime(timeMatch) : nowTime();
-  const paymentMethod = /(upi)/i.test(raw) ? "UPI" : /(card)/i.test(raw) ? "Card" : /(imps|neft|rtgs)/i.test(raw) ? "Bank transfer" : "Bank";
-  const type = isBillReminder ? "Debit" : debit && !credit ? "Debit" : credit && !debit ? "Credit" : "";
-  const titleBase = merchantMatch?.[1]?.replace(/\s+(on|dt|date|ref|utr|a\/c|acct|account|card|rs|inr).*$/i, "").trim();
+
+  // 6. Payment Method
+  const paymentMethod = /(upi)/i.test(raw) ? "UPI" : /(card|debit card|credit card)/i.test(raw) ? "Card" : /(imps|neft|rtgs|transfer)/i.test(raw) ? "Bank transfer" : "Bank";
+
+  const type = isBillReminder ? "Debit" : debit && !credit ? "Debit" : credit && !debit ? "Credit" : "Debit";
+  const title = merchant || (bankName ? `${bankName} ${type}` : (isBillReminder ? "Bill reminder" : type === "Credit" ? "Bank credit" : "Bank transaction"));
+
+  // 7. Auto Category
+  let category = "General";
+  const titleLower = `${title} ${raw}`.toLowerCase();
+  if (/(tea|coffee|chai|food|swiggy|zomato|lunch|dinner|breakfast|snacks|restaurant|burger|pizza|drink|cafe)/i.test(titleLower)) {
+    category = "Food & Drinks";
+  } else if (/(auto|cab|taxi|uber|ola|petrol|fuel|bus|train|flight|metro|travel)/i.test(titleLower)) {
+    category = "Transport";
+  } else if (/(groceries|supermarket|vegetables|milk|fruits|mart|dmart)/i.test(titleLower)) {
+    category = "Groceries";
+  } else if (/(rent|electric|electricity|water bill|wifi|internet|recharge|mobile|utility|jio|airtel)/i.test(titleLower)) {
+    category = "Bills & Utilities";
+  } else if (/(salary|freelance|bonus|interest|stipend)/i.test(titleLower)) {
+    category = "Salary";
+  } else if (/(shopping|clothes|shoes|book|amazon|flipkart)/i.test(titleLower)) {
+    category = "Shopping";
+  }
+
+  // 8. Agentic Duplicate Check
+  let isDuplicate = false;
+  let existingItem = null;
+  if (state) {
+    const allExpenses = state.expenses || [];
+    const allBills = state.bills || [];
+
+    if (utrNumber) {
+      existingItem = allExpenses.find((e) => e.notes && e.notes.includes(utrNumber));
+    }
+    if (!existingItem) {
+      existingItem = allExpenses.find((e) => e.date === parsedDate && amount(e.amount) === amountValue && (e.title === title || e.notes?.includes(title)));
+    }
+    if (!existingItem && isBillReminder) {
+      existingItem = allBills.find((b) => b.dueDate === parsedDate && amount(b.amount) === amountValue && b.title === title);
+    }
+    if (existingItem) {
+      isDuplicate = true;
+    }
+  }
+
   const questions = [];
   if (!type) questions.push("Debit or credit");
-  if (!titleBase && !isBillReminder) questions.push("merchant/title");
+  if (!merchant && !isBillReminder) questions.push("merchant/title");
   if (!extractedDate) questions.push(isBillReminder ? "due date" : "transaction date");
+
   return {
     amount: amountValue,
-    type: type || "Debit",
-    title: titleBase || (isBillReminder ? "Bill reminder" : type === "Credit" ? "Bank credit" : "Bank transaction"),
+    type,
+    title,
+    bankName,
+    merchant,
+    utrNumber,
+    accountNum,
+    category,
     date: parsedDate,
     time: parsedTime,
     destination: isBillReminder ? "bill" : "daily",
     billStatus: isBillReminder ? "Unpaid" : "Paid",
     reminderBefore: isBillReminder ? "1 day" : "None",
     paymentMethod,
-    confidence: type && (titleBase || isBillReminder) && extractedDate ? "High" : "Review needed",
-    needsReview: !type || (!titleBase && !isBillReminder) || !extractedDate,
+    isDuplicate,
+    existingItem,
+    confidence: type && (merchant || isBillReminder) && extractedDate ? "High" : "Review needed",
+    needsReview: !type || (!merchant && !isBillReminder) || !extractedDate,
     questions,
-    notes: [`Parsed from ${isBillReminder ? "bill reminder" : "bank message"}`, accountMatch ? `Account/card ending ${accountMatch[1]}` : "", raw].filter(Boolean).join("\n")
+    notes: [
+      `Parsed from ${isBillReminder ? "bill reminder" : "bank SMS"}`,
+      bankName ? `Bank: ${bankName}` : "",
+      accountNum ? `Account/Card: XX${accountNum}` : "",
+      utrNumber ? `Ref/UTR: ${utrNumber}` : "",
+      raw
+    ].filter(Boolean).join("\n")
   };
 }
 
