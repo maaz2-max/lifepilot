@@ -193,7 +193,7 @@ export async function handleTelegramTest(req, res, env = process.env) {
     return;
   }
   try {
-    await sendTelegramMessage("[OK] LifePilot Telegram notifications are connected.", env);
+    await sendTelegramMessage("🔔 <b>LifePilot Telegram Notifications Connected</b>\nTest notification sent successfully! Reminders will now deliver individually at their scheduled times.", env);
     jsonResponse(res, 200, { ok: true });
   } catch (error) {
     jsonResponse(res, 502, { error: error.message || "Telegram test failed" });
@@ -212,74 +212,64 @@ export async function handleTelegramWebhook(req, res, env = process.env) {
     return;
   }
 
-  let body;
+  let update;
   try {
-    body = await readBody(req);
+    update = await readBody(req);
   } catch {
     jsonResponse(res, 400, { error: "Invalid JSON body" });
     return;
   }
 
-  const message = body.message || body.edited_message;
-  const chatId = message?.chat?.id ? String(message.chat.id) : "";
-  const text = String(message?.text || "").trim();
-  const { chatId: allowedChatId, userKey } = telegramConfig(env);
-  if (!chatId || !text) {
+  const message = update.message || update.edited_message;
+  if (!message || !message.text) {
     jsonResponse(res, 200, { ok: true, ignored: true });
     return;
   }
+
+  const chatId = String(message.chat?.id || "");
+  const text = String(message.text || "").trim();
+  const { chatId: allowedChatId, userKey } = telegramConfig(env);
+
   if (allowedChatId && chatId !== String(allowedChatId)) {
-    jsonResponse(res, 200, { ok: true, ignored: "unauthorized chat" });
+    try {
+      await sendTelegramMessageTo(chatId, "Unauthorized chat ID for this LifePilot instance.", env);
+    } catch {
+      // Ignore unauthorized notification error
+    }
+    jsonResponse(res, 403, { error: "Unauthorized chat ID" });
     return;
   }
 
   try {
-    const command = text.split(/\s+/)[0].toLowerCase().split("@")[0];
-    if (command === "/start" || command === "/help") {
+    if (text.startsWith("/start") || text.startsWith("/help")) {
       await sendTelegramMessageTo(chatId, commandHelp(), env);
       jsonResponse(res, 200, { ok: true });
       return;
     }
-    if (command === "/test") {
-      await sendTelegramMessageTo(chatId, "[OK] LifePilot bot command test works.", env);
+    if (text.startsWith("/test")) {
+      await sendTelegramMessageTo(chatId, "🔔 LifePilot bot command test connected and working.", env);
       jsonResponse(res, 200, { ok: true });
       return;
     }
-
     if (!hasSupabase(env)) {
       await sendTelegramMessageTo(chatId, "Supabase is not configured on the backend yet.", env);
       jsonResponse(res, 200, { ok: true });
       return;
     }
-
-    const now = new Date();
-    const todayStart = new Date(now);
-    todayStart.setHours(0, 0, 0, 0);
-    const todayEnd = new Date(now);
-    todayEnd.setHours(23, 59, 59, 999);
-    const weekEnd = new Date(now);
-    weekEnd.setDate(weekEnd.getDate() + 7);
-
-    if (command === "/status") {
+    if (text.startsWith("/status")) {
       const items = await supabaseRequest(
-        `notification_items?user_key=eq.${encodeURIComponent(userKey)}&enabled=eq.true&status=eq.active&select=id,type,due_at`,
+        `notification_items?user_key=eq.${encodeURIComponent(userKey)}&status=eq.active&select=*`,
         {},
         env
       );
-      const dueNow = (items || []).filter((item) => item.due_at <= now.toISOString()).length;
-      await sendTelegramMessageTo(chatId, [
-        "<b>LifePilot Sync Status</b>",
-        `Active synced items: ${items?.length || 0}`,
-        `Due now: ${dueNow}`,
-        "Cron checks every 5 minutes."
-      ].join("\n"), env);
+      await sendTelegramMessageTo(chatId, `<b>LifePilot Notification Status</b>\nActive synced items: ${items?.length || 0}`, env);
       jsonResponse(res, 200, { ok: true });
       return;
     }
-
-    if (command === "/today") {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    if (text.startsWith("/today")) {
       const items = await supabaseRequest(
-        `notification_items?user_key=eq.${encodeURIComponent(userKey)}&enabled=eq.true&status=eq.active&due_at=gte.${encodeURIComponent(todayStart.toISOString())}&due_at=lte.${encodeURIComponent(todayEnd.toISOString())}&order=due_at.asc&select=*`,
+        `notification_items?user_key=eq.${encodeURIComponent(userKey)}&status=eq.active&due_at=gte.${todayStr}T00:00:00.000Z&due_at=lte.${todayStr}T23:59:59.999Z&select=*`,
         {},
         env
       );
@@ -287,10 +277,10 @@ export async function handleTelegramWebhook(req, res, env = process.env) {
       jsonResponse(res, 200, { ok: true });
       return;
     }
-
-    if (command === "/due") {
+    if (text.startsWith("/due")) {
+      const next7Str = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
       const items = await supabaseRequest(
-        `notification_items?user_key=eq.${encodeURIComponent(userKey)}&enabled=eq.true&status=eq.active&due_at=gte.${encodeURIComponent(now.toISOString())}&due_at=lte.${encodeURIComponent(weekEnd.toISOString())}&order=due_at.asc&select=*`,
+        `notification_items?user_key=eq.${encodeURIComponent(userKey)}&status=eq.active&due_at=lte.${encodeURIComponent(next7Str)}&select=*`,
         {},
         env
       );
@@ -298,10 +288,9 @@ export async function handleTelegramWebhook(req, res, env = process.env) {
       jsonResponse(res, 200, { ok: true });
       return;
     }
-
-    if (command === "/bills") {
+    if (text.startsWith("/bills")) {
       const items = await supabaseRequest(
-        `notification_items?user_key=eq.${encodeURIComponent(userKey)}&enabled=eq.true&status=eq.active&type=eq.bill&order=due_at.asc&select=*`,
+        `notification_items?user_key=eq.${encodeURIComponent(userKey)}&type=eq.bill&status=eq.active&select=*`,
         {},
         env
       );
@@ -309,14 +298,13 @@ export async function handleTelegramWebhook(req, res, env = process.env) {
       jsonResponse(res, 200, { ok: true });
       return;
     }
-
     await sendTelegramMessageTo(chatId, commandHelp(), env);
     jsonResponse(res, 200, { ok: true });
   } catch (error) {
     try {
       await sendTelegramMessageTo(chatId, `Command failed: ${escapeHtml(error.message || "Unknown error")}`, env);
     } catch {
-      // Acknowledge webhook anyway so Telegram does not retry forever.
+      // Ignore telegram send error
     }
     jsonResponse(res, 200, { ok: true, error: error.message || "Command failed" });
   }
@@ -336,7 +324,10 @@ export async function handleTelegramCron(req, res, env = process.env) {
     return;
   }
 
-  const now = new Date().toISOString();
+  const nowObj = new Date();
+  const now = nowObj.toISOString();
+  const sixHoursAgo = new Date(nowObj.getTime() - 6 * 60 * 60 * 1000).toISOString();
+
   try {
     const { userKey } = telegramConfig(env);
     const items = await supabaseRequest(
@@ -350,6 +341,22 @@ export async function handleTelegramCron(req, res, env = process.env) {
     for (const item of items || []) {
       const sendKey = `${item.local_id}:${item.type}:${item.due_at}`;
       if (item.last_sent_key === sendKey) continue;
+
+      // Stale items (older than 6 hours) are silently marked as sent so they don't blast all at once
+      if (item.due_at < sixHoursAgo) {
+        const nextDue = nextRepeatDate(item.due_at, item.repeat);
+        await supabaseRequest(`notification_items?id=eq.${encodeURIComponent(item.id)}`, {
+          method: "PATCH",
+          body: {
+            last_sent_key: sendKey,
+            last_sent_at: new Date().toISOString(),
+            due_at: nextDue || item.due_at,
+            status: nextDue ? "active" : item.status
+          }
+        }, env);
+        continue;
+      }
+
       try {
         await sendTelegramMessage(notificationText(item), env);
         sent += 1;

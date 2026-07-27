@@ -351,12 +351,12 @@ const dashboardNavigationItems = [
 ];
 
 const aiQuickChips = [
-  { label: "Add todo", prompt: "Add a todo task" },
-  { label: "Add expense", prompt: "Add daily expense" },
+  { label: "⚡ had tea for 20", prompt: "had tea for 20" },
+  { label: "⚡ paid 150 for auto", prompt: "paid 150 for auto" },
+  { label: "⚡ note: shopping list", prompt: "note: buy groceries and fruits" },
+  { label: "⚡ remind me to pay bill", prompt: "remind me to pay electric bill tomorrow at 5pm" },
   { label: "Analyze month", prompt: "Analyze this month spending, cashflow, bills, and project balances" },
-  { label: "Find overdue", prompt: "Find all overdue tasks, reminders, bills, and unpaid items" },
-  { label: "Split project", prompt: "Show project split balances and who owes whom" },
-  { label: "Parse bank message", prompt: "Paste bank SMS or bill reminder here: " }
+  { label: "Find overdue", prompt: "Find all overdue tasks, reminders, bills, and unpaid items" }
 ];
 
 function todayISO() {
@@ -2437,19 +2437,10 @@ export default function App() {
     return <LoadingScreen />;
   }
 
-  // Intercept shared cloud project route
+  // Shutdown cloud project route interception and keep everything 100% local
   const path = window.location.pathname;
-  const isCloudProjectRoute = path.startsWith("/project/") && path.length > 9;
-  const cloudProjectId = isCloudProjectRoute ? path.split("/project/")[1] : null;
-
-  if (isCloudProjectRoute && cloudProjectId) {
-    return (
-      <SharedProjectWorkspace
-        projectId={cloudProjectId}
-        setToast={setToast}
-        globalTheme={appThemeClass(state)}
-      />
-    );
+  if (path.startsWith("/project/")) {
+    window.history.replaceState({}, "", "/");
   }
 
   if (pinBooting) {
@@ -6051,6 +6042,16 @@ function AiAssistant({ state, setState, upsert, setToast, close }) {
       return;
     }
 
+    const natural = parseNaturalMessage(text);
+    if (natural) {
+      addMessage({
+        role: "ai",
+        text: `⚡ I parsed your message: **${natural.summary}**. Confirm below to save it immediately to your records.`,
+        actions: [natural.action]
+      });
+      return;
+    }
+
     const bankParse = parseBankMessage(text);
     if (bankParse) {
       addMessage({
@@ -6091,6 +6092,39 @@ function AiAssistant({ state, setState, upsert, setToast, close }) {
   const send = (event) => {
     event.preventDefault();
     submitPrompt(input);
+  };
+
+  const autoParseAndAdd = (event) => {
+    event.preventDefault();
+    const text = input.trim();
+    if (!text) return;
+    setInput("");
+    addMessage({ role: "user", text });
+
+    const natural = parseNaturalMessage(text);
+    if (natural && natural.action) {
+      setState((current) => applyAiActionData(current, natural.action, natural.action.data));
+      addMessage({
+        role: "ai",
+        text: `⚡ **Auto-Added**: ${natural.summary}`,
+        actions: []
+      });
+      setToast(`Auto-added: ${natural.action.data.title || "Record"}`);
+    } else {
+      const bankParse = parseBankMessage(text);
+      if (bankParse) {
+        addMessage({
+          role: "ai",
+          text: bankParse.needsReview
+            ? "I found a bank-style message but need you to confirm the missing fields before saving."
+            : "I parsed this bank message. Choose where to save it, review the fields, then confirm.",
+          bankParse,
+          actions: []
+        });
+      } else {
+        submitPrompt(text);
+      }
+    }
   };
 
   const useQuickChip = (chip) => {
@@ -6227,10 +6261,13 @@ function AiAssistant({ state, setState, upsert, setToast, close }) {
                 submitPrompt(input);
               }
             }}
-            placeholder="Paste bank SMS, bill reminder, or ask LifePilot AI"
+            placeholder="Type 'had tea for 20', 'paid 150 for cab', 'note: shopping', or ask AI..."
             rows={2}
           />
-          <button className="primary tactile" type="submit" disabled={loading}><SendHorizontal size={18} /></button>
+          <div className="cluster" style={{ gap: "0.4rem" }}>
+            <button className="secondary tactile" type="button" onClick={autoParseAndAdd} title="Parse and auto-add expense/note instantly" style={{ whiteSpace: "nowrap", fontSize: "0.82rem", padding: "0.55rem 0.8rem" }}>⚡ Auto-Add</button>
+            <button className="primary tactile" type="submit" disabled={loading}><SendHorizontal size={18} /></button>
+          </div>
         </form>
         <button className="secondary tactile clear-chat" onClick={clearChat} type="button">Clear recent chat</button>
       </section>
@@ -6967,6 +7004,139 @@ function getCredentialIntent(text, credentials) {
   if (/\b(add|create|edit|update|save|delete|remove)\b/i.test(normalized)) {
     return { mode: "manage", text, count: credentials.length };
   }
+  return null;
+}
+
+function parseNaturalMessage(text) {
+  const raw = String(text || "").trim();
+  if (!raw) return null;
+  const lower = raw.toLowerCase();
+
+  // 1. Note parsing (e.g. "note: buy travel list", "write down password details")
+  if (/^(note:|note\b|write down:|save note:)/i.test(lower)) {
+    const content = raw.replace(/^(note:|note|write down:|save note:)\s*/i, "").trim();
+    if (!content) return null;
+    const title = content.split("\n")[0].slice(0, 45);
+    return {
+      type: "note",
+      summary: `Note "${title}"`,
+      action: {
+        operation: "create",
+        type: "note",
+        summary: `Add Note: ${title}`,
+        data: {
+          title,
+          content,
+          date: todayISO()
+        }
+      }
+    };
+  }
+
+  // 2. Natural Expense parsing (e.g., "had tea for 20", "paid 150 for auto", "tea 20 rs", "spent 500 on groceries", "coffee 60", "salary 50000")
+  const amountMatch = raw.match(/(?:inr|rs\.?|\u20b9|\$)?\s*([\d,]+(?:\.\d{1,2})?)\s*(?:rs|rupees|inr|\$)?/i);
+  let amountVal = 0;
+  if (amountMatch) {
+    const num = Number(String(amountMatch[1]).replace(/,/g, ""));
+    if (!Number.isNaN(num) && num > 0) {
+      amountVal = num;
+    }
+  }
+
+  const isExpenseKeyword = /(had|paid|spent|bought|cost|gave|tea|coffee|chai|food|lunch|dinner|breakfast|auto|cab|taxi|uber|ola|petrol|fuel|groceries|rent|bill|recharge|movie|snacks)/i.test(lower);
+  const isCredit = /(received|got|credited|credit|income|salary|cashback|refund|added)/i.test(lower);
+  const hasCurrency = /(inr|rs\.?|\u20b9|\$|rupees)/i.test(lower);
+
+  if (amountVal > 0 && (isExpenseKeyword || isCredit || hasCurrency || /^\w+\s+\d+$/.test(raw) || /^\w+\s+for\s+\d+$/i.test(raw))) {
+    let title = raw
+      .replace(/(?:inr|rs\.?|\u20b9|\$)?\s*[\d,]+(?:\.\d{1,2})?\s*(?:rs|rupees|inr|\$)?/gi, "")
+      .replace(/\b(had|paid|spent|bought|for|on|of|credited|received|got|rs|rupees|inr|rupee)\b/gi, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (!title || title.length < 2) {
+      title = isCredit ? "Income" : "Expense";
+    } else {
+      title = title.charAt(0).toUpperCase() + title.slice(1);
+    }
+
+    let category = "General";
+    if (/(tea|coffee|chai|food|lunch|dinner|breakfast|snacks|restaurant|burger|pizza|drink|water|cafe)/i.test(lower)) {
+      category = "Food & Drinks";
+    } else if (/(auto|cab|taxi|uber|ola|petrol|fuel|bus|train|flight|metro|travel)/i.test(lower)) {
+      category = "Transport";
+    } else if (/(groceries|supermarket|vegetables|milk|fruits|mart)/i.test(lower)) {
+      category = "Groceries";
+    } else if (/(rent|electric|electricity|water bill|wifi|internet|recharge|mobile|utility)/i.test(lower)) {
+      category = "Bills & Utilities";
+    } else if (/(salary|freelance|bonus|interest|stipend)/i.test(lower)) {
+      category = "Salary";
+    } else if (/(shopping|clothes|shoes|book|amazon|flipkart)/i.test(lower)) {
+      category = "Shopping";
+    }
+
+    const type = isCredit ? "Credit" : "Debit";
+
+    return {
+      type: "expense",
+      summary: `Expense "${title}" (₹${amountVal}, ${type})`,
+      action: {
+        operation: "create",
+        type: "expense",
+        summary: `Add Expense: ${title} (₹${amountVal})`,
+        data: {
+          title,
+          amount: amountVal,
+          type,
+          category,
+          date: todayISO(),
+          time: nowTime(),
+          paymentMethod: "UPI",
+          notes: `Parsed from chat: "${raw}"`
+        }
+      }
+    };
+  }
+
+  // 3. Reminder / Task parsing (e.g. "remind me to pay bill tomorrow 5pm", "todo: call dentist")
+  if (/\b(remind|reminder|todo|task|schedule)\b/i.test(lower)) {
+    const due = extractMessageDate(raw, "due") || todayISO();
+    const timeMatch = raw.match(/\b(\d{1,2}):(\d{2})(?:\s?([ap]m))?\b/i) || raw.match(/\b(\d{1,2})\s*([ap]m)\b/i);
+    let timeStr = "09:00";
+    if (timeMatch) {
+      let hr = Number(timeMatch[1]);
+      const pm = (timeMatch[3] || timeMatch[2])?.toLowerCase() === "pm";
+      if (pm && hr < 12) hr += 12;
+      if (!pm && hr === 12) hr = 0;
+      const min = timeMatch[2] && !isNaN(Number(timeMatch[2])) ? timeMatch[2] : "00";
+      timeStr = `${String(hr).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
+    }
+
+    let title = raw
+      .replace(/\b(remind me to|remind me|reminder:|todo:|task:)\b/gi, "")
+      .trim();
+    if (title) title = title.charAt(0).toUpperCase() + title.slice(1);
+    else title = "Reminder";
+
+    return {
+      type: "reminder",
+      summary: `Reminder "${title}" (${due} ${timeStr})`,
+      action: {
+        operation: "create",
+        type: "reminder",
+        summary: `Add Reminder: ${title}`,
+        data: {
+          title,
+          date: due,
+          time: timeStr,
+          description: `Parsed from chat: "${raw}"`,
+          status: "Active",
+          notificationEnabled: true
+        }
+      }
+    };
+  }
+
   return null;
 }
 
