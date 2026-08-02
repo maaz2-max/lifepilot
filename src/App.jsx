@@ -2668,7 +2668,7 @@ export default function App() {
       )}
       {carLoading && <CarLoader active={carLoading} text="Processing AutoTrack..." />}
       {toast && <div className="toast"><CheckCircle2 size={18} />{toast}</div>}
-      <GlobalSearchModal state={state} isOpen={searchOpen} onClose={() => setSearchOpen(false)} setActive={showView} />
+      <GlobalSearchModal state={state} isOpen={searchOpen} onClose={() => setSearchOpen(false)} setActive={showView} openAdd={openAdd} />
     </div>
   );
 }
@@ -2762,7 +2762,7 @@ function PinLock({ onUnlock }) {
   );
 }
 
-function GlobalSearchModal({ state, isOpen, onClose, setActive }) {
+function GlobalSearchModal({ state, isOpen, onClose, setActive, openAdd }) {
   const [query, setQuery] = useState("");
   const [activeTab, setActiveTab] = useState("all");
   const inputRef = useRef(null);
@@ -2794,75 +2794,143 @@ function GlobalSearchModal({ state, isOpen, onClose, setActive }) {
 
   const handleSelect = (item) => {
     onClose();
-    if (item.targetTab) {
-      setActive(item.targetTab);
+    if (!item) return;
+
+    if (item.type === "credential") {
+      openAdd("credential", item.rawItem);
+    } else if (item.type === "expense") {
+      openAdd("expense", item.rawItem);
+    } else if (item.type === "bill") {
+      openAdd("bill", item.rawItem);
+    } else if (item.type === "loan") {
+      openAdd("loan", item.rawItem);
+    } else if (item.type === "task") {
+      openAdd("task", item.rawItem);
+    } else if (item.type === "reminder") {
+      openAdd("reminder", item.rawItem);
+    } else if (item.type === "note") {
+      openAdd("note", item.rawItem);
+    } else if (item.type === "event") {
+      openAdd("event", item.rawItem);
+    } else if (item.type === "project") {
+      openAdd("project", item.rawItem);
+    } else if (item.type === "salary") {
+      openAdd("salary", item.rawItem);
+    } else {
+      if (item.targetTab) {
+        setActive(item.targetTab);
+      }
     }
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose} style={{ zIndex: 9999, background: "rgba(0,0,0,0.65)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+    <div 
+      className="modal-backdrop" 
+      onClick={onClose} 
+      style={{ 
+        zIndex: 9999, 
+        background: "rgba(12, 14, 20, 0.72)", 
+        backdropFilter: "blur(12px)", 
+        WebkitBackdropFilter: "blur(12px)",
+        display: "flex", 
+        alignItems: "center", 
+        justifyContent: "center",
+        padding: "1rem"
+      }}
+    >
       <div 
         className="modal-card" 
         onClick={(e) => e.stopPropagation()} 
-        style={{ width: "92%", maxWidth: "660px", maxHeight: "82vh", borderRadius: "18px", display: "flex", flexDirection: "column", padding: "1.25rem", gap: "0.85rem", overflow: "hidden", background: "var(--paper)", border: "2px solid var(--ink)", boxShadow: "0 20px 40px rgba(0,0,0,0.3)" }}
+        style={{ 
+          width: "100%", 
+          maxWidth: "620px", 
+          maxHeight: "85vh", 
+          borderRadius: "22px", 
+          display: "flex", 
+          flexDirection: "column", 
+          padding: "1.25rem", 
+          gap: "1rem", 
+          overflow: "hidden", 
+          background: "var(--paper)", 
+          border: "2px solid var(--ink)", 
+          boxShadow: "0 24px 60px rgba(0,0,0,0.35)" 
+        }}
       >
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75rem" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flex: 1, background: "var(--cream)", border: "2px solid var(--ink)", borderRadius: "12px", padding: "0.6rem 0.85rem" }}>
-            <Search size={20} style={{ color: "var(--brand)" }} />
+        {/* Search Header Row */}
+        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flex: 1, background: "var(--cream)", border: "2px solid var(--ink)", borderRadius: "14px", padding: "0.65rem 0.9rem", boxShadow: "var(--shadow)" }}>
+            <Search size={20} style={{ color: "var(--brand)", flexShrink: 0 }} />
             <input
               ref={inputRef}
               type="text"
-              placeholder="Search Kotak, Salary, Fuel, Uber, HDFC, Passwords..."
+              placeholder="Search Kotak, Salary, Fuel, HDFC..."
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              style={{ border: "none", background: "transparent", outline: "none", width: "100%", fontWeight: 700, fontSize: "1.05rem", color: "var(--ink)" }}
+              style={{ border: "none", background: "transparent", outline: "none", width: "100%", fontWeight: 700, fontSize: "1rem", color: "var(--ink)" }}
             />
             {query && (
               <button 
                 type="button" 
                 onClick={() => setQuery("")} 
-                style={{ background: "none", border: "none", cursor: "pointer", color: "var(--muted)", display: "flex", alignItems: "center", justifyContent: "center" }}
+                style={{ background: "none", border: "none", cursor: "pointer", color: "var(--muted)", display: "flex", alignItems: "center", justifyContent: "center", padding: "2px" }}
               >
                 <X size={16} />
               </button>
             )}
           </div>
-          <button className="icon-button tactile" onClick={onClose} aria-label="Close search"><X size={18} /></button>
+          <button className="icon-button tactile" onClick={onClose} aria-label="Close search" style={{ width: "42px", height: "42px", borderRadius: "12px", flexShrink: 0 }}>
+            <X size={20} />
+          </button>
         </div>
 
-        {/* Tab Filters */}
-        <div style={{ display: "flex", gap: "0.4rem", overflowX: "auto", paddingBottom: "0.35rem", borderBottom: "1px solid var(--line)" }}>
+        {/* Clean Filter Tabs - NO ICONS! */}
+        <div style={{ display: "flex", gap: "0.4rem", overflowX: "auto", paddingBottom: "0.4rem", borderBottom: "1px solid var(--line)", scrollbarWidth: "none" }}>
           {[
             { id: "all", label: `All (${categories.all.length})` },
-            { id: "vault", label: `🔑 Vault (${categories.vault.length})` },
-            { id: "expenses", label: `💳 Money (${categories.expenses.length})` },
-            { id: "loans", label: `🏦 Loans (${categories.loans.length})` },
-            { id: "tasks", label: `✅ Tasks/Notes (${categories.tasks.length})` },
-            { id: "projects", label: `📁 Projects (${categories.projects.length})` },
-            { id: "vehicles", label: `🚗 Vehicles (${categories.vehicles.length})` }
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              className={`tactile ${activeTab === tab.id ? "primary" : "secondary"}`}
-              style={{ padding: "0.3rem 0.75rem", fontSize: "0.8rem", borderRadius: "8px", whitespace: "nowrap" }}
-              onClick={() => setActiveTab(tab.id)}
-            >
-              {tab.label}
-            </button>
-          ))}
+            { id: "vault", label: `Vault (${categories.vault.length})` },
+            { id: "expenses", label: `Money (${categories.expenses.length})` },
+            { id: "loans", label: `Loans (${categories.loans.length})` },
+            { id: "tasks", label: `Tasks & Notes (${categories.tasks.length})` },
+            { id: "projects", label: `Projects (${categories.projects.length})` },
+            { id: "vehicles", label: `Vehicles (${categories.vehicles.length})` }
+          ].map((tab) => {
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                className="tactile"
+                onClick={() => setActiveTab(tab.id)}
+                style={{
+                  padding: "0.38rem 0.85rem",
+                  fontSize: "0.82rem",
+                  fontWeight: 800,
+                  borderRadius: "20px",
+                  whiteSpace: "nowrap",
+                  cursor: "pointer",
+                  border: "1.5px solid var(--ink)",
+                  background: isActive ? "var(--ink)" : "var(--paper)",
+                  color: isActive ? "var(--paper)" : "var(--ink)",
+                  transition: "all 0.15s ease"
+                }}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
         </div>
 
-        {/* Search Results List */}
-        <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: "0.6rem", paddingRight: "0.2rem" }}>
+        {/* Results Body List */}
+        <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: "0.65rem", paddingRight: "0.15rem" }}>
           {!query.trim() ? (
-            <div style={{ padding: "2.5rem 1rem", textAlign: "center", color: "var(--muted)" }}>
-              <Search size={38} style={{ marginBottom: "0.6rem", opacity: 0.35 }} />
-              <p style={{ margin: 0, fontWeight: 700, fontSize: "0.98rem" }}>Type any keyword to search across the entire app.</p>
-              <small style={{ opacity: 0.7, marginTop: "0.25rem", display: "block" }}>Try "Kotak", "Salary", "Uber", "HDFC", "Ather", "Insurance"</small>
+            <div style={{ padding: "3rem 1rem", textAlign: "center", color: "var(--muted)" }}>
+              <Search size={40} style={{ marginBottom: "0.75rem", opacity: 0.3 }} />
+              <p style={{ margin: 0, fontWeight: 800, fontSize: "1rem" }}>Type any keyword to search across your data.</p>
+              <small style={{ opacity: 0.75, marginTop: "0.35rem", display: "block", fontSize: "0.82rem" }}>Try searching "Kotak", "Salary", "Uber", "HDFC", "Ather", "Insurance"</small>
             </div>
           ) : displayedResults.length === 0 ? (
-            <div style={{ padding: "2.5rem 1rem", textAlign: "center", color: "var(--muted)" }}>
-              <p style={{ margin: 0, fontWeight: 700 }}>No results match "{query}" in this category.</p>
+            <div style={{ padding: "3rem 1rem", textAlign: "center", color: "var(--muted)" }}>
+              <p style={{ margin: 0, fontWeight: 700, fontSize: "0.95rem" }}>No matching data found in "{activeTab}" for "{query}".</p>
             </div>
           ) : (
             displayedResults.map((item) => (
@@ -2870,20 +2938,35 @@ function GlobalSearchModal({ state, isOpen, onClose, setActive }) {
                 key={`${item.type}-${item.id}`}
                 className="panel tactile"
                 onClick={() => handleSelect(item)}
-                style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0.85rem 1rem", borderRadius: "12px", border: "1.5px solid var(--ink)", textAlign: "left", cursor: "pointer", background: "var(--paper)", gap: "0.75rem" }}
+                style={{ 
+                  display: "flex", 
+                  alignItems: "center", 
+                  justifyContent: "space-between", 
+                  padding: "0.85rem 1.1rem", 
+                  borderRadius: "14px", 
+                  border: "1.5px solid var(--ink)", 
+                  textAlign: "left", 
+                  cursor: "pointer", 
+                  background: "var(--paper)", 
+                  gap: "0.75rem",
+                  boxShadow: "0 2px 5px rgba(0,0,0,0.04)"
+                }}
               >
-                <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", overflow: "hidden" }}>
-                  <span className="badge-tag insurance-badge" style={{ fontSize: "0.72rem", padding: "0.2rem 0.55rem", whitespace: "nowrap" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", overflow: "hidden", flex: 1 }}>
+                  <span className="badge-tag insurance-badge" style={{ fontSize: "0.7rem", padding: "0.2rem 0.55rem", whiteSpace: "nowrap", textTransform: "uppercase", letterSpacing: "0.5px" }}>
                     {item.kindLabel}
                   </span>
                   <div style={{ overflow: "hidden" }}>
-                    <strong style={{ fontSize: "0.96rem", display: "block", textOverflow: "ellipsis", overflow: "hidden", whitespace: "nowrap" }}>{item.title}</strong>
-                    {item.category && <small style={{ color: "var(--muted)", display: "block" }}>{item.category}</small>}
+                    <strong style={{ fontSize: "0.95rem", display: "block", textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap", fontWeight: 800 }}>{item.title}</strong>
+                    {item.category && <small style={{ color: "var(--muted)", display: "block", fontSize: "0.8rem" }}>{item.category}</small>}
                   </div>
                 </div>
-                <div style={{ textAlign: "right", whitespace: "nowrap" }}>
-                  {item.amount > 0 && <strong style={{ color: "var(--brand)", fontSize: "0.95rem", display: "block" }}>{rupee.format(item.amount)}</strong>}
-                  {item.date && <small style={{ color: "var(--muted)", fontSize: "0.78rem" }}>{formatDate(item.date)}</small>}
+                <div style={{ textAlign: "right", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: "0.6rem" }}>
+                  <div>
+                    {item.amount > 0 && <strong style={{ color: "var(--brand)", fontSize: "0.95rem", display: "block" }}>{rupee.format(item.amount)}</strong>}
+                    {item.date && <small style={{ color: "var(--muted)", fontSize: "0.76rem" }}>{formatDate(item.date)}</small>}
+                  </div>
+                  <ChevronRight size={16} style={{ color: "var(--muted)", opacity: 0.6 }} />
                 </div>
               </button>
             ))
