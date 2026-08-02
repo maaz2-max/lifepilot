@@ -5996,11 +5996,20 @@ function AiAssistant({ state, setState, upsert, setToast, close }) {
   const [listening, setListening] = useState(false);
   const [model, setModel] = useState(state.settings.aiModel || FREE_GEMINI_MODELS[0].id);
   const messagesEndRef = useRef(null);
+  const textareaRef = useRef(null);
   const messages = state.aiMessages || [];
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages.length, loading, jsonToolsOpen]);
+
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+      const scrollH = textareaRef.current.scrollHeight;
+      textareaRef.current.style.height = `${Math.min(Math.max(scrollH, 44), 116)}px`;
+    }
+  }, [input]);
 
   const saveMessages = (recipe) => {
     setState((current) => ({
@@ -6400,6 +6409,7 @@ function AiAssistant({ state, setState, upsert, setToast, close }) {
 
         <form className="ai-input" onSubmit={send}>
           <textarea
+            ref={textareaRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
@@ -7395,7 +7405,26 @@ function parseBankMessage(text, state = null) {
   // 6. Payment Method
   const paymentMethod = /(upi)/i.test(raw) ? "UPI" : /(card|debit card|credit card)/i.test(raw) ? "Card" : /(imps|neft|rtgs|transfer)/i.test(raw) ? "Bank transfer" : "Bank";
 
-  const type = isBillReminder ? "Debit" : debit && !credit ? "Debit" : credit && !debit ? "Credit" : "Debit";
+  const creditKeywords = /\b(credited|credit|received|deposited|refund|cashback|salary|income|got|\bcr\b)\b/i;
+  const debitKeywords = /\b(debited|debit|spent|paid|withdrawn|purchase|sent|\bdr\b)\b/i;
+  const isCreditExplicit = creditKeywords.test(lower);
+  const isDebitExplicit = debitKeywords.test(lower);
+
+  let type = "Debit";
+  if (isBillReminder) {
+    type = "Debit";
+  } else if (isCreditExplicit && !isDebitExplicit) {
+    type = "Credit";
+  } else if (isDebitExplicit && !isCreditExplicit) {
+    type = "Debit";
+  } else if (isCreditExplicit && isDebitExplicit) {
+    const cIdx = lower.search(creditKeywords);
+    const dIdx = lower.search(debitKeywords);
+    type = cIdx < dIdx ? "Credit" : "Debit";
+  } else {
+    type = "Debit";
+  }
+
   const title = merchant || (bankName ? `${bankName} ${type}` : (isBillReminder ? "Bill reminder" : type === "Credit" ? "Bank credit" : "Bank transaction"));
 
   // 7. Auto Category

@@ -2466,14 +2466,27 @@ button:disabled {
 .ai-input textarea {
   flex: 1;
   min-height: 44px;
-  max-height: 80px;
+  max-height: 116px;
   resize: none;
-  overflow: auto;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(17, 17, 17, 0.3) transparent;
   border-radius: 18px;
   padding: 0.65rem 0.85rem;
   font-size: 0.88rem;
+  line-height: 1.45;
   border: 2px solid #111111;
   box-shadow: 3px 4px 0 #111111;
+  transition: height 0.15s ease-in-out;
+}
+
+.ai-input textarea::-webkit-scrollbar {
+  width: 5px;
+}
+
+.ai-input textarea::-webkit-scrollbar-thumb {
+  background: rgba(17, 17, 17, 0.3);
+  border-radius: 4px;
 }
 
 .ai-input-actions {
