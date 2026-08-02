@@ -2663,6 +2663,7 @@ export default function App() {
           upsert={upsert}
           setToast={setToast}
           close={() => setAiOpen(false)}
+          onOpenSearch={() => setSearchOpen(true)}
         />
       )}
       {carLoading && <CarLoader active={carLoading} text="Processing AutoTrack..." />}
@@ -6373,7 +6374,7 @@ function credentialTypeClass(type) {
   return `credential-${String(type || "custom").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
 }
 
-function AiAssistant({ state, setState, upsert, setToast, close }) {
+function AiAssistant({ state, setState, upsert, setToast, close, onOpenSearch }) {
   const [input, setInput] = useState("");
   const [manualJson, setManualJson] = useState("");
   const [jsonToolsOpen, setJsonToolsOpen] = useState(false);
@@ -6739,6 +6740,7 @@ function AiAssistant({ state, setState, upsert, setToast, close }) {
             <h2>LifePilot Assistant</h2>
           </div>
           <div className="ai-header-actions">
+            <button className="icon-button tactile" title="Global Search (Ctrl+K)" onClick={onOpenSearch} aria-label="Global Search"><Search size={18} /></button>
             <button className={`icon-button tactile ${jsonToolsOpen ? "active" : ""}`} title="AI JSON fallback" onClick={() => setJsonToolsOpen((value) => !value)} aria-label="AI JSON fallback"><Braces size={18} /></button>
             <button className="icon-button tactile" onClick={close} aria-label="Close AI"><X size={18} /></button>
           </div>
