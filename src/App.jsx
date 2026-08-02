@@ -7922,10 +7922,35 @@ function Field({ field, value, set, form }) {
   }
   if (field.type === "checkbox") return <label className="toggle-row"><input type="checkbox" checked={Boolean(value)} onChange={(e) => set(field.name, e.target.checked)} />{field.label}</label>;
   if (field.type === "file") return <label className={field.wide ? "wide" : ""}>{field.label}<input type="file" accept="image/*" onChange={(e) => readImage(e.target.files?.[0], (image) => set(field.name, image))} /></label>;
-  const normalizedType = field.type === "date" || field.type === "month" ? "text" : field.type || "text";
-  const placeholder = field.type === "date" ? "YYYY-MM-DD" : field.type === "month" ? "YYYY-MM" : "";
-  const pattern = field.type === "date" ? "\\d{4}-\\d{2}-\\d{2}" : field.type === "month" ? "\\d{4}-\\d{2}" : undefined;
-  return <label className={field.wide ? "wide" : ""}>{field.label}<input type={normalizedType} inputMode={field.type === "date" || field.type === "month" ? "numeric" : undefined} placeholder={placeholder} pattern={pattern} min={field.min} step={field.step} value={value || ""} onChange={(e) => set(field.name, e.target.value)} required={field.required} /></label>;
+  if (field.type === "date" || field.type === "month") {
+    return (
+      <label className={field.wide ? "wide" : ""}>
+        {field.label}
+        <div style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
+          <input
+            type={field.type}
+            value={value || ""}
+            onChange={(e) => set(field.name, e.target.value)}
+            required={field.required}
+            min={field.min}
+            style={{ flex: 1, padding: "0.5rem 0.65rem" }}
+          />
+          {field.type === "date" && (
+            <button
+              type="button"
+              className="secondary tactile"
+              style={{ padding: "0.45rem 0.65rem", fontSize: "0.75rem", fontWeight: "700", whiteSpace: "nowrap" }}
+              onClick={() => set(field.name, todayISO())}
+              title="Set to today"
+            >
+              Today
+            </button>
+          )}
+        </div>
+      </label>
+    );
+  }
+  return <label className={field.wide ? "wide" : ""}>{field.label}<input type={field.type || "text"} min={field.min} step={field.step} value={value || ""} onChange={(e) => set(field.name, e.target.value)} required={field.required} /></label>;
 }
 
 function BillSplitsEditor({ field, value, set, form }) {
