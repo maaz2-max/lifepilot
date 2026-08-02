@@ -7173,7 +7173,12 @@ function parseNaturalMessage(text) {
   }
 
   // 2. Natural Expense parsing (e.g., "had tea for 20", "paid 150 for auto", "tea 20 rs", "spent 500 on groceries", "coffee 60", "salary 50000")
-  const amountMatch = raw.match(/(?:inr|rs\.?|\u20b9|\$)?\s*([\d,]+(?:\.\d{1,2})?)\s*(?:rs|rupees|inr|\$)?/i);
+  const cleanNatural = raw.replace(/\([^)]*[\d,]+[^)]*\)/gi, "");
+  const amountMatch =
+    cleanNatural.match(/(?:for|paid|spent|had|cost|gave|inr|rs\.?|\u20b9|\$)\s*([\d,]+(?:\.\d{1,2})?)/i) ||
+    cleanNatural.match(/([\d,]+(?:\.\d{1,2})?)\s*(?:rs|rupees|inr|\$|\u20b9)/i) ||
+    raw.match(/(?:inr|rs\.?|\u20b9|\$)?\s*([\d,]+(?:\.\d{1,2})?)\s*(?:rs|rupees|inr|\$)?/i);
+
   let amountVal = 0;
   if (amountMatch) {
     const num = Number(String(amountMatch[1]).replace(/,/g, ""));
@@ -7287,7 +7292,18 @@ function parseBankMessage(text, state = null) {
   const bankWords = /(bill|due|statement|minimum amount|min amt|payment reminder|debited|credited|debit|credit|spent|withdrawn|received|deposited|transaction|upi|imps|neft|rtgs|a\/c|acct|account|card|available balance|avl bal|inr|rs\.?|\u20b9|\$)/i;
   if (!bankWords.test(raw)) return null;
 
-  const amountMatch = raw.match(/(?:inr|rs\.?|\u20b9|\$)\s*([\d,]+(?:\.\d{1,2})?)/i) || raw.match(/([\d,]+(?:\.\d{1,2})?)\s*(?:inr|rs\.?|\u20b9|\$)/i);
+  // Clean raw text to strip available balance or parenthetical trailing numbers before amount matching
+  const cleanForAmount = raw
+    .replace(/(?:avl\s*bal|available\s*balance|bal|balance|dispute|callfor dispute|sms block)[^,\n.]*(?:inr|rs\.?|\u20b9|\$)?\s*[\d,]+(?:\.\d{1,2})?/gi, "")
+    .replace(/\([^)]*[\d,]+[^)]*\)/gi, "");
+
+  // Prioritize explicit transaction verb amount match over trailing figures
+  const amountMatch =
+    cleanForAmount.match(/(?:debited|debit|spent|paid|withdrawn|credited|credit|received|for|towards|cost|amount|inr|rs\.?|\u20b9|\$)\s*(?:by|for|of)?\s*(?:inr|rs\.?|\u20b9|\$)?\s*([\d,]+(?:\.\d{1,2})?)/i) ||
+    cleanForAmount.match(/([\d,]+(?:\.\d{1,2})?)\s*(?:rs|rupees|inr|\$|\u20b9)?\s*(?:debited|credited|paid|spent|received|for)/i) ||
+    raw.match(/(?:inr|rs\.?|\u20b9|\$)\s*([\d,]+(?:\.\d{1,2})?)/i) ||
+    raw.match(/([\d,]+(?:\.\d{1,2})?)\s*(?:inr|rs\.?|\u20b9|\$)/i);
+
   if (!amountMatch) return null;
   const amountValue = Number(String(amountMatch[1]).replace(/,/g, ""));
   if (!amountValue || Number.isNaN(amountValue)) return null;
