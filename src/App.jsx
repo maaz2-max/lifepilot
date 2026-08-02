@@ -6999,10 +6999,14 @@ function formatText(str) {
   const parts = String(str).split(/(\*\*.*?\*\*|__.*?__)/g);
   return parts.map((part, idx) => {
     if ((part.startsWith("**") && part.endsWith("**")) || (part.startsWith("__") && part.endsWith("__"))) {
-      const clean = part.slice(2, -2).replace(/\*\*/g, "").trim();
+      const clean = part.slice(2, -2).replace(/\*{1,3}/g, "").replace(/_{1,2}/g, "").trim();
       return <strong key={idx}>{clean}</strong>;
     }
-    const cleanPart = part.replace(/\*\*/g, "").replace(/`/g, "");
+    const cleanPart = part
+      .replace(/\*{1,3}/g, "")
+      .replace(/_{1,2}/g, "")
+      .replace(/`/g, "")
+      .replace(/^#+\s*/, "");
     return cleanPart;
   });
 }
@@ -7023,12 +7027,25 @@ function renderMarkdownContent(rawText) {
       continue;
     }
 
+    if (/^\|*[\s\-:|]+\|*$/.test(line) && line.includes("-")) {
+      continue;
+    }
+
+    if (/^(\*{3,}|-{3,}|_{3,})$/.test(line)) {
+      if (currentList) {
+        blocks.push(currentList);
+        currentList = null;
+      }
+      blocks.push({ type: "hr" });
+      continue;
+    }
+
     if (/^#+\s+/.test(line)) {
       if (currentList) {
         blocks.push(currentList);
         currentList = null;
       }
-      const headingText = line.replace(/^#+\s+/, "");
+      const headingText = line.replace(/^#+\s+/, "").replace(/\*{1,3}/g, "");
       blocks.push({ type: "heading", text: headingText });
       continue;
     }
@@ -7060,6 +7077,9 @@ function renderMarkdownContent(rawText) {
   }
 
   return blocks.map((block, idx) => {
+    if (block.type === "hr") {
+      return <hr key={idx} style={{ border: "none", borderTop: "1px dashed var(--line)", margin: "0.75rem 0", opacity: 0.6 }} />;
+    }
     if (block.type === "heading") {
       return (
         <h4 key={idx} className="ai-heading" style={{ margin: "0.75rem 0 0.4rem 0", fontSize: "1.05rem", fontWeight: 800, color: "var(--ink)", display: "flex", alignItems: "center", gap: "0.35rem" }}>
@@ -7118,31 +7138,57 @@ function MessageBody({ text }) {
 }
 
 function splitMarkdownTable(text) {
-  const lines = String(text || "").trim().split("\n");
+  const lines = String(text || "").split("\n");
+  const isTableLine = (l) => {
+    const trimmed = l.trim();
+    return trimmed.includes("|") && (trimmed.startsWith("|") || trimmed.endsWith("|") || (trimmed.match(/\|/g) || []).length >= 2);
+  };
+
   const start = lines.findIndex((line, index) =>
-    line.trim().startsWith("|") &&
-    line.trim().endsWith("|") &&
-    lines[index + 1]?.includes("---")
+    isTableLine(line) && lines[index + 1] && isTableLine(lines[index + 1])
   );
   if (start < 0) return { before: "", after: String(text || ""), table: null };
+
   let end = start;
-  while (end < lines.length && lines[end].trim().startsWith("|") && lines[end].trim().endsWith("|")) end += 1;
+  while (end < lines.length && isTableLine(lines[end])) {
+    end += 1;
+  }
+
+  const tableBlock = lines.slice(start, end).join("\n");
+  const parsedTable = parseMarkdownTable(tableBlock);
+
+  if (!parsedTable) {
+    return { before: "", after: String(text || ""), table: null };
+  }
+
   return {
     before: lines.slice(0, start).join("\n").trim(),
-    table: parseMarkdownTable(lines.slice(start, end).join("\n")),
+    table: parsedTable,
     after: lines.slice(end).join("\n").trim()
   };
 }
 
 function parseMarkdownTable(text) {
-  const lines = String(text || "").trim().split("\n").filter(Boolean);
-  const tableLines = lines.filter((line) => line.trim().startsWith("|") && line.trim().endsWith("|"));
-  if (tableLines.length < 3 || !tableLines[1].includes("---")) return null;
-  const split = (line) => line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim());
-  return {
-    headers: split(tableLines[0]),
-    rows: tableLines.slice(2).map(split)
-  };
+  const rawLines = String(text || "").trim().split("\n").filter(Boolean);
+  const tableLines = rawLines.filter((l) => l.includes("|"));
+  if (tableLines.length < 2) return null;
+
+  const cleanCell = (cell) => cell.replace(/\*{1,3}/g, "").replace(/`/g, "").replace(/^#+\s*/, "").trim();
+  const splitLine = (line) =>
+    line
+      .trim()
+      .replace(/^\|+/, "")
+      .replace(/\|+$/, "")
+      .split("|")
+      .map(cleanCell);
+
+  const dataLines = tableLines.filter((line) => !/^\|*[\s\-:|]+\|*$/.test(line.trim()));
+  if (dataLines.length < 1) return null;
+
+  const headers = splitLine(dataLines[0]);
+  const rows = dataLines.slice(1).map(splitLine);
+
+  return { headers, rows };
 }
 
 function hasMoney(text) {
