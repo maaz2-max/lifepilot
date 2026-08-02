@@ -2325,29 +2325,36 @@ export default function App() {
           let updatedProjects = current.projects || [];
           
           if (collection === "projectTransactions") {
-            updatedTransactions = updatedTransactions.filter((item) => item.id !== itemId);
+            updatedTransactions = updatedTransactions.filter((item) => String(item.id) !== String(itemId));
             updatedTransactions = updatedTransactions.filter((item) => {
               if (item.category === "Settlement") {
                 const linkedId = parseSettlementExpenseId(item.notes);
-                return linkedId !== itemId;
+                return String(linkedId) !== String(itemId);
               }
               return true;
             });
             updatedProjects = updatedProjects.map(p => ({
               ...p,
-              paidSettlements: (p.paidSettlements || []).filter(s => s.expenseId !== itemId)
+              paidSettlements: (p.paidSettlements || []).filter(s => String(s.expenseId) !== String(itemId))
             }));
           }
+
+          const targetList = Array.isArray(current[collection]) ? current[collection] : [];
+          const updatedCollectionList = targetList.filter((item) => String(item.id) !== String(itemId));
+
+          const updatedExpenses = (collection === "expenses" || collection === "salaryExpenses")
+            ? (current.expenses || []).filter((item) => String(item.id) !== String(itemId))
+            : collection === "reminders"
+            ? (current.expenses || []).filter((e) => String(e.reminderId) !== String(itemId))
+            : current.expenses;
 
           return {
             ...current,
             [collection]: collection === "projectTransactions" 
               ? updatedTransactions 
-              : current[collection].filter((item) => item.id !== itemId),
+              : updatedCollectionList,
             projects: updatedProjects,
-            expenses: collection === "reminders"
-              ? current.expenses.filter((e) => e.reminderId !== itemId)
-              : current.expenses
+            expenses: updatedExpenses
           };
         }, "Deleted");
       }
