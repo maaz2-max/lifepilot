@@ -900,29 +900,37 @@ export function semanticVectorSearch(query, state, topK = 10) {
   if (!queryTokens.length) return [];
 
   const collections = [
-    { type: "expense", items: state.expenses || [], label: "Expense" },
-    { type: "task", items: state.tasks || [], label: "Task" },
-    { type: "note", items: state.notes || [], label: "Note" },
-    { type: "reminder", items: state.reminders || [], label: "Reminder" },
-    { type: "event", items: state.events || [], label: "Event" },
-    { type: "bill", items: state.bills || [], label: "Bill" },
-    { type: "projectTransaction", items: state.projectTransactions || [], label: "Project Expense" },
-    { type: "salaryExpense", items: state.salaryExpenses || [], label: "Salary Expense" }
+    { type: "expense", items: state.expenses || [], label: "Expense", targetTab: "expenses" },
+    { type: "credential", items: state.credentials || [], label: "Vault Credential", targetTab: "vault" },
+    { type: "loan", items: state.loans || [], label: "Loan / EMI", targetTab: "loans" },
+    { type: "task", items: state.tasks || [], label: "Task", targetTab: "tasks" },
+    { type: "note", items: state.notes || [], label: "Note", targetTab: "notes" },
+    { type: "reminder", items: state.reminders || [], label: "Reminder", targetTab: "reminders" },
+    { type: "event", items: state.events || [], label: "Event", targetTab: "events" },
+    { type: "bill", items: state.bills || [], label: "Bill", targetTab: "expenses" },
+    { type: "project", items: state.projects || [], label: "Project", targetTab: "expenses" },
+    { type: "projectTransaction", items: state.projectTransactions || [], label: "Project Expense", targetTab: "expenses" },
+    { type: "salary", items: state.salaries || [], label: "Salary Record", targetTab: "expenses" },
+    { type: "vehicle", items: state.vehicles || [], label: "Vehicle", targetTab: "autotrack" },
+    { type: "fuelLog", items: state.fuelLogs || [], label: "Fuel Log", targetTab: "autotrack" },
+    { type: "serviceLog", items: state.serviceLogs || [], label: "Service Log", targetTab: "autotrack" },
+    { type: "vehicleDocument", items: state.vehicleDocuments || [], label: "Vehicle Document", targetTab: "autotrack" }
   ];
 
   const docs = [];
   collections.forEach((col) => {
     col.items.forEach((item) => {
-      const text = `${item.title || item.name || ""} ${item.category || ""} ${item.source || ""} ${item.notes || ""} ${item.amount || ""} ${item.date || item.dueDate || ""}`;
+      const text = `${item.title || item.name || item.service || item.brand || ""} ${item.category || item.type || ""} ${item.source || ""} ${item.notes || item.username || item.bankName || ""} ${item.amount || item.totalAmount || item.monthlyPayment || ""} ${item.date || item.dueDate || item.startDate || item.expiryDate || ""}`;
       const tokens = tokenize(text);
       docs.push({
         id: item.id,
         type: col.type,
         kindLabel: col.label,
-        title: item.title || item.name || "Untitled",
-        amount: item.amount || 0,
-        date: item.date || item.dueDate || item.startDate || "",
-        category: item.category || item.type || "",
+        targetTab: col.targetTab,
+        title: item.title || item.name || item.service || item.brand || "Untitled",
+        amount: item.amount || item.totalAmount || item.monthlyPayment || 0,
+        date: item.date || item.dueDate || item.startDate || item.expiryDate || "",
+        category: item.category || item.type || item.bankName || "",
         rawItem: item,
         tokens
       });

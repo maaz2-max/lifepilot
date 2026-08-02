@@ -1392,8 +1392,20 @@ export default function App() {
   const [selectedProject, setSelectedProject] = useState("");
   const installPrompt = useInstallPrompt();
   const [carLoading, setCarLoading] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const notified = useRef(new Set());
   const telegramSyncSignature = useRef("");
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSearchOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   const [gmailSyncing, setGmailSyncing] = useState(false);
   const [gmailSyncStatus, setGmailSyncStatus] = useState("");
@@ -2488,9 +2500,10 @@ export default function App() {
           requestNotifications={requestNotifications}
           setActive={showView}
           setAiOpen={setAiOpen}
+          onOpenSearch={() => setSearchOpen(true)}
         />
 
-        {active === "home" && <HomeView state={state} setState={setState} openAdd={openAdd} setActive={showView} setAiOpen={setAiOpen} />}
+        {active === "home" && <HomeView state={state} setState={setState} openAdd={openAdd} setActive={showView} setAiOpen={setAiOpen} onOpenSearch={() => setSearchOpen(true)} />}
         {active === "calendar" && (
           <CalendarView
             state={state}
@@ -2654,6 +2667,7 @@ export default function App() {
       )}
       {carLoading && <CarLoader active={carLoading} text="Processing AutoTrack..." />}
       {toast && <div className="toast"><CheckCircle2 size={18} />{toast}</div>}
+      <GlobalSearchModal state={state} isOpen={searchOpen} onClose={() => setSearchOpen(false)} setActive={showView} />
     </div>
   );
 }
@@ -2747,6 +2761,138 @@ function PinLock({ onUnlock }) {
   );
 }
 
+function GlobalSearchModal({ state, isOpen, onClose, setActive }) {
+  const [query, setQuery] = useState("");
+  const [activeTab, setActiveTab] = useState("all");
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      setTimeout(() => inputRef.current?.focus(), 50);
+    } else {
+      setQuery("");
+      setActiveTab("all");
+    }
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
+  const rawResults = query.trim() ? semanticVectorSearch(query, state, 100) : [];
+
+  const categories = {
+    all: rawResults,
+    vault: rawResults.filter((r) => r.type === "credential"),
+    expenses: rawResults.filter((r) => ["expense", "bill", "salaryExpense", "salary"].includes(r.type)),
+    loans: rawResults.filter((r) => r.type === "loan"),
+    tasks: rawResults.filter((r) => ["task", "reminder", "event", "note"].includes(r.type)),
+    projects: rawResults.filter((r) => ["project", "projectTransaction"].includes(r.type)),
+    vehicles: rawResults.filter((r) => ["vehicle", "fuelLog", "serviceLog", "vehicleDocument"].includes(r.type))
+  };
+
+  const displayedResults = categories[activeTab] || [];
+
+  const handleSelect = (item) => {
+    onClose();
+    if (item.targetTab) {
+      setActive(item.targetTab);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={onClose} style={{ zIndex: 9999, background: "rgba(0,0,0,0.65)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div 
+        className="modal-card" 
+        onClick={(e) => e.stopPropagation()} 
+        style={{ width: "92%", maxWidth: "660px", maxHeight: "82vh", borderRadius: "18px", display: "flex", flexDirection: "column", padding: "1.25rem", gap: "0.85rem", overflow: "hidden", background: "var(--paper)", border: "2px solid var(--ink)", boxShadow: "0 20px 40px rgba(0,0,0,0.3)" }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75rem" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flex: 1, background: "var(--cream)", border: "2px solid var(--ink)", borderRadius: "12px", padding: "0.6rem 0.85rem" }}>
+            <Search size={20} style={{ color: "var(--brand)" }} />
+            <input
+              ref={inputRef}
+              type="text"
+              placeholder="Search Kotak, Salary, Fuel, Uber, HDFC, Passwords..."
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              style={{ border: "none", background: "transparent", outline: "none", width: "100%", fontWeight: 700, fontSize: "1.05rem", color: "var(--ink)" }}
+            />
+            {query && (
+              <button 
+                type="button" 
+                onClick={() => setQuery("")} 
+                style={{ background: "none", border: "none", cursor: "pointer", color: "var(--muted)", display: "flex", alignItems: "center", justifyContent: "center" }}
+              >
+                <X size={16} />
+              </button>
+            )}
+          </div>
+          <button className="icon-button tactile" onClick={onClose} aria-label="Close search"><X size={18} /></button>
+        </div>
+
+        {/* Tab Filters */}
+        <div style={{ display: "flex", gap: "0.4rem", overflowX: "auto", paddingBottom: "0.35rem", borderBottom: "1px solid var(--line)" }}>
+          {[
+            { id: "all", label: `All (${categories.all.length})` },
+            { id: "vault", label: `🔑 Vault (${categories.vault.length})` },
+            { id: "expenses", label: `💳 Money (${categories.expenses.length})` },
+            { id: "loans", label: `🏦 Loans (${categories.loans.length})` },
+            { id: "tasks", label: `✅ Tasks/Notes (${categories.tasks.length})` },
+            { id: "projects", label: `📁 Projects (${categories.projects.length})` },
+            { id: "vehicles", label: `🚗 Vehicles (${categories.vehicles.length})` }
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              className={`tactile ${activeTab === tab.id ? "primary" : "secondary"}`}
+              style={{ padding: "0.3rem 0.75rem", fontSize: "0.8rem", borderRadius: "8px", whitespace: "nowrap" }}
+              onClick={() => setActiveTab(tab.id)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Search Results List */}
+        <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: "0.6rem", paddingRight: "0.2rem" }}>
+          {!query.trim() ? (
+            <div style={{ padding: "2.5rem 1rem", textAlign: "center", color: "var(--muted)" }}>
+              <Search size={38} style={{ marginBottom: "0.6rem", opacity: 0.35 }} />
+              <p style={{ margin: 0, fontWeight: 700, fontSize: "0.98rem" }}>Type any keyword to search across the entire app.</p>
+              <small style={{ opacity: 0.7, marginTop: "0.25rem", display: "block" }}>Try "Kotak", "Salary", "Uber", "HDFC", "Ather", "Insurance"</small>
+            </div>
+          ) : displayedResults.length === 0 ? (
+            <div style={{ padding: "2.5rem 1rem", textAlign: "center", color: "var(--muted)" }}>
+              <p style={{ margin: 0, fontWeight: 700 }}>No results match "{query}" in this category.</p>
+            </div>
+          ) : (
+            displayedResults.map((item) => (
+              <button
+                key={`${item.type}-${item.id}`}
+                className="panel tactile"
+                onClick={() => handleSelect(item)}
+                style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0.85rem 1rem", borderRadius: "12px", border: "1.5px solid var(--ink)", textAlign: "left", cursor: "pointer", background: "var(--paper)", gap: "0.75rem" }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", overflow: "hidden" }}>
+                  <span className="badge-tag insurance-badge" style={{ fontSize: "0.72rem", padding: "0.2rem 0.55rem", whitespace: "nowrap" }}>
+                    {item.kindLabel}
+                  </span>
+                  <div style={{ overflow: "hidden" }}>
+                    <strong style={{ fontSize: "0.96rem", display: "block", textOverflow: "ellipsis", overflow: "hidden", whitespace: "nowrap" }}>{item.title}</strong>
+                    {item.category && <small style={{ color: "var(--muted)", display: "block" }}>{item.category}</small>}
+                  </div>
+                </div>
+                <div style={{ textAlign: "right", whitespace: "nowrap" }}>
+                  {item.amount > 0 && <strong style={{ color: "var(--brand)", fontSize: "0.95rem", display: "block" }}>{rupee.format(item.amount)}</strong>}
+                  {item.date && <small style={{ color: "var(--muted)", fontSize: "0.78rem" }}>{formatDate(item.date)}</small>}
+                </div>
+              </button>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function NavButton({ item, active, onClick }) {
   const Icon = item.icon;
   return (
@@ -2757,7 +2903,7 @@ function NavButton({ item, active, onClick }) {
   );
 }
 
-function TopBar({ state, active, installPrompt, requestNotifications, setActive, setAiOpen }) {
+function TopBar({ state, active, installPrompt, requestNotifications, setActive, setAiOpen, onOpenSearch }) {
   const title = navItems.find((item) => item.key === active)?.label || "LifePilot";
   return (
     <header className="topbar">
@@ -2766,6 +2912,9 @@ function TopBar({ state, active, installPrompt, requestNotifications, setActive,
         <h1>{title}</h1>
       </div>
       <div className="top-actions">
+        <button className="icon-button tactile" title="Global Search (Ctrl+K)" onClick={onOpenSearch}>
+          <Search size={19} />
+        </button>
         <button className="icon-button ai-button tactile" title="LifePilot AI" onClick={() => setAiOpen(true)}>
           <Bot size={19} />
         </button>
@@ -3068,7 +3217,7 @@ function homeInsightCards(state) {
   ];
 }
 
-function HomeView({ state, setState, openAdd, setActive, setAiOpen }) {
+function HomeView({ state, setState, openAdd, setActive, setAiOpen, onOpenSearch }) {
   const [range, setRange] = useState("today");
   useWeather(state, setState);
   const today = todayISO();
@@ -3234,6 +3383,15 @@ function HomeView({ state, setState, openAdd, setActive, setAiOpen }) {
           <p className="eyebrow">Good {new Date().getHours() < 12 ? "morning" : new Date().getHours() < 17 ? "afternoon" : "evening"}</p>
           <h2>{state.profile?.name}, your day is ready.</h2>
           <p>{todayTasks.length} tasks, {todayReminders.length} reminders, {todayEvents.length} events, and {rupee.format(sum(filteredExpenses, (e) => e.type === "Debit"))} spending in view.</p>
+        </div>
+        <div 
+          className="home-search-box panel tactile" 
+          onClick={onOpenSearch} 
+          style={{ display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.65rem 1rem", background: "var(--paper)", border: "2px solid var(--ink)", borderRadius: "12px", boxShadow: "var(--shadow)", cursor: "pointer", margin: "0.85rem 0 0.25rem 0" }}
+        >
+          <Search size={18} style={{ color: "var(--brand)" }} />
+          <span style={{ color: "var(--muted)", fontSize: "0.88rem", fontWeight: 700, flex: 1 }}>Search anything across Vault, Money, Loans, Tasks, Vehicles...</span>
+          <kbd style={{ background: "var(--cream)", border: "1px solid var(--line)", borderRadius: "6px", padding: "0.15rem 0.45rem", fontSize: "0.72rem", fontWeight: 800 }}>Ctrl+K</kbd>
         </div>
         {isBirthday(state.profile, today) && <div className="birthday-card">Happy Birthday, {state.profile.name}!</div>}
       </div>
