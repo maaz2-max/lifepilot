@@ -11646,7 +11646,10 @@ function AutoTrackView({ state, setState, upsert, remove, setToast, setCarLoadin
               ) : (
                 (state.vehicleDocuments || []).map((doc) => {
                   const v = vehicles.find((x) => x.id === doc.vehicleId);
-                  const isExpired = doc.expiryDate && doc.expiryDate < today;
+                  const isExpired = Boolean(doc.expiryDate && doc.expiryDate < today);
+                  const daysLeft = doc.expiryDate 
+                    ? Math.ceil((new Date(`${doc.expiryDate}T12:00:00`) - new Date(`${today}T12:00:00`)) / 86400000) 
+                    : null;
                   const docBadgeClass = /insurance/i.test(doc.type || doc.title)
                     ? "insurance-badge"
                     : /(registration|rc)/i.test(doc.type || doc.title)
@@ -11655,14 +11658,22 @@ function AutoTrackView({ state, setState, upsert, remove, setToast, setCarLoadin
                     ? "puc-badge"
                     : "";
 
+                  const statusBadge = !doc.expiryDate 
+                    ? <span className="badge-tag" style={{ background: "rgba(100,116,139,0.12)", color: "var(--muted)", fontSize: "0.72rem" }}>No Expiry</span>
+                    : isExpired 
+                    ? <span className="badge-tag" style={{ background: "rgba(220,38,38,0.15)", color: "#dc2626", border: "1px solid rgba(220,38,38,0.3)", fontSize: "0.72rem", fontWeight: 700 }}>🔴 Expired</span>
+                    : daysLeft <= 30 
+                    ? <span className="badge-tag" style={{ background: "rgba(234,179,8,0.15)", color: "#ca8a04", border: "1px solid rgba(234,179,8,0.3)", fontSize: "0.72rem", fontWeight: 700 }}>⚡ Expiring Soon ({daysLeft}d)</span>
+                    : <span className="badge-tag" style={{ background: "rgba(22,163,74,0.15)", color: "#16a34a", border: "1px solid rgba(22,163,74,0.3)", fontSize: "0.72rem", fontWeight: 700 }}>🟢 Active</span>;
+
                   return (
                     <div key={doc.id} className={`vehicle-reminder-card panel tactile ${isExpired ? "overdue" : ""}`} style={{ padding: "0.75rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                       <div>
                         <div className="autotrack-flex-row" style={{ gap: "0.5rem" }}>
-                          <strong>{doc.title}</strong> <span className={`badge-tag ${docBadgeClass}`}>{doc.type}</span>
+                          <strong>{doc.title}</strong> <span className={`badge-tag ${docBadgeClass}`}>{doc.type}</span> {statusBadge}
                         </div>
                         <p style={{ margin: "0.25rem 0 0 0", fontSize: "0.85rem", color: "var(--muted)" }}>
-                          {v ? `${v.brand} ${v.model} (${v.name})` : "Vehicle"} | Expiry: {doc.expiryDate ? `${formatDate(doc.expiryDate)} ${isExpired ? "(Expired)" : ""}` : "No expiry"}
+                          {v ? `${v.brand} ${v.model} (${v.name})` : "Vehicle"} | Expiry: {doc.expiryDate ? `${formatDate(doc.expiryDate)} ${isExpired ? "(Expired)" : "(Valid)"}` : "No expiry"}
                         </p>
                         {doc.notes && <p style={{ margin: "0.25rem 0 0 0", fontSize: "0.8rem", color: "var(--muted)" }}>{doc.notes}</p>}
                         {doc.link && <a href={doc.link} target="_blank" rel="noopener noreferrer" style={{ fontSize: "0.8rem", color: "var(--ink)", textDecoration: "underline", display: "inline-block", marginTop: "0.25rem" }}>View File Link</a>}

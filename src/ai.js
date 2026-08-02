@@ -304,8 +304,45 @@ function compactState(state) {
     fuelLogs: take(state.fuelLogs || [], ["id", "vehicleId", "date", "pricePerLitre", "amount", "litres", "odometer", "notes"]),
     serviceLogs: take(state.serviceLogs || [], ["id", "vehicleId", "date", "expense", "serviceType", "odometer", "notes"]),
     chargingLogs: take(state.chargingLogs || [], ["id", "vehicleId", "date", "amountSpent", "chargingType", "notes"]),
-    vehicleReminders: take(state.vehicleReminders || [], ["id", "vehicleId", "type", "title", "dueDate", "dueMileage", "isMileageBased", "isCompleted"]),
-    vehicleDocuments: take(state.vehicleDocuments || [], ["id", "vehicleId", "type", "title", "expiryDate", "link", "notes"]),
+    vehicleReminders: (state.vehicleReminders || []).map((rem) => {
+      const todayStr = state.__today || new Date().toLocaleDateString("en-CA");
+      const isExpired = rem.dueDate && rem.dueDate < todayStr;
+      return {
+        id: rem.id,
+        vehicleId: rem.vehicleId,
+        type: rem.type,
+        title: rem.title,
+        dueDate: rem.dueDate,
+        dueMileage: rem.dueMileage,
+        isMileageBased: rem.isMileageBased,
+        isCompleted: rem.isCompleted,
+        computedStatus: rem.isCompleted ? "Completed" : isExpired ? "Overdue" : "Active Dues"
+      };
+    }),
+    vehicleDocuments: (state.vehicleDocuments || []).map((doc) => {
+      const todayStr = state.__today || new Date().toLocaleDateString("en-CA");
+      const isExpired = Boolean(doc.expiryDate && doc.expiryDate < todayStr);
+      const daysLeft = doc.expiryDate 
+        ? Math.ceil((new Date(`${doc.expiryDate}T12:00:00`) - new Date(`${todayStr}T12:00:00`)) / 86400000) 
+        : null;
+      const computedStatus = !doc.expiryDate 
+        ? "Active (No Expiry Date)" 
+        : isExpired 
+        ? `Expired (${Math.abs(daysLeft)} days ago on ${doc.expiryDate})` 
+        : `Active (Valid for ${daysLeft} more days, expires on ${doc.expiryDate})`;
+      return {
+        id: doc.id,
+        vehicleId: doc.vehicleId,
+        type: doc.type,
+        title: doc.title,
+        expiryDate: doc.expiryDate,
+        link: doc.link,
+        notes: doc.notes,
+        isExpired,
+        daysUntilExpiry: daysLeft,
+        computedStatus
+      };
+    }),
     pendingAiActions: (state.aiMessages || []).flatMap((message) =>
       (message.actions || [])
         .map((action, index) => ({
@@ -631,6 +668,7 @@ ${JSON.stringify(compactState(state))}
 
 Rules:
 - Return only valid JSON. The "reply" field MUST contain clean markdown tables, structured bullet lists, clear headers, and professional emojis to ensure a premium, highly realistic assistant appearance.
+- CRITICAL EXPIRY DATE RULE: Compare document/reminder expiry dates strictly against the current app date ('today'). If an expiryDate or dueDate is in the FUTURE (e.g. year 2027 when today is 2026), the document/reminder is 🟢 ACTIVE and VALID. NEVER mark a future date (like 21 Jun 2027) as 'Expired' or 'Overdue'. Refer to 'computedStatus' in vehicleDocuments for the exact status.
 - ALWAYS use a markdown table when listing multiple tasks, reminders, events, notes, bills, or transactions (with columns like Type, Title, Time/Date, Status, Priority, Amount, etc.).
 - When replying with any money amounts, lists, budgets, cashflow summaries, or comparative insights, prefer a markdown table so the app renders it in our premium financial UI skin.
 - Do not invent existing records. Use the compact app data.
