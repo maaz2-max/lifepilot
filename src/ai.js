@@ -819,3 +819,83 @@ export async function askGeminiAssistant({ state, model, message }) {
       : []
   };
 }
+
+function tokenize(text) {
+  return String(text || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 1);
+}
+
+function buildTermVector(tokens, vocabulary) {
+  const vec = new Array(vocabulary.length).fill(0);
+  const counts = {};
+  tokens.forEach((t) => { counts[t] = (counts[t] || 0) + 1; });
+  vocabulary.forEach((word, idx) => {
+    if (counts[word]) vec[idx] = counts[word];
+  });
+  return vec;
+}
+
+function cosineSimilarity(vecA, vecB) {
+  let dotProduct = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let i = 0; i < vecA.length; i++) {
+    dotProduct += vecA[i] * vecB[i];
+    normA += vecA[i] * vecA[i];
+    normB += vecB[i] * vecB[i];
+  }
+  if (!normA || !normB) return 0;
+  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+export function semanticVectorSearch(query, state, topK = 10) {
+  const queryTokens = tokenize(query);
+  if (!queryTokens.length) return [];
+
+  const collections = [
+    { type: "expense", items: state.expenses || [], label: "Expense" },
+    { type: "task", items: state.tasks || [], label: "Task" },
+    { type: "note", items: state.notes || [], label: "Note" },
+    { type: "reminder", items: state.reminders || [], label: "Reminder" },
+    { type: "event", items: state.events || [], label: "Event" },
+    { type: "bill", items: state.bills || [], label: "Bill" },
+    { type: "projectTransaction", items: state.projectTransactions || [], label: "Project Expense" },
+    { type: "salaryExpense", items: state.salaryExpenses || [], label: "Salary Expense" }
+  ];
+
+  const docs = [];
+  collections.forEach((col) => {
+    col.items.forEach((item) => {
+      const text = `${item.title || item.name || ""} ${item.category || ""} ${item.source || ""} ${item.notes || ""} ${item.amount || ""} ${item.date || item.dueDate || ""}`;
+      const tokens = tokenize(text);
+      docs.push({
+        id: item.id,
+        type: col.type,
+        kindLabel: col.label,
+        title: item.title || item.name || "Untitled",
+        amount: item.amount || 0,
+        date: item.date || item.dueDate || item.startDate || "",
+        category: item.category || item.type || "",
+        rawItem: item,
+        tokens
+      });
+    });
+  });
+
+  const vocabulary = [...new Set(queryTokens.concat(...docs.map((d) => d.tokens)))];
+  const queryVector = buildTermVector(queryTokens, vocabulary);
+
+  const scored = docs.map((doc) => {
+    const docVector = buildTermVector(doc.tokens, vocabulary);
+    const score = cosineSimilarity(queryVector, docVector);
+    return { ...doc, score };
+  });
+
+  return scored
+    .filter((d) => d.score > 0.05)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, topK);
+}

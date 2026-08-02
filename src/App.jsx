@@ -63,7 +63,7 @@ import {
   requestPersistentStorage,
   savePersistedState
 } from "./storage.js";
-import { AI_JSON_REFERENCE, askGeminiAssistant, FREE_GEMINI_MODELS } from "./ai.js";
+import { AI_JSON_REFERENCE, askGeminiAssistant, FREE_GEMINI_MODELS, semanticVectorSearch } from "./ai.js";
 import {
   hasSupabase,
   getCloudProject,
@@ -6048,6 +6048,42 @@ function AiAssistant({ state, setState, upsert, setToast, close }) {
       return;
     }
 
+    // AI Semantic Vector Search & Delete handler
+    const isDeleteQuery = /^(delete|remove|erase|clear)\b/i.test(text.trim());
+    const isSearchQuery = /^(search|find|lookup|show|query)\b/i.test(text.trim());
+
+    if (isDeleteQuery) {
+      const cleanSearchQuery = text.replace(/^(delete|remove|erase|clear)\b/i, "").trim();
+      const results = semanticVectorSearch(cleanSearchQuery || text, state, 5);
+      if (results.length > 0) {
+        const topMatch = results[0];
+        addMessage({
+          role: "ai",
+          text: `⚡ Found matching ${topMatch.kindLabel} **"${topMatch.title}"**${topMatch.amount ? ` (₹${topMatch.amount})` : ""}. Confirm below to delete it permanently.`,
+          actions: [
+            {
+              operation: "delete",
+              type: topMatch.type,
+              id: topMatch.id,
+              summary: `Delete ${topMatch.kindLabel}: "${topMatch.title}"${topMatch.amount ? ` (₹${topMatch.amount})` : ""}`
+            }
+          ]
+        });
+        return;
+      }
+    }
+
+    if (isSearchQuery) {
+      const cleanSearchQuery = text.replace(/^(search|find|lookup|show|query)\b/i, "").trim();
+      const results = semanticVectorSearch(cleanSearchQuery || text, state, 8);
+      if (results.length > 0) {
+        const tableRows = results.map((r) => `| ${r.kindLabel} | ${r.title} | ${r.amount ? `₹${r.amount}` : "-"} | ${r.date || "-"} | \`${r.id}\` |`).join("\n");
+        const reply = `### 🔍 Vector Search Results for "${cleanSearchQuery || text}"\n\n| Type | Title | Amount | Date | Record ID |\n| :--- | :--- | :--- | :--- | :--- |\n${tableRows}\n\nAsk me to delete or edit any record above by name or ID!`;
+        addMessage({ role: "ai", text: reply, actions: [] });
+        return;
+      }
+    }
+
     const natural = parseNaturalMessage(text);
     if (natural) {
       addMessage({
@@ -8269,6 +8305,17 @@ function ExpenseSplitInlineDetails({ expense, project, isCloud, onMarkPaid, onDe
 }
 
 function RecordTable({ list, type, setModal, remove, project, upsert, requestConfirm, setViewingImage = () => {} }) {
+  const handleRemove = (item) => {
+    if (typeof remove === "function") {
+      if (remove.length === 1) {
+        remove(item.id);
+      } else {
+        const col = collectionForKind(type) || "expenses";
+        remove(col, item.id, type || "expense");
+      }
+    }
+  };
+
   return (
     <div className="record-table">
       {list.length ? list.map((item) => (
@@ -8281,7 +8328,7 @@ function RecordTable({ list, type, setModal, remove, project, upsert, requestCon
             <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
               <span className={item.type === "Credit" ? "credit" : "debit"}>{item.amount ? rupee.format(amount(item.amount)) : item.status}</span>
               <button className="icon-button tactile" type="button" onClick={() => setModal({ kind: type, item })}><Edit3 size={16} /></button>
-              <button className="icon-button tactile danger" type="button" onClick={() => remove(item.id)}><Trash2 size={16} /></button>
+              <button className="icon-button tactile danger" type="button" onClick={() => handleRemove(item)}><Trash2 size={16} /></button>
             </div>
           </div>
           {type === "projectTransaction" && (
