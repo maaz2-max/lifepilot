@@ -5901,3 +5901,80 @@ input, textarea, select {
 a, button, input, select, textarea {
   touch-action: manipulation;
 }
+
+/* Salary Banner Card Mobile Responsiveness & Overflow Fix */
+.salary-banner-card {
+  box-sizing: border-box !important;
+  max-width: 100% !important;
+  overflow: hidden !important;
+}
+
+@media (max-width: 600px) {
+  .salary-banner-card {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 0.75rem !important;
+    padding: 0.85rem 1rem !important;
+  }
+  .salary-banner-card > div {
+    width: 100% !important;
+    text-align: left !important;
+  }
+  .salary-banner-card > div:last-child {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-top: 1px dashed var(--line);
+    padding-top: 0.5rem;
+    margin-top: 0.25rem;
+  }
+}
+
+/* AI Message Markdown Formatting & Line-by-Line Alignment */
+.ai-rich-text {
+  max-width: 100%;
+  overflow-x: auto;
+  word-break: break-word;
+}
+
+.ai-rich-text .ai-heading {
+  margin: 0.75rem 0 0.4rem 0 !important;
+  font-size: 1.05rem !important;
+  font-weight: 800 !important;
+  color: var(--ink) !important;
+}
+
+.ai-rich-text .ai-paragraph {
+  margin: 0.35rem 0 !important;
+  line-height: 1.45 !important;
+}
+
+.ai-rich-text .ai-list {
+  margin: 0.35rem 0 !important;
+  padding-left: 1.25rem !important;
+}
+
+.ai-rich-text .ai-list li {
+  margin: 0.25rem 0 !important;
+  line-height: 1.45 !important;
+}
+
+.ai-table-wrap.premium {
+  max-width: 100% !important;
+  overflow-x: auto !important;
+  border-radius: 10px;
+  margin: 0.5rem 0;
+  border: 1px solid var(--line);
+}
+
+.ai-table {
+  width: 100% !important;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.ai-table th, .ai-table td {
+  padding: 0.5rem 0.65rem;
+  word-break: normal;
+}
+

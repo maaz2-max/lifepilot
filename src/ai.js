@@ -667,6 +667,7 @@ Rules:
 - For daily expenses, output type "expense".
 - Daily expenses can also use splitMode, paidBy, owedBy, and participants just like project transactions when the user asks for normal daily split/owes.
 - For expenses inside a named project, find the exact project id by name and output type "projectTransaction".
+- Formatting instructions: Keep responses clean, line-by-line structured, and easy to read. In markdown tables, write plain text cell values without wrapping every cell in raw double asterisks (e.g., write | Category | Total Debt (Rs) | rather than | **Category** | **Total Debt (Rs)** |). Use clear line breaks and numbered or bulleted lists for recommendations so text is structured and easy to digest.
 - For project transactions, always set paidBy to one participant from that project when clear and set participants to the involved participant names. If unclear, ask which project participants were involved.
 - For project split expenses, participants means the people sharing/splitting that payment, not only people present in the project.
 - Do not assume all project participants are splitting an expense. Only names in projectTransaction.participants split that specific expense.

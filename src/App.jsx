@@ -6994,61 +6994,91 @@ function CredentialChatCard({ state, query, setToast }) {
   );
 }
 
+function formatText(str) {
+  if (!str) return null;
+  const parts = String(str).split(/(\*\*.*?\*\*|__.*?__)/g);
+  return parts.map((part, idx) => {
+    if ((part.startsWith("**") && part.endsWith("**")) || (part.startsWith("__") && part.endsWith("__"))) {
+      const clean = part.slice(2, -2).replace(/\*\*/g, "").trim();
+      return <strong key={idx}>{clean}</strong>;
+    }
+    const cleanPart = part.replace(/\*\*/g, "").replace(/`/g, "");
+    return cleanPart;
+  });
+}
+
 function renderMarkdownContent(rawText) {
+  if (!rawText) return null;
   const lines = String(rawText || "").split("\n");
   const blocks = [];
   let currentList = null;
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const isBullet = /^[*-]\s+(.*)/.test(line.trim());
-
-    if (isBullet) {
-      const content = line.trim().replace(/^[*-]\s+/, "");
-      if (!currentList) {
-        currentList = [];
-      }
-      currentList.push(content);
-    } else {
+    const line = lines[i].trim();
+    if (!line) {
       if (currentList) {
-        blocks.push({ type: "list", items: currentList });
+        blocks.push(currentList);
         currentList = null;
       }
-      if (line.trim() !== "") {
-        if (blocks.length > 0 && blocks[blocks.length - 1].type === "paragraph" && lines[i - 1]?.trim() !== "") {
-          blocks[blocks.length - 1].text += " " + line.trim();
-        } else {
-          blocks.push({ type: "paragraph", text: line.trim() });
-        }
+      continue;
+    }
+
+    if (/^#+\s+/.test(line)) {
+      if (currentList) {
+        blocks.push(currentList);
+        currentList = null;
       }
+      const headingText = line.replace(/^#+\s+/, "");
+      blocks.push({ type: "heading", text: headingText });
+      continue;
+    }
+
+    const bulletMatch = /^[*-•]\s+(.*)/.exec(line);
+    const numberMatch = /^(\d+[\.\)])\s+(.*)/.exec(line);
+
+    if (bulletMatch || numberMatch) {
+      const isNumbered = Boolean(numberMatch);
+      const content = isNumbered ? numberMatch[2] : bulletMatch[1];
+      const listType = isNumbered ? "ol" : "ul";
+
+      if (!currentList || currentList.listType !== listType) {
+        if (currentList) blocks.push(currentList);
+        currentList = { type: "list", listType, items: [] };
+      }
+      currentList.items.push(content);
+    } else {
+      if (currentList) {
+        blocks.push(currentList);
+        currentList = null;
+      }
+      blocks.push({ type: "paragraph", text: line });
     }
   }
+
   if (currentList) {
-    blocks.push({ type: "list", items: currentList });
+    blocks.push(currentList);
   }
 
-  const formatText = (str) => {
-    const parts = str.split(/(\*\*.*?\*\*)/);
-    return parts.map((part, idx) => {
-      if (part.startsWith("**") && part.endsWith("**")) {
-        return <strong key={idx}>{part.slice(2, -2)}</strong>;
-      }
-      return part;
-    });
-  };
-
   return blocks.map((block, idx) => {
-    if (block.type === "list") {
+    if (block.type === "heading") {
       return (
-        <ul key={idx} className="ai-list">
+        <h4 key={idx} className="ai-heading" style={{ margin: "0.75rem 0 0.4rem 0", fontSize: "1.05rem", fontWeight: 800, color: "var(--ink)", display: "flex", alignItems: "center", gap: "0.35rem" }}>
+          {formatText(block.text)}
+        </h4>
+      );
+    }
+    if (block.type === "list") {
+      const Tag = block.listType;
+      return (
+        <Tag key={idx} className={`ai-list ${block.listType === "ol" ? "numbered" : "bullet"}`} style={{ margin: "0.4rem 0", paddingLeft: "1.2rem" }}>
           {block.items.map((item, itemIdx) => (
-            <li key={itemIdx}>{formatText(item)}</li>
+            <li key={itemIdx} style={{ margin: "0.25rem 0", lineHeight: "1.45" }}>{formatText(item)}</li>
           ))}
-        </ul>
+        </Tag>
       );
     }
     return (
-      <p key={idx} className="ai-paragraph">
+      <p key={idx} className="ai-paragraph" style={{ margin: "0.4rem 0", lineHeight: "1.45" }}>
         {formatText(block.text)}
       </p>
     );
@@ -7071,16 +7101,16 @@ function MessageBody({ text }) {
       {parsed.before && renderMarkdownContent(parsed.before)}
       {money.length ? <MoneyHighlights values={money} /> : null}
       <div className="ai-table-wrap premium">
-      <table className="ai-table">
-        <thead>
-          <tr>{parsed.table.headers.map((header) => <th key={header}>{header}</th>)}</tr>
-        </thead>
-        <tbody>
-          {parsed.table.rows.map((row, index) => (
-            <tr key={index}>{row.map((cell, cellIndex) => <td className={hasMoney(cell) ? "money-cell" : ""} key={`${index}-${cellIndex}`}>{cell}</td>)}</tr>
-          ))}
-        </tbody>
-      </table>
+        <table className="ai-table">
+          <thead>
+            <tr>{parsed.table.headers.map((header, index) => <th key={index}>{formatText(header)}</th>)}</tr>
+          </thead>
+          <tbody>
+            {parsed.table.rows.map((row, index) => (
+              <tr key={index}>{row.map((cell, cellIndex) => <td className={hasMoney(cell) ? "money-cell" : ""} key={`${index}-${cellIndex}`}>{formatText(cell)}</td>)}</tr>
+            ))}
+          </tbody>
+        </table>
       </div>
       {parsed.after && renderMarkdownContent(parsed.after)}
     </div>
