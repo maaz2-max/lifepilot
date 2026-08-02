@@ -6,6 +6,24 @@ export const FREE_GEMINI_MODELS = [
   "gemini-3.5-flash"
 ];
 
+export const MISTRAL_MODELS = [
+  "mistral-large-latest",
+  "mistral-large-2512",
+  "mistral-medium-latest",
+  "mistral-medium-2508",
+  "mistral-medium-2505",
+  "mistral-small-latest",
+  "mistral-small-2603",
+  "codestral-latest",
+  "codestral-2508",
+  "ministral-8b-2512",
+  "ministral-3b-2512",
+  "ministral-14b-2512",
+  "devstral-2512",
+  "voxtral-mini-2602",
+  "labs-leanstral-1-5-1"
+];
+
 const FREE_MLVOCA_MODELS = ["mlvoca:tinyllama", "mlvoca:deepseek-r1:1.5b"];
 const MLVOCA_MODEL_MAP = {
   "mlvoca:tinyllama": "tinyllama",
@@ -58,6 +76,36 @@ async function callGemini({ key, model, prompt }) {
   });
 }
 
+async function callMistral({ key, model, prompt }) {
+  const apiKey = key || process.env.MISTRAL_API_KEY || "NjEH8MT66eMyLrRfhTGZxKS8knBDCFhd";
+  return fetch("https://api.mistral.ai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model: model || "mistral-large-latest",
+      messages: [{ role: "user", content: prompt }],
+      response_format: { type: "json_object" },
+      temperature: 0.2
+    })
+  });
+}
+
+function normalizeMistralResponse(data) {
+  const text = data.choices?.[0]?.message?.content || "{}";
+  return {
+    candidates: [
+      {
+        content: {
+          parts: [{ text }]
+        }
+      }
+    ]
+  };
+}
+
 async function callMlvoca({ model, prompt }) {
   return fetch("https://mlvoca.com/api/generate", {
     method: "POST",
@@ -99,10 +147,29 @@ export async function handleAiRequest(req, res, env = process.env) {
   }
 
   const keys = getKeys(env);
-  const selectedModel = [...FREE_GEMINI_MODELS, ...FREE_MLVOCA_MODELS].includes(body.model) ? body.model : FREE_GEMINI_MODELS[0];
+  const isMistral = MISTRAL_MODELS.includes(body.model) || /^mistral|^codestral|^ministral|^devstral|^voxtral/i.test(body.model);
+  const selectedModel = [...FREE_GEMINI_MODELS, ...FREE_MLVOCA_MODELS, ...MISTRAL_MODELS].includes(body.model) ? body.model : FREE_GEMINI_MODELS[0];
   if (!body.prompt || typeof body.prompt !== "string") {
     jsonResponse(res, 400, { error: "Missing prompt" });
     return;
+  }
+
+  if (isMistral) {
+    try {
+      const mistralKey = env.MISTRAL_API_KEY || "NjEH8MT66eMyLrRfhTGZxKS8knBDCFhd";
+      const mistralRes = await callMistral({ key: mistralKey, model: selectedModel, prompt: body.prompt });
+      if (mistralRes.ok) {
+        const data = await mistralRes.json();
+        jsonResponse(res, 200, {
+          data: normalizeMistralResponse(data),
+          model: selectedModel,
+          provider: "mistral"
+        });
+        return;
+      }
+    } catch {
+      // Fall back to Gemini/MLVoca if Mistral API fails
+    }
   }
 
   if (FREE_MLVOCA_MODELS.includes(selectedModel)) {

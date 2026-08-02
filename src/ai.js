@@ -4,6 +4,15 @@ export const FREE_GEMINI_MODELS = [
   { id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash Lite", limit: "15 RPM / 500 RPD" },
   { id: "gemini-3-flash", label: "Gemini 3 Flash", limit: "5 RPM / 20 RPD" },
   { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", limit: "5 RPM / 20 RPD" },
+  { id: "mistral-large-latest", label: "Mistral Large (2512)", limit: "250k TPM / 0.07 RPS" },
+  { id: "mistral-medium-latest", label: "Mistral Medium (2508)", limit: "356k TPM / 0.38 RPS" },
+  { id: "mistral-small-latest", label: "Mistral Small (2603)", limit: "50k TPM / 0.83 RPS" },
+  { id: "codestral-latest", label: "Codestral (2508)", limit: "625k TPM / 2.08 RPS" },
+  { id: "ministral-8b-2512", label: "Ministral 8B (2512)", limit: "625k TPM / 3.13 RPS" },
+  { id: "ministral-3b-2512", label: "Ministral 3B (2512)", limit: "1.3M TPM / 12.5 RPS" },
+  { id: "ministral-14b-2512", label: "Ministral 14B (2512)", limit: "937k TPM / 0.5 RPS" },
+  { id: "devstral-2512", label: "Devstral (2512)", limit: "1M TPM / 0.83 RPS" },
+  { id: "voxtral-mini-2602", label: "Voxtral Mini (2602)", limit: "50k TPM / 1.0 RPS" },
   { id: "mlvoca:tinyllama", label: "MLVoca TinyLlama", limit: "No key / public hosted" },
   { id: "mlvoca:deepseek-r1:1.5b", label: "MLVoca DeepSeek R1 1.5B", limit: "No key / public hosted" }
 ];

@@ -9,6 +9,7 @@ import {
   ChevronDown,
   ChevronUp,
   CircleDollarSign,
+  Clipboard,
   ClipboardCheck,
   Braces,
   CloudSun,
@@ -16,6 +17,7 @@ import {
   Download,
   Edit3,
   Eye,
+  EyeOff,
   FileUp,
   Filter,
   Home,
@@ -23,6 +25,8 @@ import {
   KeyRound,
   LayoutDashboard,
   ListPlus,
+  Mic,
+  MicOff,
   NotebookPen,
   Plus,
   Percent,
@@ -5982,6 +5986,7 @@ function AiAssistant({ state, setState, upsert, setToast, close }) {
   const [manualJson, setManualJson] = useState("");
   const [jsonToolsOpen, setJsonToolsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [listening, setListening] = useState(false);
   const [model, setModel] = useState(state.settings.aiModel || FREE_GEMINI_MODELS[0].id);
   const messagesEndRef = useRef(null);
   const messages = state.aiMessages || [];
@@ -6190,6 +6195,42 @@ function AiAssistant({ state, setState, upsert, setToast, close }) {
     }
   };
 
+  const toggleVoiceInput = () => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setToast("Voice input is not supported in this browser.");
+      return;
+    }
+    if (listening) {
+      setListening(false);
+      return;
+    }
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.lang = "en-US";
+      recognition.onstart = () => setListening(true);
+      recognition.onresult = (event) => {
+        const transcript = Array.from(event.results)
+          .map((r) => r[0].transcript)
+          .join("");
+        setInput(transcript);
+      };
+      recognition.onerror = () => {
+        setListening(false);
+        setToast("Voice recognition error.");
+      };
+      recognition.onend = () => {
+        setListening(false);
+      };
+      recognition.start();
+    } catch {
+      setListening(false);
+      setToast("Voice recognition failed.");
+    }
+  };
+
   const useQuickChip = (chip) => {
     if (chip.label === "Parse bank message") {
       setInput(chip.prompt);
@@ -6247,7 +6288,7 @@ function AiAssistant({ state, setState, upsert, setToast, close }) {
       <section className="ai-panel">
         <div className="ai-header">
           <div>
-            <p className="eyebrow">Free Gemini AI</p>
+            <p className="eyebrow">LifePilot AI Assistant</p>
             <h2>LifePilot Assistant</h2>
           </div>
           <div className="ai-header-actions">
@@ -6268,7 +6309,7 @@ function AiAssistant({ state, setState, upsert, setToast, close }) {
               options={FREE_GEMINI_MODELS.map((entry) => [entry.id, `${entry.label} (${entry.limit})`])}
             />
           </label>
-          <p className="ai-provider-note">MLVoca models use a public no-key endpoint. They can be slower and are best as a fallback when Gemini limits are busy.</p>
+          <p className="ai-provider-note">Choose between Gemini, Mistral AI, or MLVoca endpoints.</p>
         </div>
 
         <div className="ai-json-tools">
@@ -6324,13 +6365,37 @@ function AiAssistant({ state, setState, upsert, setToast, close }) {
                 submitPrompt(input);
               }
             }}
-            placeholder="Type 'had tea for 20', 'paid 150 for cab', 'note: shopping', or paste Bank SMS..."
-            rows={2}
+            placeholder="Type 'had tea for 20', 'paid 150 for cab', or paste Bank SMS..."
+            rows={1}
           />
-          <div className="cluster" style={{ gap: "0.4rem", flexWrap: "wrap", justifyContent: "flex-end", width: "100%" }}>
-            <button className="secondary tactile" type="button" onClick={pasteFromClipboardAndParse} title="Paste SMS or text from clipboard" style={{ whiteSpace: "nowrap", fontSize: "0.82rem", padding: "0.55rem 0.8rem" }}>📋 Paste SMS</button>
-            <button className="secondary tactile" type="button" onClick={autoParseAndAdd} title="Parse and auto-add expense/note instantly" style={{ whiteSpace: "nowrap", fontSize: "0.82rem", padding: "0.55rem 0.8rem" }}>⚡ Auto-Add</button>
-            <button className="primary tactile" type="submit" disabled={loading}><SendHorizontal size={18} /></button>
+          <div className="ai-input-actions">
+            <button
+              className="secondary tactile icon-only-btn"
+              type="button"
+              onClick={pasteFromClipboardAndParse}
+              title="Paste from clipboard"
+              aria-label="Paste from clipboard"
+            >
+              <Clipboard size={18} />
+            </button>
+            <button
+              className={`secondary tactile icon-only-btn ${listening ? "listening-active" : ""}`}
+              type="button"
+              onClick={toggleVoiceInput}
+              title={listening ? "Listening... Click to stop" : "Voice input"}
+              aria-label="Voice input"
+            >
+              {listening ? <MicOff size={18} /> : <Mic size={18} />}
+            </button>
+            <button
+              className="primary tactile icon-only-btn"
+              type="submit"
+              disabled={loading}
+              title="Send message"
+              aria-label="Send message"
+            >
+              <SendHorizontal size={18} />
+            </button>
           </div>
         </form>
         <button className="secondary tactile clear-chat" onClick={clearChat} type="button">Clear recent chat</button>
@@ -7710,6 +7775,33 @@ function actionDoneLabel(operation) {
 }
 
 function Field({ field, value, set, form }) {
+  const [showSecret, setShowSecret] = useState(false);
+  if (field.type === "password") {
+    return (
+      <label className={field.wide ? "wide" : ""}>
+        {field.label}
+        <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+          <input
+            type={showSecret ? "text" : "password"}
+            value={value || ""}
+            onChange={(e) => set(field.name, e.target.value)}
+            required={field.required}
+            style={{ flex: 1 }}
+          />
+          <button
+            type="button"
+            className="icon-button tactile"
+            style={{ minWidth: "38px", height: "38px" }}
+            onClick={() => setShowSecret((prev) => !prev)}
+            title={showSecret ? "Hide secret" : "Show secret"}
+            aria-label={showSecret ? "Hide secret" : "Show secret"}
+          >
+            {showSecret ? <EyeOff size={16} /> : <Eye size={16} />}
+          </button>
+        </div>
+      </label>
+    );
+  }
   if (field.type === "billSplits") {
     return <BillSplitsEditor field={field} value={value} set={set} form={form} />;
   }

@@ -56,15 +56,34 @@ function escapeHtml(value) {
 }
 
 function notificationText(item) {
-  const title = escapeHtml(item.title || "LifePilot notification");
-  const type = escapeHtml(item.type || "notification");
+  const title = escapeHtml(item.title || "LifePilot Notification");
+  const typeStr = String(item.type || "reminder").toLowerCase();
   const body = escapeHtml(item.body || "");
-  const due = item.due_at ? new Date(item.due_at).toLocaleString("en-IN", { timeZone: item.timezone || "Asia/Kolkata" }) : "";
+  const due = item.due_at ? new Date(item.due_at).toLocaleString("en-IN", {
+    timeZone: item.timezone || "Asia/Kolkata",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true
+  }) : "";
+
+  let icon = "🔔";
+  if (typeStr.includes("bill")) icon = "💸";
+  else if (typeStr.includes("task") || typeStr.includes("todo")) icon = "✅";
+  else if (typeStr.includes("event")) icon = "📅";
+  else if (typeStr.includes("expense")) icon = "💳";
+  else if (typeStr.includes("salary")) icon = "💰";
+
   return [
-    `<b>${title}</b>`,
-    `Type: ${type}`,
-    due ? `Time: ${escapeHtml(due)}` : "",
-    body ? `\n${body}` : ""
+    `${icon} <b>LifePilot Alert</b>`,
+    `━━━━━━━━━━━━━━━━━━`,
+    `📌 <b>${title}</b>`,
+    typeStr ? `🏷️ <b>Category:</b> ${escapeHtml(item.type.toUpperCase())}` : "",
+    due ? `⏰ <b>Time:</b> ${escapeHtml(due)}` : "",
+    item.priority ? `⚡ <b>Priority:</b> ${escapeHtml(item.priority)}` : "",
+    body ? `\n📝 <i>${body}</i>` : ""
   ].filter(Boolean).join("\n");
 }
 
@@ -337,10 +356,13 @@ export async function handleTelegramCron(req, res, env = process.env) {
     );
     let sent = 0;
     const errors = [];
+    const processedKeysInRun = new Set();
 
     for (const item of items || []) {
       const sendKey = `${item.local_id}:${item.type}:${item.due_at}`;
-      if (item.last_sent_key === sendKey) continue;
+      const itemDedupKey = `${item.local_id}:${item.type}`;
+      if (item.last_sent_key === sendKey || processedKeysInRun.has(itemDedupKey)) continue;
+      processedKeysInRun.add(itemDedupKey);
 
       // Stale items (older than 6 hours) are silently marked as sent so they don't blast all at once
       if (item.due_at < sixHoursAgo) {
