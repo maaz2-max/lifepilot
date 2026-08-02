@@ -11186,12 +11186,19 @@ function AutoTrackView({ state, setState, upsert, remove, setToast, setCarLoadin
                 (state.vehicleDocuments || []).map((doc) => {
                   const v = vehicles.find((x) => x.id === doc.vehicleId);
                   const isExpired = doc.expiryDate && doc.expiryDate < today;
+                  const docBadgeClass = /insurance/i.test(doc.type || doc.title)
+                    ? "insurance-badge"
+                    : /(registration|rc)/i.test(doc.type || doc.title)
+                    ? "rc-badge"
+                    : /puc/i.test(doc.type || doc.title)
+                    ? "puc-badge"
+                    : "";
 
                   return (
                     <div key={doc.id} className={`vehicle-reminder-card panel tactile ${isExpired ? "overdue" : ""}`} style={{ padding: "0.75rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                       <div>
                         <div className="autotrack-flex-row" style={{ gap: "0.5rem" }}>
-                          <strong>{doc.title}</strong> <span className="badge-tag">{doc.type}</span>
+                          <strong>{doc.title}</strong> <span className={`badge-tag ${docBadgeClass}`}>{doc.type}</span>
                         </div>
                         <p style={{ margin: "0.25rem 0 0 0", fontSize: "0.85rem", color: "var(--muted)" }}>
                           {v ? `${v.brand} ${v.model} (${v.name})` : "Vehicle"} | Expiry: {doc.expiryDate ? `${formatDate(doc.expiryDate)} ${isExpired ? "(Expired)" : ""}` : "No expiry"}
