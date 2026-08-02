@@ -6043,6 +6043,16 @@ function AiAssistant({ state, setState, upsert, setToast, close }) {
       return;
     }
 
+    const smartCred = parseBankCredentialDetails(text);
+    if (smartCred) {
+      addMessage({
+        role: "ai",
+        text: `🔐 **Smart Vault AI Parser**: I structured your bank details for **"${smartCred.action.data.title}"**. Review the details and confirm below to encrypt and save them directly into your Vault.`,
+        actions: [smartCred.action]
+      });
+      return;
+    }
+
     const credentialIntent = getCredentialIntent(text, state.credentials || []);
     if (credentialIntent) {
       if (model.startsWith("mlvoca:")) {
@@ -6522,13 +6532,45 @@ function AiActionCard({ messageId, actionIndex, state, setState, action, upsert,
     });
   };
 
-  const apply = () => {
+  const apply = async () => {
     try {
       const data = JSON.parse(draft);
+      if (action.type === "credential" && data.secret) {
+        const encrypted = await encryptWithAppPin(data.secret);
+        const credRecord = {
+          id: data.id || id("credential"),
+          title: data.title || "Bank Credential",
+          type: data.type || "debit_card",
+          url: data.url || "",
+          username: data.username || "",
+          notes: data.notes || "",
+          pinned: Boolean(data.pinned),
+          encrypted,
+          fieldNames: Object.keys(data.secret || {}).filter((k) => String(data.secret[k] || "").trim()),
+          updatedAt: new Date().toISOString()
+        };
+        setState((current) => ({
+          ...current,
+          credentials: [credRecord, ...(current.credentials || []).filter((c) => c.id !== credRecord.id)],
+          aiMessages: (current.aiMessages || []).map((message) => {
+            if (message.id !== messageId) return message;
+            return {
+              ...message,
+              actions: (message.actions || []).map((entry, index) =>
+                index === actionIndex ? { ...entry, status: "created", resolvedAt: new Date().toISOString() } : entry
+              )
+            };
+          })
+        }));
+        setToast("Saved & Encrypted into Vault");
+        setDone(true);
+        return;
+      }
       setState((current) => resolveSingleAiAction(current, messageId, actionIndex, action, data));
       setToast(operation === "delete" ? "Deleted" : operation === "edit" ? "Changes saved" : "Added");
       setDone(true);
-    } catch {
+    } catch (err) {
+      console.error("AI action resolution error", err);
       setToast("Fix the action JSON before confirming");
     }
   };
@@ -7196,7 +7238,88 @@ function getCredentialIntent(text, credentials) {
   if (/\b(add|create|edit|update|save|delete|remove)\b/i.test(normalized)) {
     return { mode: "manage", text, count: credentials.length };
   }
-  return null;
+}
+
+function parseBankCredentialDetails(text) {
+  const raw = String(text || "").trim();
+  if (!raw || raw.length < 8) return null;
+  const lower = raw.toLowerCase();
+
+  // Pattern detection for bank cards, accounts, IFSC, PIN, CVV, passwords
+  const cardMatch = raw.match(/\b(?:\d[ -]*?){13,19}\b/);
+  const accountMatch = raw.match(/\b(?:a\/c|acct|account|acc no|acc)\s*[:#-]?\s*(\d{9,18})\b/i) || (lower.includes("account number") && raw.match(/\b\d{9,18}\b/));
+  const ifscMatch = raw.match(/\b([A-Z]{4}0[A-Z0-9]{6})\b/i);
+  const expiryMatch = raw.match(/\b(?:exp|expiry|valid thru|valid to|valid date)?\s*[:#-]?\s*(\d{2}\s*[\/\-]\s*\d{2,4})\b/i);
+  const cvvMatch = raw.match(/\b(?:cvv|cvc|security code)\s*[:#-]?\s*(\d{3,4})\b/i);
+  const pinMatch = raw.match(/\b(?:pin|atm pin|upi pin|card pin)\s*[:#-]?\s*(\d{4,6})\b/i);
+  const passwordMatch = raw.match(/\b(?:password|pwd|pass|netbanking pass)\s*[:#-]?\s*([^\s,;\n]+)/i);
+
+  const isBankOrCredPaste = Boolean(
+    cardMatch || 
+    accountMatch || 
+    ifscMatch || 
+    (cvvMatch && expiryMatch) || 
+    (passwordMatch && (lower.includes("bank") || lower.includes("card") || lower.includes("login"))) ||
+    (pinMatch && (lower.includes("card") || lower.includes("upi") || lower.includes("bank")))
+  );
+  if (!isBankOrCredPaste) return null;
+
+  // Extract Bank Name
+  const bankMatch = raw.match(/\b(hdfc|sbi|icici|axis|kotak|bob|pnb|canara|union bank|indusind|idfc|yes bank|federal|standard chartered|hsbc|citibank|rbl|slice|onecard|jupiter|cred|paytm|phonepe|gpay)\b/i);
+  const bankName = bankMatch ? bankMatch[1].toUpperCase() : "";
+
+  // Determine Credential Type & Title
+  let credType = "debit_card";
+  let typeTitle = "Card";
+  if (lower.includes("credit card") || lower.includes("credit")) {
+    credType = "credit_card";
+    typeTitle = "Credit Card";
+  } else if (lower.includes("debit card") || lower.includes("debit")) {
+    credType = "debit_card";
+    typeTitle = "Debit Card";
+  } else if (lower.includes("account") || ifscMatch || accountMatch) {
+    credType = "bank_account";
+    typeTitle = "Bank Account";
+  } else if (lower.includes("netbanking") || lower.includes("login") || passwordMatch) {
+    credType = "website_login";
+    typeTitle = "NetBanking Login";
+  }
+
+  const title = bankName ? `${bankName} ${typeTitle}` : `Bank ${typeTitle}`;
+
+  // Extract Username / Account Holder
+  const nameMatch = raw.match(/\b(?:name|holder|holder name|user|username|customer id)\s*[:#-]?\s*([A-Za-z ]{2,30})/i);
+  const username = nameMatch ? nameMatch[1].trim() : "";
+
+  // Build secret object with extracted fields
+  const secret = {};
+  if (cardMatch) secret.cardNumber = cardMatch[0].replace(/[- ]/g, "");
+  if (expiryMatch) secret.expiry = expiryMatch[1].trim();
+  if (cvvMatch) secret.cvv = cvvMatch[1].trim();
+  if (pinMatch) secret.pin = pinMatch[1].trim();
+  const accNumStr = typeof accountMatch === "object" && accountMatch && accountMatch[1] ? accountMatch[1] : (typeof accountMatch === "object" && accountMatch ? accountMatch[0] : "");
+  if (accNumStr) secret.accountNumber = accNumStr;
+  if (ifscMatch) secret.ifsc = ifscMatch[1].toUpperCase();
+  if (passwordMatch) secret.password = passwordMatch[1].trim();
+  secret.notes = `Pasted bank detail import`;
+
+  return {
+    type: "credential",
+    summary: `Save Credential: ${title}`,
+    action: {
+      operation: "create",
+      type: "credential",
+      summary: `Save ${title} to Secure Vault`,
+      data: {
+        title,
+        type: credType,
+        username,
+        url: "",
+        notes: `Smart AI Vault import on ${todayISO()}`,
+        secret
+      }
+    }
+  };
 }
 
 function parseNaturalMessage(text) {
