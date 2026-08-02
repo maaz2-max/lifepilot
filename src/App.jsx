@@ -2393,6 +2393,16 @@ export default function App() {
       setExpenseTab("bills");
       return;
     }
+    if (key === "projects") {
+      setActive("expenses");
+      setExpenseTab("projects");
+      return;
+    }
+    if (key === "daily") {
+      setActive("expenses");
+      setExpenseTab("daily");
+      return;
+    }
     setActive(key);
   };
 
@@ -2797,29 +2807,27 @@ function GlobalSearchModal({ state, isOpen, onClose, setActive, openAdd }) {
     if (!item) return;
 
     if (item.type === "credential") {
-      openAdd("credential", item.rawItem);
+      setActive("vault");
     } else if (item.type === "expense") {
-      openAdd("expense", item.rawItem);
+      setActive("daily");
     } else if (item.type === "bill") {
-      openAdd("bill", item.rawItem);
+      setActive("bills");
+    } else if (item.type === "salary" || item.type === "salaryExpense") {
+      setActive("salary");
+    } else if (item.type === "project" || item.type === "projectTransaction") {
+      setActive("projects");
     } else if (item.type === "loan") {
-      openAdd("loan", item.rawItem);
+      setActive("loans");
     } else if (item.type === "task") {
-      openAdd("task", item.rawItem);
+      setActive("tasks");
     } else if (item.type === "reminder") {
-      openAdd("reminder", item.rawItem);
+      setActive("reminders");
     } else if (item.type === "note") {
-      openAdd("note", item.rawItem);
+      setActive("notes");
     } else if (item.type === "event") {
-      openAdd("event", item.rawItem);
-    } else if (item.type === "project") {
-      openAdd("project", item.rawItem);
-    } else if (item.type === "salary") {
-      openAdd("salary", item.rawItem);
-    } else {
-      if (item.targetTab) {
-        setActive(item.targetTab);
-      }
+      setActive("events");
+    } else if (item.targetTab) {
+      setActive(item.targetTab);
     }
   };
 
