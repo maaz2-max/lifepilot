@@ -2536,6 +2536,7 @@ export default function App() {
             upsert={upsert}
             requestConfirm={requestConfirm}
             setToast={setToast}
+            setState={setState}
           />
         )}
         {active === "vault" && (
@@ -4025,10 +4026,28 @@ function getInterestBreakdown(loan) {
   };
 }
 
-function LoansView({ state, openAdd, setModal, remove, upsert, requestConfirm, setToast }) {
+function LoansView({ state, openAdd, setModal, remove, upsert, requestConfirm, setToast, setState }) {
   const [selectedLoanId, setSelectedLoanId] = useState(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("Active");
+  const [editingSalary, setEditingSalary] = useState(false);
+  const [salaryInput, setSalaryInput] = useState("");
+
+  const userSalary = Number(state.profile?.monthlySalary || 0);
+
+  const saveSalary = () => {
+    const val = Number(salaryInput);
+    if (isNaN(val) || val < 0) {
+      setToast("Enter a valid salary amount");
+      return;
+    }
+    setState((current) => ({
+      ...current,
+      profile: { ...(current.profile || {}), monthlySalary: val }
+    }));
+    setEditingSalary(false);
+    setToast("Monthly salary saved!");
+  };
 
   const loans = (state.loans || [])
     .filter((item) => matchesQuery(item, query))
@@ -4039,7 +4058,32 @@ function LoansView({ state, openAdd, setModal, remove, upsert, requestConfirm, s
 
   const activeLoans = (state.loans || []).filter(loan => loan.status === "Active");
   const totalActiveEmi = sum(activeLoans, loan => loan.monthlyPayment);
-  
+  const remainingFreeSalary = Math.max(0, userSalary - totalActiveEmi);
+  const dtiPercent = userSalary > 0 ? ((totalActiveEmi / userSalary) * 100).toFixed(1) : 0;
+
+  // Compute last EMI date for each active loan
+  const activeLoanInsights = activeLoans.map((loan) => {
+    const remainingMonths = Math.max(0, amount(loan.totalMonths) - amount(loan.completedMonths));
+    let lastEmiDate = "Unknown";
+    if (remainingMonths === 0) {
+      lastEmiDate = "Completed";
+    } else if (loan.startDate) {
+      const start = new Date(`${loan.startDate}T12:00:00`);
+      start.setMonth(start.getMonth() + amount(loan.totalMonths) - 1);
+      lastEmiDate = start.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+    } else {
+      const finalDate = new Date();
+      finalDate.setMonth(finalDate.getMonth() + remainingMonths);
+      lastEmiDate = finalDate.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+    }
+    const salaryShare = userSalary > 0 ? ((amount(loan.monthlyPayment) / userSalary) * 100).toFixed(1) : 0;
+    return { ...loan, remainingMonths, lastEmiDate, salaryShare };
+  });
+
+  const closedLoans = (state.loans || []).filter(loan => loan.status !== "Active");
+  const averageEmi = activeLoans.length ? totalActiveEmi / activeLoans.length : 0;
+  const totalPrincipal = (state.loans || []).reduce((acc, loan) => acc + amount(loan.totalAmount), 0);
+
   let totalPaid = 0;
   let totalOutstanding = 0;
   (state.loans || []).forEach(loan => {
@@ -4050,10 +4094,6 @@ function LoansView({ state, openAdd, setModal, remove, upsert, requestConfirm, s
     }
   });
 
-  const closedLoans = (state.loans || []).filter(loan => loan.status !== "Active");
-  const averageEmi = activeLoans.length ? totalActiveEmi / activeLoans.length : 0;
-  const totalPrincipal = (state.loans || []).reduce((acc, loan) => acc + amount(loan.totalAmount), 0);
-  
   let totalInterestPayable = 0;
   let totalInterestPaid = 0;
   let totalRemainingInterest = 0;
@@ -4184,6 +4224,51 @@ function LoansView({ state, openAdd, setModal, remove, upsert, requestConfirm, s
       paidMonths: nextPaidMonths
     }, "loan");
     setToast("EMI marked as paid for this month!");
+  };
+
+  const handleToggleMonthPaid = (loan, emiNum, monthKey) => {
+    let completedMonths = amount(loan.completedMonths);
+    let paidMonths = [...(loan.paidMonths || [])];
+    let status = loan.status;
+
+    let isPaid = emiNum <= completedMonths;
+    if (monthKey) {
+      isPaid = isLoanMonthPaid(loan, monthKey);
+    }
+
+    if (isPaid) {
+      if (monthKey) {
+        paidMonths = paidMonths.filter(m => m !== monthKey);
+      }
+      completedMonths = Math.max(0, completedMonths - 1);
+      if (status === "Completed") {
+        status = "Active";
+      }
+      upsert("loans", {
+        ...loan,
+        completedMonths,
+        paidMonths,
+        status
+      }, "loan");
+      setToast(`EMI #${emiNum} marked as unpaid (undone).`);
+    } else {
+      if (monthKey && !paidMonths.includes(monthKey)) {
+        paidMonths.push(monthKey);
+      }
+      if (emiNum > completedMonths) {
+        completedMonths = emiNum;
+      }
+      if (completedMonths >= amount(loan.totalMonths)) {
+        status = "Completed";
+      }
+      upsert("loans", {
+        ...loan,
+        completedMonths,
+        paidMonths,
+        status
+      }, "loan");
+      setToast(`EMI #${emiNum} marked as paid!`);
+    }
   };
 
   const handleForeclose = (loan) => {
@@ -4477,40 +4562,108 @@ function LoansView({ state, openAdd, setModal, remove, upsert, requestConfirm, s
                         {monthYearStr && <span className="payment-date">{monthYearStr}</span>}
                         {isCurrentMonth && <span className="current-badge">Current Month</span>}
                       </div>
-                      <div className="payment-status-row">
-                        <span className={`status-text ${isPaid ? "text-success" : "text-muted"}`}>
+                      <div className="payment-status-row" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                        <span className={`status-text ${isPaid ? "text-success" : "text-muted"}`} style={{ fontWeight: 700, fontSize: "0.85rem" }}>
                           {isPaid ? "Paid" : "Pending"}
                         </span>
                         <button 
                           className="icon-button tactile" 
-                          title="Edit payment amount"
+                          title="Edit amount for this specific month"
                           onClick={() => handleEditPaymentAmount(selectedLoan, emiNum, monthKey)}
-                          style={{ padding: "0.2rem", background: "none", border: "none", color: "var(--muted)", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+                          style={{ padding: "0.25rem 0.4rem", borderRadius: "6px", cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}
                         >
                           <Edit3 size={13} />
                         </button>
-                        {!isPaid && isCurrentMonth && selectedLoan.status === "Active" && (
-                          <button 
-                            className="mini-pay-button tactile"
-                            onClick={() => handleMarkPaid(selectedLoan)}
-                          >
-                            Pay
-                          </button>
-                        )}
+                        <button 
+                          className={`mini-pay-button tactile ${isPaid ? "secondary danger" : "primary"}`}
+                          onClick={() => handleToggleMonthPaid(selectedLoan, emiNum, monthKey)}
+                          style={{ padding: "0.25rem 0.55rem", fontSize: "0.75rem", borderRadius: "6px" }}
+                        >
+                          {isPaid ? "Undo (Unpay)" : "Mark Paid"}
+                        </button>
                       </div>
                     </div>
                   );
                 })}
               </div>
             </div>
-
           </div>
         ) : (
           <div className="loan-portfolio-insights">
             <div className="loan-portfolio-header">
-              <h2>EMI & Loan Portfolio</h2>
+              <h2>EMI &amp; Loan Portfolio</h2>
               <p className="subtitle">Overall overview of active and closed liabilities, upcoming dues, and insights.</p>
             </div>
+
+            {/* Monthly Salary Banner */}
+            <div className="salary-banner-card panel tactile" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem", padding: "1rem 1.25rem", marginBottom: "1.25rem", borderLeft: "5px solid var(--blue)", borderRadius: "14px", background: "linear-gradient(135deg, rgba(99,102,241,0.06) 0%, rgba(6,182,212,0.04) 100%)" }}>
+              <div style={{ flex: 1 }}>
+                <span style={{ fontSize: "0.8rem", fontWeight: 700, textTransform: "uppercase", color: "var(--muted)", letterSpacing: "0.04em" }}>Monthly Take-Home Salary</span>
+                {editingSalary ? (
+                  <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginTop: "0.5rem" }}>
+                    <input
+                      type="number"
+                      min="0"
+                      autoFocus
+                      value={salaryInput}
+                      onChange={(e) => setSalaryInput(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") saveSalary(); if (e.key === "Escape") setEditingSalary(false); }}
+                      placeholder="e.g. 50000"
+                      style={{ flex: 1, maxWidth: "200px", padding: "0.5rem 0.75rem", border: "2px solid var(--ink)", borderRadius: "8px", fontWeight: 700, fontSize: "1.1rem" }}
+                    />
+                    <button className="primary tactile" style={{ padding: "0.4rem 1rem", fontSize: "0.85rem" }} onClick={saveSalary}>Save</button>
+                    <button className="secondary tactile" style={{ padding: "0.4rem 0.75rem", fontSize: "0.85rem" }} onClick={() => setEditingSalary(false)}>Cancel</button>
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginTop: "0.25rem" }}>
+                    <strong style={{ fontSize: "1.6rem", fontWeight: 900 }}>
+                      {userSalary > 0 ? rupee.format(userSalary) : "Not Set"}
+                    </strong>
+                    <button
+                      className="secondary tactile"
+                      style={{ padding: "0.25rem 0.75rem", fontSize: "0.78rem", borderRadius: "8px" }}
+                      onClick={() => { setSalaryInput(userSalary > 0 ? String(userSalary) : ""); setEditingSalary(true); }}
+                    >
+                      <Edit3 size={13} /> {userSalary > 0 ? "Edit" : "Set Salary"}
+                    </button>
+                  </div>
+                )}
+              </div>
+              {userSalary > 0 && activeLoans.length > 0 && (
+                <div style={{ textAlign: "right", minWidth: "120px" }}>
+                  <span style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--muted)", textTransform: "uppercase" }}>EMI-to-Income</span>
+                  <div style={{ fontSize: "1.4rem", fontWeight: 900, color: Number(dtiPercent) > 50 ? "#dc3545" : Number(dtiPercent) > 35 ? "#fd7e14" : "#198754" }}>
+                    {dtiPercent}%
+                  </div>
+                  <span style={{ fontSize: "0.7rem", color: "var(--muted)" }}>
+                    {Number(dtiPercent) > 50 ? "⚠️ High Risk" : Number(dtiPercent) > 35 ? "⚡ Moderate" : "✅ Healthy"}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Salary vs EMI KPI Cards */}
+            {userSalary > 0 && activeLoans.length > 0 && (
+              <div className="portfolio-stats-grid" style={{ marginBottom: "1.25rem" }}>
+                <div className="portfolio-stat-card" style={{ borderLeft: "4px solid #198754" }}>
+                  <span className="stat-label">Monthly Salary</span>
+                  <strong className="stat-value" style={{ color: "#198754" }}>{rupee.format(userSalary)}</strong>
+                  <span className="stat-sub">Take-home income</span>
+                </div>
+                <div className="portfolio-stat-card" style={{ borderLeft: "4px solid #dc3545" }}>
+                  <span className="stat-label">Total Active EMI</span>
+                  <strong className="stat-value" style={{ color: "#dc3545" }}>{rupee.format(totalActiveEmi)}</strong>
+                  <span className="stat-sub">{activeLoans.length} active EMIs</span>
+                </div>
+                <div className="portfolio-stat-card" style={{ borderLeft: `4px solid ${remainingFreeSalary < userSalary * 0.3 ? "#dc3545" : remainingFreeSalary < userSalary * 0.5 ? "#fd7e14" : "#198754"}` }}>
+                  <span className="stat-label">Remaining Free Salary</span>
+                  <strong className="stat-value" style={{ color: remainingFreeSalary < userSalary * 0.3 ? "#dc3545" : remainingFreeSalary < userSalary * 0.5 ? "#fd7e14" : "#198754" }}>
+                    {rupee.format(remainingFreeSalary)}
+                  </strong>
+                  <span className="stat-sub">After all EMI deductions</span>
+                </div>
+              </div>
+            )}
 
             <div className="portfolio-stats-grid">
               <div className="portfolio-stat-card active-emi-card">
@@ -4548,6 +4701,80 @@ function LoansView({ state, openAdd, setModal, remove, upsert, requestConfirm, s
                     className="progress-bar-fill fill-success" 
                     style={{ width: `${(totalPaid / (totalPaid + totalOutstanding)) * 100}%` }} 
                   />
+                </div>
+              </div>
+            )}
+
+            {/* Active EMI Payoff Timeline Table */}
+            {activeLoanInsights.length > 0 && (
+              <div style={{ marginTop: "1.25rem" }}>
+                <h3 style={{ margin: "0 0 0.5rem 0", fontSize: "1.05rem" }}>📅 Active Loan Payoff Timeline</h3>
+                <p style={{ margin: "0 0 0.75rem 0", fontSize: "0.82rem", color: "var(--muted)" }}>Each active EMI with its salary share and calculated last EMI month.</p>
+                <div className="autotrack-table-container">
+                  <table className="autotrack-table">
+                    <thead>
+                      <tr>
+                        <th>Loan / EMI</th>
+                        <th>Monthly EMI</th>
+                        <th>Progress</th>
+                        <th>Remaining</th>
+                        {userSalary > 0 && <th>% of Salary</th>}
+                        <th>Last EMI Date</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {activeLoanInsights.map((loan) => {
+                        const percent = Math.round((amount(loan.completedMonths) / amount(loan.totalMonths)) * 100) || 0;
+                        return (
+                          <tr key={loan.id}>
+                            <td data-label="Loan / EMI">
+                              <strong>{loan.title}</strong>
+                              {loan.bankName && <><br /><small style={{ color: "var(--muted)" }}>{loan.bankName}</small></>}
+                            </td>
+                            <td data-label="Monthly EMI"><strong>{rupee.format(amount(loan.monthlyPayment))}</strong></td>
+                            <td data-label="Progress">
+                              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                                <div className="progress-bar-track" style={{ width: "80px", height: "8px" }}>
+                                  <div className="progress-bar-fill" style={{ width: `${percent}%` }} />
+                                </div>
+                                <span style={{ fontSize: "0.82rem", fontWeight: 700 }}>{percent}%</span>
+                              </div>
+                              <small style={{ color: "var(--muted)" }}>{loan.completedMonths}/{loan.totalMonths} months</small>
+                            </td>
+                            <td data-label="Remaining"><strong>{loan.remainingMonths}</strong> months</td>
+                            {userSalary > 0 && (
+                              <td data-label="% of Salary">
+                                <span style={{
+                                  fontWeight: 800,
+                                  color: Number(loan.salaryShare) > 30 ? "#dc3545" : Number(loan.salaryShare) > 15 ? "#fd7e14" : "#198754",
+                                  padding: "0.15rem 0.5rem",
+                                  borderRadius: "6px",
+                                  background: Number(loan.salaryShare) > 30 ? "rgba(220,53,69,0.1)" : Number(loan.salaryShare) > 15 ? "rgba(253,126,20,0.1)" : "rgba(25,135,84,0.1)"
+                                }}>
+                                  {loan.salaryShare}%
+                                </span>
+                              </td>
+                            )}
+                            <td data-label="Last EMI Date">
+                              <strong style={{ color: "var(--ink)" }}>📅 {loan.lastEmiDate}</strong>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {userSalary > 0 && (
+                        <tr style={{ fontWeight: 900, borderTop: "3px solid var(--ink)" }}>
+                          <td data-label="Total"><strong>Total EMI Deduction</strong></td>
+                          <td data-label="Monthly EMI"><strong style={{ color: "#dc3545" }}>{rupee.format(totalActiveEmi)}</strong></td>
+                          <td data-label="Progress"></td>
+                          <td data-label="Remaining"></td>
+                          <td data-label="% of Salary">
+                            <strong style={{ color: Number(dtiPercent) > 50 ? "#dc3545" : "#198754" }}>{dtiPercent}%</strong>
+                          </td>
+                          <td data-label="Last EMI Date"></td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             )}

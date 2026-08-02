@@ -262,7 +262,7 @@ function compactState(state) {
   const insights = buildInsights(state);
 
   return {
-    profile: state.profile ? { name: state.profile.name, dob: state.profile.dob } : null,
+    profile: state.profile ? { name: state.profile.name, dob: state.profile.dob, monthlySalary: state.profile.monthlySalary } : null,
     today: state.__today || new Date().toLocaleDateString("en-CA"),
     currentTime: new Date().toTimeString().slice(0, 5),
     categories: state.categories.map((category) => category.name),
@@ -480,6 +480,49 @@ function buildInsights(state) {
 
   return {
     month,
+    emiFinancialAnalysis: (() => {
+      const activeLoans = (state.loans || []).filter((l) => l.status === "Active" || !l.status);
+      const totalActiveEmi = activeLoans.reduce((sum, l) => sum + moneyAmount(l.monthlyPayment), 0);
+      const userSalary = moneyAmount(state.profile?.monthlySalary);
+      const remainingFreeSalary = Math.max(0, userSalary - totalActiveEmi);
+      const dtiRatio = userSalary > 0 ? ((totalActiveEmi / userSalary) * 100).toFixed(1) : 0;
+      
+      const activeLoanBreakdown = activeLoans.map((l) => {
+        const remainingMonths = Math.max(0, moneyAmount(l.totalMonths) - moneyAmount(l.completedMonths));
+        let lastEmiDate = "Unknown";
+        if (remainingMonths === 0) {
+          lastEmiDate = "Completed";
+        } else if (l.startDate) {
+          const start = new Date(`${l.startDate}T12:00:00`);
+          start.setMonth(start.getMonth() + moneyAmount(l.totalMonths) - 1);
+          lastEmiDate = start.toLocaleDateString("en-IN", { month: "short", year: "numeric" });
+        } else {
+          const finalDate = new Date();
+          finalDate.setMonth(finalDate.getMonth() + remainingMonths);
+          lastEmiDate = finalDate.toLocaleDateString("en-IN", { month: "short", year: "numeric" });
+        }
+
+        return {
+          title: l.title,
+          bankName: l.bankName || "",
+          monthlyPayment: moneyAmount(l.monthlyPayment),
+          remainingMonths,
+          totalMonths: moneyAmount(l.totalMonths),
+          completedMonths: moneyAmount(l.completedMonths),
+          lastEmiDate,
+          shareOfSalaryPercent: userSalary > 0 ? ((moneyAmount(l.monthlyPayment) / userSalary) * 100).toFixed(1) : 0
+        };
+      });
+
+      return {
+        monthlySalary: userSalary,
+        totalActiveEmi,
+        remainingFreeSalary,
+        dtiRatioPercent: `${dtiRatio}%`,
+        activeLoansCount: activeLoans.length,
+        activeLoanBreakdown
+      };
+    })(),
     vehicleInsights: {
       totalDistance,
       electricDistance,
